@@ -1,14 +1,15 @@
-"""
-Datetime query processor for NeoSQLite with three-tier fallback mechanism.
+"""Datetime query processor for NeoSQLite with three-tier fallback mechanism.
 
 This module provides a three-tier approach for handling datetime queries:
-1. SQL tier: Direct SQL processing with json_* functions
-2. Temp table tier: Temporary table approach for complex queries
-3. Python tier: Pure Python processing as fallback
 
-The SQL and temp table queries always use json_* functions not jsonb_* because
-we need to compare the datetime string, querying with jsonb_* will get byte instead of string.
-This extends the existing text search functionality to also use only json_* functions.
+1. SQL tier: Direct SQL processing with ``json_*`` functions.
+2. Temp table tier: Temporary table approach for complex queries.
+3. Python tier: Pure Python processing as a fallback.
+
+The SQL and temporary table tiers always use ``json_*`` functions rather than
+``jsonb_*`` because datetime comparisons require string values, while
+``jsonb_*`` returns binary payloads. This mirrors the text-search pattern of
+using ``json_*`` functions only.
 """
 
 from __future__ import annotations
@@ -30,28 +31,29 @@ from .temporary_table_aggregation import (
 
 
 class DateTimeQueryProcessor:
-    """
-    Process datetime queries using a three-tier fallback mechanism.
+    """Process datetime queries using a three-tier fallback mechanism.
 
-    The three-tier approach:
-    1. SQL tier: Direct SQL processing with json_* functions
-    2. Temp table tier: Temporary table approach for complex queries
-    3. Python tier: Pure Python processing as fallback
+    Executes datetime queries across three ordered tiers:
 
-    The SQL and temp table queries always use json_* functions not jsonb_* because
-    we need to compare the datetime string, querying with jsonb_* will get byte instead of string.
+    1. SQL tier: Direct SQL processing using ``json_*`` functions.
+    2. Temp table tier: Temporary table processing for complex queries.
+    3. Python tier: Pure Python evaluation as a fallback.
+
+    The SQL and temporary table tiers always use ``json_*`` functions rather
+    than ``jsonb_*`` so datetime comparisons operate on JSON strings instead
+    of binary JSONB payloads.
     """
 
     def __init__(
         self, collection, query_engine=None, use_global_kill_switch=False
     ):
-        """
-        Initialize the DateTimeQueryProcessor with a collection.
+        """Initialize the DateTimeQueryProcessor with a collection.
 
         Args:
-            collection: The NeoSQLite collection to process datetime queries on
-            query_engine: Optional QueryEngine instance for accessing helpers
-            use_global_kill_switch: If True, use the global kill switch; if False, use local kill switch only
+            collection: The NeoSQLite collection to run datetime queries on.
+            query_engine: Optional QueryEngine instance providing helpers.
+            use_global_kill_switch: If True, use the global kill switch;
+                otherwise track a per-instance local kill switch.
         """
         self.collection = collection
         self.db = collection.db
@@ -74,14 +76,17 @@ class DateTimeQueryProcessor:
         self._local_kill_switch = False
 
     def set_kill_switch(self, enabled: bool):
-        """
-        Set the kill switch to force fallback to Python implementation.
-        Behavior depends on initialization setting:
-        - If use_global_kill_switch=True: Sets the global kill switch (affects entire app)
-        - If use_global_kill_switch=False: Sets local kill switch (affects only this instance)
+        """Set the kill switch to force fallback to Python implementation.
+
+        Behavior depends on initialization configuration:
+
+        - ``use_global_kill_switch=True``: Updates the global kill switch
+          (affects the entire application).
+        - ``use_global_kill_switch=False``: Updates only the local kill
+          switch for this processor instance.
 
         Args:
-            enabled: If True, forces fallback to Python implementation
+            enabled: If True, force fallback to the Python implementation.
         """
         if self._use_global_kill_switch:
             # Import locally to avoid circular imports and minimize global state touch
@@ -92,14 +97,13 @@ class DateTimeQueryProcessor:
             self._local_kill_switch = enabled
 
     def is_kill_switch_enabled(self) -> bool:
-        """
-        Check if the kill switch is enabled.
-        Behavior depends on initialization setting:
-        - If use_global_kill_switch=True: Checks global kill switch
-        - If use_global_kill_switch=False: Checks local kill switch
+        """Check whether the kill switch is currently enabled.
+
+        Checks the global kill switch when ``use_global_kill_switch=True``,
+        otherwise checks the processor instance's local kill switch.
 
         Returns:
-            True if kill switch is enabled, False otherwise
+            bool: True if the kill switch is enabled, False otherwise.
         """
         if self._use_global_kill_switch:
             # Import locally to avoid circular imports and minimize global state touch
@@ -112,15 +116,18 @@ class DateTimeQueryProcessor:
     def process_datetime_query(
         self, query: dict[str, Any], use_kill_switch: bool | None = None
     ) -> list[dict[str, Any]]:
-        """
-        Process a datetime query using the three-tier fallback mechanism.
+        """Process a datetime query using the three-tier fallback mechanism.
+
+        Returns an empty list immediately if the query contains no datetime
+        operations. Otherwise attempts SQL tier, temporary table tier, and
+        finally pure Python evaluation while notifying tier-change listeners.
 
         Args:
-            query: MongoDB-style query dictionary containing datetime operations
-            use_kill_switch: Optional override for kill switch setting
+            query: MongoDB-style query dictionary with datetime operations.
+            use_kill_switch: Optional override for the configured kill switch.
 
         Returns:
-            List of matching documents
+            list[dict[str, Any]]: List of matching documents.
         """
         # Check if kill switch is enabled (configured setting or parameter override)
         force_python = (
@@ -170,14 +177,17 @@ class DateTimeQueryProcessor:
         return self._process_with_python_tier(query)
 
     def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
-        """
-        Check if a query contains datetime operations.
+        """Check whether a query contains datetime operations.
+
+        Recursively inspects logical operators (``$and``, ``$or``, ``$nor``,
+        ``$not``), comparison operators, ``$in``/``$nin``, ``$type`` date
+        specifiers, ``$regex`` patterns, and plain field values.
 
         Args:
-            query: MongoDB-style query dictionary
+            query: MongoDB-style query dictionary.
 
         Returns:
-            True if query contains datetime operations, False otherwise
+            bool: True if the query contains datetime operations, else False.
         """
         for field, value in query.items():
             if field in ("$and", "$or", "$nor"):
@@ -225,28 +235,26 @@ class DateTimeQueryProcessor:
         return False
 
     def _is_datetime_value(self, value: Any) -> bool:
-        """
-        Check if a value is a datetime object or datetime string.
+        """Check if a value is a datetime object or datetime string.
 
         Args:
-            value: Value to check
+            value: Value to inspect for datetime semantics.
 
         Returns:
-            True if value is datetime-related, False otherwise
+            bool: True if ``value`` is datetime-related, False otherwise.
         """
         from .datetime_utils import is_datetime_value
 
         return is_datetime_value(value)
 
     def _is_datetime_regex(self, pattern: str) -> bool:
-        """
-        Check if a pattern is likely to be datetime-related.
+        """Check if a regex pattern is likely to be datetime-related.
 
         Args:
-            pattern: Pattern string (could be a regex pattern or a datetime string)
+            pattern: Regex pattern or datetime-like string to inspect.
 
         Returns:
-            True if pattern is likely datetime-related, False otherwise
+            bool: True if ``pattern`` appears datetime-related, else False.
         """
         from .datetime_utils import is_datetime_regex
 
@@ -255,14 +263,18 @@ class DateTimeQueryProcessor:
     def _process_with_sql_tier(
         self, query: dict[str, Any]
     ) -> list[dict[str, Any]] | None:
-        """
-        Process datetime query using SQL tier with json_* functions.
+        """Process a datetime query using the SQL tier with ``json_*`` calls.
+
+        Translates ``query`` with a ``SQLFieldAccessor`` configured for
+        ``jsonb_supported=False`` so datetime strings are compared directly,
+        then executes the generated ``SELECT`` against SQLite.
 
         Args:
-            query: MongoDB-style query dictionary
+            query: MongoDB-style query dictionary.
 
         Returns:
-            List of matching documents if successful, None otherwise
+            list[dict[str, Any]] | None: Matching documents if SQL tier
+            succeeded, or ``None`` if disabled, untranslatable, or failed.
         """
         # Check if we should force Python fallback using the configured setting
         if self.is_kill_switch_enabled():
@@ -315,14 +327,18 @@ class DateTimeQueryProcessor:
     def _process_with_temp_table_tier(
         self, query: dict[str, Any]
     ) -> list[dict[str, Any]] | None:
-        """
-        Process datetime query using temporary table approach.
+        """Process a datetime query using the temporary table tier.
+
+        Populates a base temporary table, translates ``query`` using
+        ``json_*`` functions (``jsonb_supported=False``), materializes a
+        filtered temporary table, and loads the resulting documents.
 
         Args:
-            query: MongoDB-style query dictionary
+            query: MongoDB-style query dictionary.
 
         Returns:
-            List of matching documents if successful, None otherwise
+            list[dict[str, Any]] | None: Matching documents if temporary table
+            processing succeeded, or ``None`` to trigger Python fallback.
         """
         # Check if we should force Python fallback using the configured setting
         if self.is_kill_switch_enabled():
@@ -401,14 +417,17 @@ class DateTimeQueryProcessor:
     def _process_with_python_tier(
         self, query: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        """
-        Process datetime query using pure Python implementation.
+        """Process a datetime query using pure Python evaluation.
+
+        Loads documents directly from SQLite when ``_load_with_stored_id`` is
+        available (avoiding spurious Tier-1 cursor events) or falls back to
+        ``find({})``, then filters them with ``helpers._apply_query``.
 
         Args:
-            query: MongoDB-style query dictionary
+            query: MongoDB-style query dictionary.
 
         Returns:
-            List of matching documents
+            list[dict[str, Any]]: List of matching documents.
         """
         # Read rows directly from SQLite for real Collections so executing
         # Tier-3 fallback does not emit a spurious Tier-1 cursor event.

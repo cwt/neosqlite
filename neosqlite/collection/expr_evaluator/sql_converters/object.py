@@ -14,15 +14,37 @@ from .base import BaseSqlMixin
 
 
 class ObjectMixin(BaseSqlMixin):
-    """$mergeObjects / $getField / $setField / $unsetField / $objectToArray / $let → SQL."""
+    """Mixin converting MongoDB object operators to SQL expressions.
+
+    Translates ``$mergeObjects``, ``$getField``, ``$setField``,
+    ``$unsetField``, ``$objectToArray``, ``$literal``, ``$rand``, and
+    ``$let`` into SQLite JSON/JSONB function calls and bound parameters.
+    """
 
     def _convert_object_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert object operators to SQL.
+        """Convert a MongoDB object operator to a SQL expression.
 
-        Note: json_patch() works with both JSON and JSONB data types.
-        Only json_extract/jsonb_extract, json_set/jsonb_set have JSONB variants.
+        Supports ``$mergeObjects`` (via ``json_patch``), ``$getField``,
+        ``$setField``, ``$unsetField``, ``$objectToArray``, ``$literal``,
+        and ``$rand``. Uses ``json_function_prefix`` for extract, set, and
+        remove functions, while ``json_patch()`` accepts both JSON and JSONB.
+
+        Args:
+            operator: Object operator name (e.g., ``"$getField"``,
+                ``"$mergeObjects"``, ``"$literal"``).
+            operands: Operator arguments (list, dict, or literal value
+                depending on ``operator``).
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``operands`` lacks required fields or has an
+                invalid type for the operator.
+            NotImplementedError: If ``operator`` is not supported in the SQL
+                tier.
         """
         json_prefix = self.json_function_prefix
 
@@ -125,10 +147,26 @@ class ObjectMixin(BaseSqlMixin):
                 )
 
     def _convert_let_operator(self, operands: Any) -> tuple[str, list[Any]]:
-        """
-        Convert $let operator to SQL by inlining variables.
+        """Convert a ``$let`` operator to SQL by inlining scoped variables.
 
-        MongoDB syntax: { $let: { vars: { <var1>: <expr1>, ... }, in: <expr> } }
+        Evaluates each binding in ``vars`` against the active aggregation
+        context, stores ``$$<name>`` SQL/parameter pairs in a cloned nested
+        context, and translates the ``in`` expression with that context
+        temporarily active.
+
+        Args:
+            operands: Dictionary with optional ``"vars"`` mapping and
+                required ``"in"`` expression (matching
+                ``{ $let: { vars: { ... }, in: <expr> } }``).
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair
+            for the evaluated ``in`` expression.
+
+        Raises:
+            ValueError: If ``operands`` is not a dictionary or omits ``"in"``.
+            NotImplementedError: If ``_current_context`` is missing or
+                ``None``.
         """
         if not isinstance(operands, dict):
             raise ValueError("$let requires a dictionary")

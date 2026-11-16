@@ -1,5 +1,8 @@
-"""
-Python implementation of MongoDB $fill aggregation stage.
+"""Python implementation of MongoDB ``$fill`` aggregation stage.
+
+Supports partitioning via ``partitionBy`` or ``partitionByFields``, BSON-safe
+partition sorting via ``sortBy``, and constant-value, last-observation-carried-
+forward (``locf``), and linear interpolation (``linear``) fill strategies.
 """
 
 from typing import Any
@@ -13,8 +16,26 @@ def process_fill(
     collection: Any,
     evaluator: Any,
 ) -> list[dict[str, Any]]:
-    """
-    Python fallback implementation of $fill.
+    """Apply the MongoDB ``$fill`` aggregation stage in Python.
+
+    Groups input document contexts by partition key, sorts each partition
+    according to ``sortBy`` using BSON ordering, fills missing (``None``)
+    output fields using constant values, ``locf``, or ``linear`` interpolation,
+    and returns the combined list of processed document-context dictionaries.
+
+    Args:
+        docs_with_context: List of document-context dictionaries, each holding
+            the document under ``"__doc__"``.
+        spec: The ``$fill`` stage specification dictionary containing optional
+            ``partitionBy``, ``partitionByFields``, ``sortBy``, and ``output``.
+        collection: Collection instance providing ``_get_val`` and ``_set_val``
+            field access helpers.
+        evaluator: Expression evaluator providing
+            ``_evaluate_operand_python`` for computing ``partitionBy`` keys.
+
+    Returns:
+        list[dict[str, Any]]: Processed document-context dictionaries ordered
+            by partition key (string-sorted) and per-partition ``sortBy``.
     """
     partition_by = spec.get("partitionBy")
     partition_by_fields = spec.get("partitionByFields")
@@ -71,6 +92,15 @@ def process_fill(
                 is_desc = direction == -1
 
                 def get_sort_val(dc):
+                    """Return the BSON-ordered sort key for a document context.
+
+                    Args:
+                        dc: Document-context dictionary containing
+                            ``"__doc__"``.
+
+                    Returns:
+                        tuple: BSON-ordered sort key for ``field``.
+                    """
                     # BSON-ordered key: safe on mixed/missing values (#102)
                     return bson_sort_key(
                         collection._get_val(dc["__doc__"], field)
@@ -95,6 +125,15 @@ def process_fill(
 
 
 def _fill_constant(partition_docs, field_path, value, collection):
+    """Fill missing (``None``) values of a field with a constant value.
+
+    Args:
+        partition_docs: Ordered list of document-context dicts in a partition.
+        field_path: Target field path to populate when its value is ``None``.
+        value: Constant replacement value to assign.
+        collection: Collection instance providing ``_get_val`` and
+            ``_set_val``.
+    """
     for dc in partition_docs:
         doc = dc["__doc__"]
         if collection._get_val(doc, field_path) is None:
@@ -102,6 +141,18 @@ def _fill_constant(partition_docs, field_path, value, collection):
 
 
 def _fill_locf(partition_docs, field_path, collection):
+    """Fill missing field values using last observation carried forward.
+
+    Tracks the most recent non-``None`` value seen for ``field_path`` within
+    ``partition_docs`` and copies it into subsequent documents whose value is
+    ``None``. Leading ``None`` values before any observation remain ``None``.
+
+    Args:
+        partition_docs: Ordered list of document-context dicts in a partition.
+        field_path: Target field path to fill.
+        collection: Collection instance providing ``_get_val`` and
+            ``_set_val``.
+    """
     last_val = None
     for dc in partition_docs:
         doc = dc["__doc__"]
@@ -113,7 +164,22 @@ def _fill_locf(partition_docs, field_path, collection):
 
 
 def _fill_linear(partition_docs, field_path, sort_by, collection):
-    """Linear interpolation."""
+    """Fill missing numeric field values using linear interpolation.
+
+    Interpolates interior gaps of ``None`` values based on the first field in
+    ``sort_by`` when both surrounding endpoints and intermediate sort values
+    are numeric (``int`` or ``float``) with distinct endpoint sort keys.
+    Returns early when ``sort_by`` is empty, and leaves leading or trailing
+    ``None`` runs untouched.
+
+    Args:
+        partition_docs: Ordered list of document-context dicts in a partition.
+        field_path: Target numeric field path to interpolate.
+        sort_by: Non-empty mapping whose first key supplies the sort coordinate
+            for interpolation.
+        collection: Collection instance providing ``_get_val`` and
+            ``_set_val``.
+    """
     if not sort_by:
         return  # Linear requires sorting
 

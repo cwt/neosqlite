@@ -16,7 +16,20 @@ _DATE_FMT_SPECIFIERS = frozenset(
 
 
 def _replace_format_specifier(fmt: str, spec: str, replacement: str) -> str:
-    """Replace a format specifier while preserving escaped %% sequences."""
+    """Replace a format specifier while preserving escaped ``%%`` sequences.
+
+    Splits ``fmt`` on literal ``%%`` tokens before substituting ``spec`` so
+    percent signs inside escaped sequences are not altered, then rejoins the
+    segments with ``%%``.
+
+    Args:
+        fmt: Date format string to transform.
+        spec: Format specifier token to replace (for example, ``%L``).
+        replacement: Replacement text for unescaped occurrences of ``spec``.
+
+    Returns:
+        str: Updated format string with ``%%`` escapes preserved.
+    """
     parts = fmt.split("%%")
     return "%%".join(p.replace(spec, replacement) for p in parts)
 
@@ -24,9 +37,22 @@ def _replace_format_specifier(fmt: str, spec: str, replacement: str) -> str:
 def _validate_strftime_format(fmt: str) -> str:
     """Validate a MongoDB date format before strftime interpolation (#119).
 
-    Only known % specifiers and non-% characters pass; a single quote or an
-    unknown specifier raises so the caller falls back to the Python tier
-    instead of interpolating attacker-controlled text into SQL.
+    Only known ``%`` specifiers in ``_DATE_FMT_SPECIFIERS`` and non-``%``
+    characters pass; a single quote or an unknown specifier raises
+    ``NotImplementedError`` so the caller falls back to the Python tier instead
+    of interpolating arbitrary text into SQL. Replaces ``%L`` with the
+    ``__NEOSQLITE_MS__`` placeholder for millisecond substitution.
+
+    Args:
+        fmt: MongoDB ``$dateToString`` format string to validate.
+
+    Returns:
+        str: Validated format string with ``%L`` replaced by
+            ``__NEOSQLITE_MS__``.
+
+    Raises:
+        NotImplementedError: If ``fmt`` contains a single quote or an
+            unsupported format specifier.
     """
     if "'" in fmt:
         raise NotImplementedError(
@@ -46,10 +72,33 @@ def _validate_strftime_format(fmt: str) -> str:
 
 
 class DateMixin(BaseSqlMixin):
-    """$year / $month / $dayOfMonth / $dateAdd / $dateSubtract / $dateDiff → SQL."""
+    """Mixin converting MongoDB date expressions to SQLite SQL expressions.
+
+    Translates date component extractors (``$year``, ``$month``,
+    ``$dayOfMonth``, ``$hour``, ``$minute``, ``$second``, ``$dayOfWeek``,
+    ``$dayOfYear``, ``$week``, ``$isoDayOfWeek``, ``$isoWeek``,
+    ``$millisecond``), date arithmetic (``$dateAdd``, ``$dateSubtract``),
+    ``$dateDiff``, ``$dateToString``, ``$dateTrunc``, ``$dateFromParts``,
+    ``$dateToParts``, and ``$dateFromString`` into SQLite ``strftime``,
+    ``julianday``, and JSON expressions.
+    """
 
     def _extract_date_sql(self, sql_expr: str) -> str:
-        """Extract ISO date string from potential {"$date": ...} JSON object or direct string."""
+        """Extract an ISO date SQL expression from a date or JSON wrapper.
+
+        Unwraps balanced outer parentheses and ``json_object`` /
+        ``jsonb_object`` ``"$date"`` wrappers directly, and wraps extracted
+        JSON field paths ending in ``')`` in ``COALESCE`` so both raw ISO
+        strings and stored ``{"$date": ...}`` objects resolve to a date string.
+
+        Args:
+            sql_expr: SQL expression evaluating to a date string or ``$date``
+                object.
+
+        Returns:
+            str: SQL expression yielding an ISO date string for SQLite date
+                functions.
+        """
         s = sql_expr.strip()
         while s.startswith("(") and s.endswith(")"):
             depth = 0
@@ -95,7 +144,26 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert date operators to SQL using strftime."""
+        """Convert a MongoDB date part extraction operator to SQL.
+
+        Supports ``$year``, ``$month``, ``$dayOfMonth``, ``$hour``,
+        ``$minute``, ``$second``, ``$dayOfWeek``, ``$dayOfYear``, ``$week``,
+        ``$isoDayOfWeek``, ``$isoWeek``, and ``$millisecond`` via SQLite
+        ``strftime`` casts.
+
+        Args:
+            operator: MongoDB date extraction operator name.
+            operands: Single operand expression or a one-element list
+                containing the date expression.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``operands`` does not resolve to one operand.
+            NotImplementedError: If ``operator`` is not supported in the SQL
+                tier.
+        """
         # Normalize operands to handle both single values and lists
         if not isinstance(operands, list):
             operands = [operands]
@@ -153,11 +221,24 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_arithmetic_operator(
         self, operator: str, operands: list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $dateAdd/$dateSubtract operators to SQL.
+        """Convert ``$dateAdd`` and ``$dateSubtract`` operators to SQL.
 
-        MongoDB syntax: {$dateAdd: [date, amount, unit]} or
-                        {$dateAdd: {startDate: date, amount: N, unit: "day"}}
-        SQLite: datetime(date, '+N unit' or '-N unit')
+        Accepts either positional list syntax ``[date, amount, unit?]`` or a
+        MongoDB specification dict ``{startDate, amount, unit}`` (defaulting
+        ``unit`` to ``"day"``). Month/year adjustments clamp to the last valid
+        day of the target month to match MongoDB behavior, and all variants
+        return a ``json_object('$date', ...)`` value.
+
+        Args:
+            operator: Operator name (``$dateAdd`` or ``$dateSubtract``).
+            operands: Positional operand list or MongoDB dict specifying
+                ``startDate``, ``amount``, and optional ``unit``.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If operand count is not 2-3 or ``unit`` is invalid.
         """
         # Handle MongoDB dict format: {startDate, amount, unit}
         if isinstance(operands, dict):
@@ -249,11 +330,23 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_diff_operator(
         self, operands: list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $dateDiff operator to SQL.
+        """Convert the ``$dateDiff`` operator to a SQL integer expression.
 
-        MongoDB syntax: {$dateDiff: [date1, date2, unit]} or
-                        {$dateDiff: {startDate: date1, endDate: date2, unit: "day"}}
-        SQLite: julianday(date2) - julianday(date1) for days
+        Accepts positional syntax ``[date1, date2, unit?]`` or a MongoDB dict
+        ``{startDate, endDate, unit}`` (defaulting ``unit`` to ``"day"``).
+        Counts calendar boundaries for ``"month"`` and ``"year"`` via
+        ``strftime`` and uses ``julianday`` differences for smaller units.
+
+        Args:
+            operands: Positional operand list or MongoDB dict specifying
+                ``startDate``, ``endDate``, and optional ``unit``.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair
+                evaluating to an integer difference.
+
+        Raises:
+            ValueError: If operand count is not 2-3 or ``unit`` is invalid.
         """
         # Handle MongoDB dict format: {startDate, endDate, unit}
         if isinstance(operands, dict):
@@ -340,10 +433,25 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_to_string_operator(
         self, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $dateToString to SQLite strftime().
+        """Convert ``$dateToString`` to a SQLite ``strftime()`` expression.
 
-        MongoDB: { $dateToString: { format: "%Y-%m-%d", date: <expr> } }
-                 or positional: [<format>, <date>]
+        Supports dict format ``{format, date, timezone?}`` and positional list
+        format ``[format, date, timezone?]``. Rejects dynamic non-string
+        formats, unsupported specifiers, and non-UTC timezones with
+        ``NotImplementedError`` so callers fall back to Python.
+
+        Args:
+            operands: Specification dict or positional list with format, date,
+                and optional timezone.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``operands`` lacks required ``format`` and ``date``
+                arguments.
+            NotImplementedError: If ``format`` is non-literal/unsupported or
+                ``timezone`` is not UTC.
         """
         if isinstance(operands, dict):
             fmt = operands.get("format", "%Y-%m-%d")
@@ -392,9 +500,24 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_trunc_operator(
         self, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $dateTrunc to SQLite strftime().
+        """Convert ``$dateTrunc`` to a SQLite ``strftime()`` date expression.
 
-        MongoDB: { $dateTrunc: { date: <expr>, unit: "hour" } }
+        Supports dict format ``{date, unit?}`` (defaulting ``unit`` to
+        ``"day"``) and positional list ``[date, unit]`` for ``year``,
+        ``quarter``, ``month``, ``week`` (Monday-start), ``day``, ``hour``,
+        ``minute``, and ``second`` units.
+
+        Args:
+            operands: Specification dict or positional list with ``date`` and
+                truncation ``unit``.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair
+                returning a truncated ``$date`` JSON object.
+
+        Raises:
+            ValueError: If ``operands`` is missing ``date`` or ``unit``.
+            NotImplementedError: If ``unit`` is dynamic or unsupported in SQL.
         """
         if isinstance(operands, dict):
             date_operand = operands.get("date")
@@ -456,9 +579,22 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_from_parts_operator(
         self, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $dateFromParts to SQLite date construction.
+        """Convert ``$dateFromParts`` to SQLite ISO date construction.
 
-        MongoDB: { $dateFromParts: { year: <expr>, month: <expr>, ... } }
+        Expects a dictionary containing ``year`` and optional ``month``,
+        ``day``, ``hour``, ``minute``, ``second``, and ``millisecond``
+        expressions, returning a ``json_object('$date', ...)`` result.
+
+        Args:
+            operands: Specification dictionary mapping date part names to
+                expressions.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``operands`` is not a dictionary.
+            NotImplementedError: If a ``timezone`` option is supplied.
         """
         if not isinstance(operands, dict):
             raise ValueError("$dateFromParts requires a dictionary")
@@ -472,6 +608,16 @@ class DateMixin(BaseSqlMixin):
         year_sql, params = self._convert_operand_to_sql(operands.get("year"))
 
         def _field_or_default(key: str, default: int) -> tuple[str, list[Any]]:
+            """Convert an optional date part expression or return a default.
+
+            Args:
+                key: Date part key name inside ``operands``.
+                default: Integer fallback used when the part is missing or
+                    NULL.
+
+            Returns:
+                tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+            """
             val = operands.get(key)
             if val is None:
                 return str(default), []
@@ -504,9 +650,22 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_to_parts_operator(
         self, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $dateToParts to SQLite strftime + json_object.
+        """Convert ``$dateToParts`` to SQLite ``strftime`` and ``json_object``.
 
-        MongoDB: { $dateToParts: { date: <expr> } }
+        Extracts integer ``year``, ``month``, ``day``, ``hour``, ``minute``,
+        ``second``, and ``millisecond`` components into a JSON object.
+
+        Args:
+            operands: Dict ``{date}`` or list ``[date]`` containing the date
+                expression.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If no date operand is supplied.
+            NotImplementedError: If ``timezone``, ``iso8601``, or ``unit`` is
+                specified.
         """
         if isinstance(operands, dict):
             date_operand = operands.get("date")
@@ -546,12 +705,24 @@ class DateMixin(BaseSqlMixin):
     def _convert_date_from_string_operator(
         self, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $dateFromString to SQLite strftime parsing.
+        """Convert ``$dateFromString`` to SQLite ``strftime`` ISO parsing.
 
-        MongoDB: { $dateFromString: { dateString: <expr> } }
+        Parses ISO 8601 date strings via ``strftime('%Y-%m-%dT%H:%M:%SZ',
+        ...)`` and returns ``NULL`` when the input string evaluates to
+        ``NULL``. Options ``timezone``, ``onError``, and ``onNull`` are
+        deferred to the Python tier.
 
-        SQLite strftime can parse ISO 8601 strings; non-ISO formats
-        and timezone/onError/onNull options fall back to Python.
+        Args:
+            operands: Dict ``{dateString, ...}`` or positional list starting
+                with the date string expression.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``dateString`` is missing.
+            NotImplementedError: If ``timezone``, ``onError``, or ``onNull``
+                is provided.
         """
         if isinstance(operands, dict):
             date_string_operand = operands.get("dateString")

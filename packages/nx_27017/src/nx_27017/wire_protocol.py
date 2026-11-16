@@ -36,12 +36,28 @@ _request_id_counter = count(1)
 
 
 def _get_next_request_id() -> int:
-    """Generate a unique request ID for responses."""
+    """Generate a unique monotonically increasing request ID for responses.
+
+    Returns:
+        int: Next integer from the module-level request ID counter.
+    """
     return next(_request_id_counter)
 
 
 def _extract_session_id(lsid: dict) -> str | None:
-    """Extract session ID from lsid document, handling Binary and dict formats."""
+    """Extract session ID string from an ``lsid`` document.
+
+    Handles top-level ``$oid`` dicts, nested ``id`` fields encoded as
+    ``bson.Binary`` or ``{"$oid": ...}``, and arbitrary ``id`` objects via
+    ``str()``.
+
+    Args:
+        lsid: Logical session ID dictionary from a wire command document.
+
+    Returns:
+        str | None: Extracted session identifier string, or ``None`` if
+        ``lsid`` is empty or has no ``id``.
+    """
     if not lsid:
         return None
     if "$oid" in lsid:
@@ -62,7 +78,11 @@ from nx_27017.utils import convert_neo_to_bson_objectids as _convert_objectids
 
 
 class WireProtocol:
-    """MongoDB wire protocol opcodes."""
+    """MongoDB wire protocol opcodes.
+
+    Defines numeric operation code constants used in the 16-byte MongoDB
+    message header for ``OP_MSG``, legacy ``OP_QUERY``, and ``OP_REPLY``.
+    """
 
     OP_MSG = 2013
     OP_QUERY = 2004
@@ -70,7 +90,12 @@ class WireProtocol:
 
 
 class ResponseBuilder:
-    """Build MongoDB wire protocol responses."""
+    """Build MongoDB wire protocol responses.
+
+    Provides static helpers that convert NeoSQLite ObjectIds to BSON
+    ObjectIds and serialize server replies into ``OP_MSG`` or legacy
+    ``OP_REPLY`` binary frames.
+    """
 
     @staticmethod
     def build_op_msg_reply(
@@ -79,6 +104,22 @@ class ResponseBuilder:
         document: dict[str, Any],
         flags: int = 0,
     ) -> bytes:
+        """Build an ``OP_MSG`` wire protocol reply frame.
+
+        Converts NeoSQLite ObjectIds, BSON-encodes ``document`` as a type-0
+        body section, and prepends the 4-byte flags word and 16-byte wire
+        message header.
+
+        Args:
+            request_id: Request identifier assigned to this response frame.
+            response_to: Request identifier of the incoming message being
+                answered.
+            document: Reply command document to serialize.
+            flags: Optional ``OP_MSG`` bitmask flags. Defaults to ``0``.
+
+        Returns:
+            bytes: Complete serialized ``OP_MSG`` response packet.
+        """
         doc_data = encode(_convert_objectids(document))
         sections = struct.pack("<B", 0) + doc_data
         body = struct.pack("<I", flags) + sections
@@ -98,6 +139,21 @@ class ResponseBuilder:
         documents: list[dict[str, Any]],
         flags: int = 0,
     ) -> bytes:
+        """Build a legacy ``OP_REPLY`` wire protocol response frame.
+
+        Encodes ``documents`` as concatenated BSON payloads with zero cursor
+        ID and zero starting offset, preceded by the 16-byte wire header.
+
+        Args:
+            request_id: Request identifier assigned to this response frame.
+            response_to: Request identifier of the incoming message being
+                answered.
+            documents: List of reply documents to BSON-encode.
+            flags: Optional ``OP_REPLY`` response flags. Defaults to ``0``.
+
+        Returns:
+            bytes: Complete serialized ``OP_REPLY`` response packet.
+        """
         docs_data = b"".join(
             encode(_convert_objectids(doc)) for doc in documents
         )
@@ -119,10 +175,31 @@ class ResponseBuilder:
 
 
 class OP_MSG:
-    """Parser for MongoDB OP_MSG wire protocol messages."""
+    """Parser for MongoDB ``OP_MSG`` wire protocol messages.
+
+    Decodes the 16-byte header, 4-byte flags (stripping a trailing 4-byte
+    checksum when bit ``0x2`` is set), and section payloads of kind ``0``
+    (single body document), ``1`` (named document sequence), or ``2``
+    (counted payload documents).
+    """
 
     @staticmethod
     def parse(message_bytes: bytes) -> dict[str, Any]:
+        """Parse a raw ``OP_MSG`` wire protocol packet.
+
+        Args:
+            message_bytes: Complete raw wire message bytes including the
+                16-byte header.
+
+        Returns:
+            dict[str, Any]: Parsed message metadata and decoded sections
+            containing ``request_id``, ``response_to``, ``opcode``,
+            ``flags``, and ``sections``.
+
+        Raises:
+            ValueError: If BSON document lengths, section bounds, C-string
+                terminators, or section kind bytes are invalid.
+        """
         message_length = struct.unpack("<i", message_bytes[0:4])[0]
         request_id = struct.unpack("<i", message_bytes[4:8])[0]
         response_to = struct.unpack("<i", message_bytes[8:12])[0]
@@ -247,10 +324,31 @@ class OP_MSG:
 
 
 class OP_QUERY:
-    """Parser for MongoDB OP_QUERY wire protocol messages."""
+    """Parser for legacy MongoDB ``OP_QUERY`` wire protocol messages.
+
+    Decodes the 16-byte message header, 4-byte flags, null-terminated
+    ``full_collection_name`` (``<db>.<collection>``), skip/return counts,
+    and single BSON query document.
+    """
 
     @staticmethod
     def parse(data: bytes) -> dict[str, Any]:
+        """Parse a raw ``OP_QUERY`` wire protocol packet.
+
+        Args:
+            data: Complete raw wire message bytes including the 16-byte
+                header.
+
+        Returns:
+            dict[str, Any]: Parsed fields including ``request_id``,
+            ``response_to``, ``flags``, ``db``, ``collection``,
+            ``number_to_skip``, ``number_to_return``, and ``query``.
+
+        Raises:
+            ValueError: If the message is truncated, missing the
+                ``full_collection_name`` null terminator, or specifies an
+                invalid BSON document length.
+        """
         if len(data) < 16:
             raise ValueError("OP_QUERY message too short")
         struct.unpack("<i", data[0:4])[0]

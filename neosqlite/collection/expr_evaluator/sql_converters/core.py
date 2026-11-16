@@ -15,23 +15,36 @@ from .base import BaseSqlMixin
 
 
 class CoreMixin(BaseSqlMixin):
-    """$expr dispatch, operand-to-SQL conversion, operator mapping."""
+    """Mixin providing core ``$expr`` SQL dispatch and operand conversion.
+
+    Dispatches MongoDB aggregation expression operators to category-specific
+    SQL converter methods inherited via ``BaseSqlMixin``, translates operands
+    (field paths, aggregation variables, literals, and nested expressions)
+    into parameterized SQL fragments, and maps comparison and arithmetic
+    operators to their SQL operators.
+    """
 
     def _convert_expr_to_sql(
         self, expr: dict[str, Any]
     ) -> tuple[str, list[Any]]:
-        """
-        Convert a $expr expression to SQL.
+        """Convert a ``$expr`` expression dictionary into a SQL fragment.
+
+        Validates that ``expr`` is a single-key operator dictionary and routes
+        the operator and operands to the appropriate category-specific SQL
+        converter method.
 
         Args:
-            expr: Expression dictionary
+            expr: Single-key dictionary mapping an aggregation operator name to
+                its operands.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: Pair containing the generated SQL expression
+            string and its bound parameter list.
 
         Raises:
-            NotImplementedError: If operator is not supported in SQL
-            ValueError: If expression structure is invalid
+            ValueError: If ``expr`` is not a single-key dictionary.
+            NotImplementedError: If the operator is not supported in the SQL
+                tier.
         """
         if not isinstance(expr, dict) or len(expr) != 1:
             raise ValueError("Invalid $expr expression structure")
@@ -203,13 +216,20 @@ class CoreMixin(BaseSqlMixin):
                 )
 
     def _convert_operand_to_sql(self, operand: Any) -> tuple[str, list[Any]]:
-        """
-        Convert an operand to SQL expression.
+        """Convert an operand into a parameterized SQL expression.
 
-        Handles:
-        - Field references: "$field" → json_extract/jsonb_extract expression
-        - Literals: numbers, strings, booleans
-        - Nested expressions: {"$operator": [...]}
+        Handles aggregation variables (when ``self._current_context`` is set),
+        ``$field`` paths via ``json_extract`` / ``jsonb_extract``, nested
+        single-key ``$`` expression dictionaries via ``_convert_expr_to_sql``,
+        literal lists/dicts via ``json(?)``, ``datetime`` objects via
+        ``json_object('$date', ?)``, and scalar literals as ``?`` placeholders.
+
+        Args:
+            operand: Field path, aggregation variable, nested expression dict,
+                or literal value to convert.
+
+        Returns:
+            tuple[str, list[Any]]: Pair of ``(sql_expression, parameters)``.
         """
         # Check for aggregation variables if context is available
         from ..context import _is_aggregation_variable
@@ -256,7 +276,17 @@ class CoreMixin(BaseSqlMixin):
                 return "?", [operand]
 
     def _map_comparison_operator(self, op: str) -> str:
-        """Map MongoDB comparison operators to SQL."""
+        """Map a MongoDB comparison operator name to its SQL operator.
+
+        Supports ``$eq``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, and ``$ne``;
+        unrecognized operators are returned unchanged.
+
+        Args:
+            op: MongoDB comparison operator name.
+
+        Returns:
+            str: Corresponding SQL comparison operator, or ``op`` if unknown.
+        """
         mapping = {
             "$eq": "=",
             "$gt": ">",
@@ -268,7 +298,17 @@ class CoreMixin(BaseSqlMixin):
         return mapping.get(op, op)
 
     def _map_arithmetic_operator(self, op: str) -> str:
-        """Map MongoDB arithmetic operators to SQL."""
+        """Map a MongoDB arithmetic operator name to its SQL operator.
+
+        Supports ``$add``, ``$subtract``, ``$multiply``, ``$divide``, and
+        ``$mod``; unrecognized operators are returned unchanged.
+
+        Args:
+            op: MongoDB arithmetic operator name.
+
+        Returns:
+            str: Corresponding SQL arithmetic operator, or ``op`` if unknown.
+        """
         mapping = {
             "$add": "+",
             "$subtract": "-",

@@ -32,27 +32,43 @@ from .base import QueryEngineProtocol
 
 
 def _append_where_condition(where_clause: str, cond: str) -> str:
-    """Append an extra AND predicate to an optional SQL WHERE clause."""
+    """Append an extra ``AND`` predicate to an optional SQL ``WHERE`` clause.
+
+    Args:
+        where_clause: Existing ``WHERE`` clause string (may be empty or
+            whitespace-only).
+        cond: Boolean SQL predicate expression to wrap in parentheses and
+            append.
+
+    Returns:
+        str: Combined SQL ``WHERE`` clause containing ``cond``.
+    """
     if where_clause.strip():
         return f"{where_clause} AND ({cond})"
     return f"WHERE ({cond})"
 
 
 class CRUDOperationsMixin(QueryEngineProtocol):
-    """Mixin class providing CRUD operations for QueryEngine."""
+    """Mixin class providing CRUD operations for ``QueryEngine``.
+
+    Implements ``insert_one``, ``insert_many``, ``update_one``,
+    ``update_many``, ``delete_one``, ``delete_many``, and ``replace_one``
+    with SQL-tier JSON/JSONB expression paths, GridFS metadata updates,
+    session validation, tier-change notifications, and Tier 3 Python
+    fallbacks.
+    """
 
     def insert_one(
         self, document: dict[str, Any], session: ClientSession | None = None
     ) -> InsertOneResult:
-        """
-        Insert a single document into the collection.
+        """Insert a single document into the collection.
 
         Args:
-            document (dict[str, Any]): The document to insert.
-            session (ClientSession, optional): A ClientSession for transactions.
+            document: Document dictionary to insert.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            InsertOneResult: The result of the insert operation.
+            InsertOneResult: Result containing the inserted document's ``_id``.
         """
         validate_session(session, self.collection._database)
         inserted_id = self.helpers._internal_insert(document)
@@ -64,20 +80,17 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> InsertManyResult:
-        """
-        Insert multiple documents into the collection.
+        """Insert multiple documents into the collection.
 
         Args:
-            documents (list[dict[str, Any]]): List of documents to insert.
-            ordered (bool, optional): If True, insert documents in the order they
-                                      appear in the list. If an error occurs,
-                                      the operation will stop. If False, the
-                                      operation will continue even if an error
-                                      occurs.
-            session (ClientSession, optional): A ClientSession for transactions.
+            documents: List of document dictionaries to insert.
+            ordered: Accepted for PyMongo API compatibility; documents are
+                inserted sequentially in list order.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            InsertManyResult: Result of the insert operation, containing a list of inserted document IDs.
+            InsertManyResult: Result containing the list of inserted document
+                ``_id`` values in insertion order.
         """
         validate_session(session, self.collection._database)
         inserted_ids = [self.helpers._internal_insert(doc) for doc in documents]
@@ -91,21 +104,25 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
-        """
-        Updates a single document in the collection based on the provided filter
-        and update operations.
+        """Update a single document matching the filter criteria.
+
+        Routes GridFS ``_files`` collections to specialized metadata updates,
+        attempts single-query SQL JSON/JSONB expression updates when the
+        filter and update operators are SQL-translatable, and falls back to
+        Tier 3 Python updates otherwise.
 
         Args:
-            filter (dict[str, Any]): A dictionary specifying the query criteria for finding the document to update.
-            update (dict[str, Any]): A dictionary specifying the update operations to apply to the document.
-            upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
-            array_filters (list[dict[str, Any]], optional): A list of filter documents for array positional operators.
-            session (ClientSession, optional): A ClientSession for transactions.
+            filter: Query criteria selecting the document to update.
+            update: Update operator specification to apply.
+            upsert: If ``True``, inserts a new document when no document
+                matches ``filter``. Defaults to ``False``.
+            array_filters: Optional list of filter documents for positional
+                array operators.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            UpdateResult: An object containing information about the update operation,
-                          including the count of matched and modified documents,
-                          and the upserted ID if applicable.
+            UpdateResult: Result containing ``matched_count``,
+                ``modified_count``, and ``upserted_id``.
         """
         validate_session(session, self.collection._database)
         # Special handling for GridFS files collections
@@ -217,7 +234,24 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         array_filters: list[dict[str, Any]] | None,
         session: ClientSession | None,
     ) -> UpdateResult:
-        """Build, apply update operators (including $setOnInsert), and insert an upsert doc."""
+        """Build and insert an upserted document from filter and update specs.
+
+        Constructs the base document from ``filter``, applies ``update``
+        (including ``$setOnInsert``) via ``_internal_update``, and inserts the
+        resulting document into the collection.
+
+        Args:
+            filter: Normalized query filter used to seed the base document.
+            update: Update operator specification applied to the new document.
+            array_filters: Optional filter predicates for positional array
+                updates.
+            session: Optional ``ClientSession`` forwarded to ``insert_one``.
+
+        Returns:
+            UpdateResult: Result with ``matched_count=0``,
+                ``modified_count=0``, and ``upserted_id`` set to the inserted
+                document's ``_id``.
+        """
         new_doc = build_upsert_base_document(filter)
         updated_doc, _ = self.helpers._internal_update(
             0, update, new_doc, array_filters, filter
@@ -233,7 +267,25 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         update: dict[str, Any],
         upsert: bool = False,
     ) -> UpdateResult:
-        """Handle updates for GridFS files collections."""
+        """Handle metadata updates for GridFS ``_files`` collections.
+
+        Supports ``$set`` operations targeting ``metadata`` or nested
+        ``metadata.<field>`` paths via SQLite JSON/JSONB ``set`` functions.
+        Returns an unmatched ``UpdateResult`` if no file matches (including
+        when ``upsert`` is ``True``, as file creation via upsert is not
+        implemented here).
+
+        Args:
+            filter: Query filter identifying the GridFS file row.
+            update: Update specification (inspected for ``"$set"`` metadata
+                keys).
+            upsert: Whether upsert was requested by the caller.
+
+        Returns:
+            UpdateResult: Result with ``matched_count=1`` and
+                ``modified_count=1`` if a file matched, or zero counts
+                otherwise.
+        """
         from ...gridfs.grid_file import build_gridfs_files_where
 
         # Get the integer ID for the file
@@ -317,20 +369,20 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         return UpdateResult(matched_count=1, modified_count=1, upserted_id=None)
 
     def _get_integer_id_for_oid(self, oid) -> int:
-        """
-        Get the integer ID for a given ObjectId.
+        """Resolve a document ``_id`` to its SQLite integer row ``id``.
 
-        This method delegates to the centralized get_integer_id_for_oid function
-        to ensure consistent ID handling across all NeoSQLite components.
+        Delegates to ``get_integer_id_for_doc_id`` to ensure consistent ID
+        resolution across NeoSQLite components.
 
         Args:
-            oid: The ObjectId to look up.
+            oid: Document ``_id`` value (such as ``ObjectId``, ``int``, or
+                ``str``) to look up.
 
         Returns:
-            int: The corresponding integer ID from the database.
+            int: Corresponding integer primary key from the collection table.
 
         Raises:
-            ValueError: If the integer ID for the ObjectId cannot be found.
+            ValueError: If no row with the given ``_id`` exists.
         """
         return get_integer_id_for_doc_id(
             self.collection.db, self.collection.name, oid
@@ -344,21 +396,25 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
-        """
-        Update multiple documents based on a filter.
+        """Update all documents matching the filter criteria.
 
-        This method updates documents in the collection that match the given filter
-        using the specified update.
+        Uses a bulk SQL ``UPDATE`` path when the filter and update operators
+        are SQL-translatable, and falls back to Tier 3 per-document updates
+        otherwise. Performs an upsert when no documents match and ``upsert``
+        is ``True``.
 
         Args:
-            filter (dict[str, Any]): A dictionary representing the filter to select documents to update.
-            update (dict[str, Any]): A dictionary representing the updates to apply.
-            upsert (bool, optional): If True, inserts a new document if no document matches the filter. Defaults to False.
-            array_filters (list[dict[str, Any]], optional): A list of filter documents for array positional operators.
-            session (ClientSession, optional): A ClientSession for transactions.
+            filter: Query criteria selecting documents to update.
+            update: Update operator specification to apply.
+            upsert: If ``True``, inserts a new document when no document
+                matches ``filter``. Defaults to ``False``.
+            array_filters: Optional list of filter documents for positional
+                array operators.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            UpdateResult: A result object containing information about the update operation.
+            UpdateResult: Result containing ``matched_count``,
+                ``modified_count``, and ``upserted_id``.
         """
         validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
@@ -450,17 +506,19 @@ class CRUDOperationsMixin(QueryEngineProtocol):
     def delete_one(
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
-        """
-        Delete a single document matching the filter.
+        """Delete a single document matching the filter criteria.
+
+        Returns ``deleted_count=0`` when the collection table does not exist.
+        Uses SQL ``LIMIT 1`` lookup when ``filter`` can be translated and
+        falls back to ``find_one`` otherwise.
 
         Args:
-            filter (dict[str, Any]): A dictionary specifying the filter conditions
-                                     for the document to delete.
-            session (ClientSession, optional): A ClientSession for transactions.
+            filter: Query criteria identifying the document to delete.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            DeleteResult: A result object indicating whether the deletion was
-                          successful or not.
+            DeleteResult: Result with ``deleted_count`` set to ``1`` if a
+                document was deleted or ``0`` otherwise.
         """
         validate_session(session, self.collection._database)
 
@@ -495,16 +553,19 @@ class CRUDOperationsMixin(QueryEngineProtocol):
     def delete_many(
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
-        """
-        Deletes multiple documents in the collection that match the provided filter.
+        """Delete all documents matching the filter criteria.
+
+        Returns ``deleted_count=0`` when the collection table does not exist.
+        Uses a direct SQL ``DELETE`` statement when ``filter`` translates to
+        SQL, or falls back to querying matching documents and deleting by
+        integer ``id``.
 
         Args:
-            filter (dict[str, Any]): A dictionary specifying the query criteria
-                                     for finding the documents to delete.
-            session (ClientSession, optional): A ClientSession for transactions.
+            filter: Query criteria identifying the documents to delete.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            DeleteResult: A result object indicating whether the deletion was successful or not.
+            DeleteResult: Result containing the count of deleted documents.
         """
         validate_session(session, self.collection._database)
 
@@ -553,20 +614,23 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         upsert: bool = False,
         session: ClientSession | None = None,
     ) -> UpdateResult:
-        """
-        Replace one document in the collection that matches the filter with the
-        replacement document.
+        """Replace a single document matching the filter criteria.
+
+        Uses SQL lookup when ``filter`` can be translated, or falls back to
+        ``find_one``, then replaces the matched row via ``_internal_replace``.
+        When no document matches and ``upsert`` is ``True``, inserts
+        ``replacement`` instead.
 
         Args:
-            filter (dict[str, Any]): A query that matches the document to replace.
-            replacement (dict[str, Any]): The new document that replaces the matched document.
-            upsert (bool, optional): If true, inserts the replacement document if no document matches the filter.
-                                     Default is False.
-            session (ClientSession, optional): A ClientSession for transactions.
+            filter: Query criteria identifying the document to replace.
+            replacement: Replacement document dictionary.
+            upsert: If ``True``, inserts ``replacement`` when no document
+                matches ``filter``. Defaults to ``False``.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            UpdateResult: A result object containing the number of matched and
-                          modified documents and the upserted ID.
+            UpdateResult: Result containing ``matched_count``,
+                ``modified_count``, and ``upserted_id``.
         """
         validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId

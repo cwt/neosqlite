@@ -11,23 +11,24 @@ def _apply_positional_update(
     array_filters: list[dict[str, Any]] | None = None,
     filter_doc: dict[str, Any] | None = None,
 ) -> bool:
-    """
-    Apply an update to array elements using positional operators.
+    """Apply an update to array elements using positional operators.
 
-    Supports:
-    - $: First matching array element
-    - $[]: All array elements
-    - $[identifier]: Filtered array elements (requires arrayFilters)
+    Supports ``$`` (first matching element), ``$[]`` (all elements), and
+    ``$[identifier]`` (elements matching ``array_filters``), as well as
+    ordinary dot-notation field paths without positional operators.
 
     Args:
-        doc: The document to update
-        field_path: The field path containing positional operator(s)
-        value: The value to set
-        array_filters: Optional list of filter documents for $[identifier]
-        filter_doc: The query filter document (for $ operator)
+        doc: Document dictionary to mutate in place.
+        field_path: Dot-separated field path optionally containing
+            positional operator segments.
+        value: Value to assign at the resolved target location.
+        array_filters: Optional list of filter dictionaries keyed by
+            identifier for ``$[identifier]`` operators.
+        filter_doc: Optional query filter document used to identify the
+            matching element for the ``$`` positional operator.
 
     Returns:
-        bool: True if update was applied, False otherwise
+        bool: ``True`` if an update was applied, ``False`` otherwise.
     """
     if not field_path:
         return False
@@ -68,11 +69,37 @@ def _apply_dollar_update(
     value: Any,
     filter_doc: dict[str, Any] | None,
 ) -> bool | None:
-    """Filter-driven "$" update; returns None to defer to legacy path."""
+    """Apply a filter-driven ``$`` positional update on a target array.
+
+    Locates the target array in ``doc`` along ``parts[:dollar_index]``,
+    resolves the matching condition from ``filter_doc``, and updates the
+    first matching element (or the first element when no filter is given).
+
+    Args:
+        doc: Document dictionary to mutate in place.
+        parts: Split field-path segments.
+        dollar_index: Index of the ``"$"`` segment within ``parts``.
+        value: Value to assign at the matched element or nested tail path.
+        filter_doc: Optional query filter document constraining the update.
+
+    Returns:
+        bool | None: ``True`` if an element was updated, ``False`` if no
+            matching element could be updated, or ``None`` if the path
+            shape should fall back to ``_apply_positional_recursive``.
+    """
     arr_segs = parts[:dollar_index]
     tail = parts[dollar_index + 1 :]
 
     def _get_at(d: Any, segs: list[str]) -> Any:
+        """Walk nested dictionaries along ``segs`` and return the value.
+
+        Args:
+            d: Root value or dictionary to traverse.
+            segs: Sequence of dictionary keys to follow.
+
+        Returns:
+            Any: Nested value if all keys exist in dicts, else ``None``.
+        """
         cur = d
         for sg in segs:
             if not isinstance(cur, dict) or sg not in cur:
@@ -117,6 +144,15 @@ def _apply_dollar_update(
             field_filter = filter_doc[base]
 
     def _pred(elem: Any) -> bool:
+        """Return whether an array element matches the resolved filter.
+
+        Args:
+            elem: Candidate element from the target array.
+
+        Returns:
+            bool: ``True`` if ``elem`` satisfies ``field_filter`` at
+                ``leaf``, ``False`` otherwise.
+        """
         if field_filter is None:
             return False
         target = elem
@@ -172,20 +208,24 @@ def _apply_positional_recursive(
     filter_doc: dict[str, Any] | None = None,
     parent_array: list[Any] | None = None,  # Track parent array for $ operator
 ) -> bool:
-    """
-    Recursively apply positional update through nested structures.
+    """Recursively apply positional update through nested structures.
+
+    Traverses ``parts`` starting at ``index`` and handles ``$[]``,
+    ``$[identifier]``, ``$``, and regular dictionary key segments.
 
     Args:
-        doc: Current document or sub-document
-        parts: Field path parts
-        index: Current part index
-        value: Value to set
-        array_filters: Filter documents for $[identifier]
-        filter_doc: Query filter for $ operator
-        parent_array: Parent array (for $ operator to know which array to update)
+        doc: Current document, sub-document, or array being traversed.
+        parts: List of field path segments.
+        index: Current segment index in ``parts``.
+        value: Value to assign at the target location.
+        array_filters: Optional list of filter dictionaries for
+            ``$[identifier]`` operators.
+        filter_doc: Optional query filter dictionary for ``$`` operators.
+        parent_array: Parent list passed when descending into a positional
+            operator segment.
 
     Returns:
-        bool: True if update was applied
+        bool: ``True`` if the update succeeded, ``False`` otherwise.
     """
     if index >= len(parts):
         return False
@@ -275,6 +315,15 @@ def _apply_positional_recursive(
         )
 
         def _apply_to(i: int, elem: Any) -> bool:
+            """Assign ``value`` or recurse into ``arr[i]`` for ``$``.
+
+            Args:
+                i: Index of the matched element in ``arr``.
+                elem: Element at ``arr[i]``.
+
+            Returns:
+                bool: ``True`` if the element or nested field was updated.
+            """
             if is_last:
                 arr[i] = value
                 return True
@@ -357,8 +406,17 @@ def _resolve_filter_value(
 ) -> Any:
     """Find the query filter that applies to the given path prefix (#99).
 
-    Looks for a flat dotted key first ("a.scores"), then walks nested
-    structures. Returns None when the filter says nothing about the path.
+    Looks for a flat dotted key first (e.g., ``"a.scores"``), then walks
+    nested dictionary structures along ``segments``. Returns ``None`` when
+    ``filter_doc`` does not constrain the path.
+
+    Args:
+        filter_doc: Query filter dictionary or ``None``.
+        segments: Path segments preceding the positional operator.
+
+    Returns:
+        Any: Matching filter value or operator dictionary, or ``None`` if
+            no constraint applies to the path.
     """
     if not filter_doc:
         return None
@@ -375,15 +433,19 @@ def _resolve_filter_value(
 
 
 def _matches_filter(elem: Any, filter_spec: dict[str, Any] | Any) -> bool:
-    """
-    Check if an array element matches a filter specification.
+    """Check if an array element matches a filter specification.
+
+    Supports scalar equality, operator-only dictionaries (keys starting
+    with ``"$"``), and field-level filter dictionaries on sub-documents.
 
     Args:
-        elem: The array element to check
-        filter_spec: The filter specification (can be a dict with operators or a scalar value)
+        elem: Array element to evaluate.
+        filter_spec: Filter dictionary with operators/field criteria or a
+            scalar value for equality matching.
 
     Returns:
-        bool: True if element matches the filter
+        bool: ``True`` if ``elem`` matches ``filter_spec``, ``False``
+            otherwise.
     """
     # Handle scalar filter (direct equality check)
     if not isinstance(filter_spec, dict):
@@ -422,15 +484,23 @@ def _matches_filter(elem: Any, filter_spec: dict[str, Any] | Any) -> bool:
 
 
 def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
-    """
-    Check if a value matches query operators.
+    """Check if a value matches a dictionary of query operators.
+
+    Evaluates ``$eq``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, ``$ne``,
+    ``$in``, ``$nin``, ``$exists``, ``$size``, ``$regex``/``$options``, and
+    ``$type`` against ``value``.
 
     Args:
-        value: The value to check
-        operators: Dictionary of query operators
+        value: Value to test against the operators.
+        operators: Dictionary mapping MongoDB operator names to expected
+            values.
 
     Returns:
-        bool: True if value matches all operators
+        bool: ``True`` if ``value`` satisfies every operator in
+            ``operators``, ``False`` otherwise.
+
+    Raises:
+        ValueError: If an unsupported ``$``-prefixed operator is present.
     """
     for op, expected in operators.items():
         match op:
@@ -508,13 +578,15 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
 
 
 def _set_nested_field(doc: dict[str, Any], field_path: str, value: Any) -> None:
-    """
-    Set a nested field value using dot notation.
+    """Set a nested field value using dot notation.
+
+    Creates intermediate dictionaries for any missing path segments before
+    assigning ``value`` to the final key.
 
     Args:
-        doc: The document to update
-        field_path: Dot-notation field path (e.g., "a.b.c")
-        value: The value to set
+        doc: Document dictionary to update in place.
+        field_path: Dot-notation field path (e.g., ``"a.b.c"``).
+        value: Value to set at the target field.
     """
     parts = field_path.split(".")
     current = doc

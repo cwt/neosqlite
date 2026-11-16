@@ -22,10 +22,32 @@ from .base import BaseSqlMixin
 
 
 class StringMixin(BaseSqlMixin):
-    """$concat / $toLower / $toUpper / $substr / $trim / $regexMatch / $replaceAll → SQL."""
+    """Mixin for converting string aggregation operators to SQL expressions.
+
+    Provides SQL translation for string manipulation, length, substring,
+    trimming, splitting, replacement, comparison, and regex matching
+    operators (such as ``$concat``, ``$toLower``, ``$toUpper``,
+    ``$strLenBytes``, ``$strLenCP``, ``$substr``, ``$substrBytes``,
+    ``$substrCP``, ``$trim``, ``$ltrim``, ``$rtrim``, ``$indexOfBytes``,
+    ``$indexOfCP``, ``$strcasecmp``, ``$regexMatch``, ``$regexFind``,
+    ``$regexFindAll``, ``$split``, ``$replaceAll``, and ``$replaceOne``).
+    """
 
     def _build_pattern_with_options(self, regex: str, options: str) -> str:
-        """Build regex pattern with inline flags."""
+        """Build a regex pattern with inline PCRE/Python flag modifiers.
+
+        Filters ``options`` case-insensitively for supported flags
+        (``i``, ``m``, ``s``, ``x``) and prepends ``(?flags)`` to ``regex``
+        when any valid flag is present.
+
+        Args:
+            regex: Regular expression pattern string.
+            options: Regex option flags string (e.g., ``"im"``).
+
+        Returns:
+            str: Pattern string with inline flags prepended if applicable,
+                otherwise the original ``regex`` unchanged.
+        """
         if not options:
             return regex
         flag_str = ""
@@ -37,7 +59,31 @@ class StringMixin(BaseSqlMixin):
     def _convert_string_operator(
         self, operator: str, operands: list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert string operators to SQL."""
+        """Convert a MongoDB string aggregation operator to SQL.
+
+        Translates supported string operators into SQLite SQL expressions
+        and ordered parameter lists, duplicating parameter slices when an
+        operand SQL fragment is interpolated multiple times.
+
+        Args:
+            operator: MongoDB string operator name (e.g., ``"$concat"``,
+                ``"$trim"``, ``"$regexMatch"``, ``"$replaceAll"``).
+            operands: Operator arguments as a list of operand expressions,
+                a single operand (normalized for unary operators), or a
+                specification dictionary for named-argument operators such as
+                ``$trim`` and ``$regexMatch``.
+
+        Returns:
+            tuple[str, list[Any]]: A tuple of the generated SQL expression
+                string and its ordered parameter list.
+
+        Raises:
+            ValueError: If operand count or required specification keys are
+                invalid for the given operator.
+            NotImplementedError: If ``$substrBytes`` uses non-integer
+                bounds, ``$split`` uses a dynamic delimiter, or the
+                operator is not supported in the SQL tier.
+        """
         match operator:
             case "$concat":
                 if len(operands) < 1:

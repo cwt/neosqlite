@@ -13,14 +13,44 @@ from .base import BaseSqlMixin
 
 
 class MathTrigMixin(BaseSqlMixin):
-    """$abs / $ceil / $floor / $sqrt / $pow / $sin / $cos / $atan2 → SQL."""
+    """Mixin converting MongoDB math, trig, and angle operators to SQL.
+
+    Translates mathematical operators (``$abs``, ``$ceil``, ``$floor``,
+    ``$trunc``, ``$sqrt``, ``$pow``, ``$ln``, ``$log10``, ``$log2``,
+    ``$log``, ``$exp``, ``$sigmoid``), trigonometric and hyperbolic operators
+    (``$sin``, ``$cos``, ``$tan``, ``$asin``, ``$acos``, ``$atan``,
+    ``$atan2``, ``$sinh``, ``$cosh``, ``$tanh``, ``$asinh``, ``$acosh``,
+    ``$atanh``), and angle conversions (``$degreesToRadians``,
+    ``$radiansToDegrees``) to SQLite SQL functions. Defers ``$round`` to the
+    Python tier to preserve MongoDB ties-to-even rounding semantics.
+    """
 
     _log2_warned: bool
 
     def _convert_math_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert math operators to SQL."""
+        """Convert a MongoDB math operator expression to SQL.
+
+        Handles two-operand operators (``$pow``, ``$log``), ``$sigmoid`` in
+        both scalar and ``{input, onNull}`` object forms, and single-operand
+        functions (``$abs``, ``$ceil``, ``$floor``, ``$trunc``, ``$sqrt``,
+        ``$ln``, ``$log10``, ``$log2``, ``$exp``). Defers ``$round`` to Python
+        via ``NotImplementedError`` to preserve ties-to-even rounding.
+
+        Args:
+            operator: MongoDB math operator name.
+            operands: Single operand expression, operand list, or ``$sigmoid``
+                specification dictionary.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If an operator receives an unexpected number of
+                operands.
+            NotImplementedError: For ``$round`` or unsupported math operators.
+        """
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$exp: 1} and {$exp: [1]}
         # Note: $pow, $log, $sigmoid, and $round can have multiple operands
@@ -149,11 +179,22 @@ class MathTrigMixin(BaseSqlMixin):
     ) -> tuple[str, list[Any]]:
         """Convert trigonometric and hyperbolic operators to SQL.
 
+        Handles two-operand ``$atan2`` and single-operand circular, inverse,
+        hyperbolic, and inverse-hyperbolic functions by mapping them to
+        matching SQLite math functions.
+
         Args:
-            operator: The trig operator ($sin, $cos, etc.)
-            operands: The operand(s). Can be:
-                      - A single value (string, number) for simple cases like {"$sin": "$angle"}
-                      - A list of values for array format like {"$sin": ["$angle"]}
+            operator: Trigonometric or hyperbolic operator name (for example,
+                ``$sin``, ``$cos``, or ``$atan2``).
+            operands: Operand expression or list of operand expressions. A
+                single value is normalized to a one-element list.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If the operand count does not match the operator.
+            NotImplementedError: If ``operator`` is not supported in SQL.
         """
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$sin: "$angle"} and {$sin: ["$angle"]}
@@ -217,7 +258,24 @@ class MathTrigMixin(BaseSqlMixin):
     def _convert_angle_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert angle conversion operators to SQL."""
+        """Convert angle conversion operators to SQL expressions.
+
+        Translates ``$degreesToRadians`` and ``$radiansToDegrees`` into
+        arithmetic expressions using SQLite's ``pi()`` function.
+
+        Args:
+            operator: Angle conversion operator name (``$degreesToRadians`` or
+                ``$radiansToDegrees``).
+            operands: Single angle expression or one-element list containing
+                the angle expression.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``operands`` does not resolve to one operand.
+            NotImplementedError: If ``operator`` is not supported in SQL.
+        """
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$degreesToRadians: 180} and {$degreesToRadians: [180]}
         if not isinstance(operands, list):

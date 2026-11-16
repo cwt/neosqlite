@@ -12,12 +12,37 @@ from .base import BaseSqlMixin
 
 
 class DataSizeMixin(BaseSqlMixin):
-    """$binarySize / $bsonSize → SQL."""
+    """Mixin for converting data size operators to SQL expressions.
+
+    Provides SQL translation for the ``$binarySize`` and ``$bsonSize``
+    aggregation expression operators using SQLite string and JSON
+    functions.
+    """
 
     def _convert_data_size_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $binarySize and $bsonSize operators to SQL."""
+        """Convert ``$binarySize`` and ``$bsonSize`` operators to SQL.
+
+        For ``$binarySize``, extracts the base64 payload from NeoSQLite
+        binary wrapper objects (or falls back to the raw value) and
+        approximates the decoded byte length from the base64 text length.
+        For ``$bsonSize``, computes the length of the serialized JSON
+        representation via ``length(json(...))``.
+
+        Args:
+            operator: Operator name (``"$binarySize"`` or ``"$bsonSize"``).
+            operands: Single operand expression or a 1-element list
+                containing the operand expression.
+
+        Returns:
+            tuple[str, list[Any]]: A tuple of the generated SQL expression
+                string and its corresponding query parameter list.
+
+        Raises:
+            ValueError: If ``operands`` does not normalize to exactly one
+                operand.
+        """
         if not isinstance(operands, list):
             operands = [operands]
 

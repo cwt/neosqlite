@@ -73,8 +73,17 @@ def _search_index_fields(spec: dict[str, Any]) -> list[str]:
     """Extract FTS field names from an Atlas-style search index spec.
 
     Understands ``definition.mappings.fields`` maps, ``definition.fields``
-    lists, ``definition.field`` / plain-string definitions, and falls back
-    to the spec ``name``. Raises ValueError when no field is derivable.
+    lists, ``definition.field`` or plain-string definitions, and falls back
+    to the spec ``name``.
+
+    Args:
+        spec: Atlas-style search index specification dictionary.
+
+    Returns:
+        list[str]: Non-empty list of indexed field names.
+
+    Raises:
+        ValueError: When no text field name can be derived from ``spec``.
     """
     definition = spec.get("definition", {})
     if isinstance(definition, str):
@@ -98,7 +107,20 @@ def _search_index_fields(spec: dict[str, Any]) -> list[str]:
 
 
 def _bulk_write_error(exc: Exception, index: int) -> dict[str, Any]:
-    """Build a MongoDB-style writeError document for a failed bulk op."""
+    """Build a MongoDB-style writeError document for a failed bulk op.
+
+    Maps SQLite ``IntegrityError`` or ``UNIQUE`` constraint messages to
+    MongoDB duplicate-key error code ``11000``, and all other failures to
+    error code ``8``.
+
+    Args:
+        exc: Exception raised by the underlying collection write.
+        index: Zero-based index of the failing operation in the batch.
+
+    Returns:
+        dict[str, Any]: Dictionary containing ``index``, ``code``, and
+            ``errmsg`` keys.
+    """
     from neosqlite._sqlite import sqlite3
 
     message = str(exc)
@@ -112,8 +134,15 @@ def _bulk_write_error(exc: Exception, index: int) -> dict[str, Any]:
 def _sanitize_db_name(db_name: Any) -> str:
     """Validate a logical database name for file mapping.
 
+    Args:
+        db_name: Candidate database name to validate against ``_DB_NAME_RE``.
+
+    Returns:
+        str: The validated database name unchanged.
+
     Raises:
-        ValueError: If the name is not a safe file stem.
+        ValueError: If ``db_name`` is not a safe alphanumeric/dash/underscore
+            file stem matching ``_DB_NAME_RE``.
     """
     if not isinstance(db_name, str) or not _DB_NAME_RE.match(db_name):
         raise ValueError(f"Invalid database name: {db_name!r}")
@@ -121,10 +150,17 @@ def _sanitize_db_name(db_name: Any) -> str:
 
 
 def _msg_db_name(msg: Any) -> str:
-    """Best-effort logical db name from a wire message (lock selection only).
+    """Extract best-effort logical db name from a wire message for locking.
 
-    Mirrors the defaults used by the handlers themselves ($db -> "test"
-    for OP_MSG commands, "db" -> "admin" for legacy OP_QUERY).
+    Mirrors the defaults used by the handlers themselves (``$db`` defaulting
+    to ``"test"`` for ``OP_MSG`` commands, ``"db"`` defaulting to ``"admin"``
+    for legacy ``OP_QUERY``).
+
+    Args:
+        msg: Decoded wire-protocol message dictionary (or arbitrary value).
+
+    Returns:
+        str: Logical database name, defaulting to ``"test"`` on fallback.
     """
     try:
         if isinstance(msg, dict):
@@ -150,14 +186,32 @@ def _msg_db_name(msg: Any) -> str:
 def _serialize(func):
     """Serialize access to the SQLite connection(s).
 
-    Single-file (legacy) mode uses one global RLock, as before. Multi-DB
-    mode uses one RLock per logical database so different files can proceed
-    in parallel. Lock ordering: per-db lock -> _dict_lock -> _sessions_lock.
-    Never acquire a per-db lock while holding _dict_lock.
+    Single-file (legacy) mode uses one global ``RLock``, as before. Multi-DB
+    mode uses one ``RLock`` per logical database so different files can
+    proceed in parallel. Lock ordering: per-db lock -> ``_dict_lock`` ->
+    ``_sessions_lock``. Never acquire a per-db lock while holding
+    ``_dict_lock``.
+
+    Args:
+        func: Handler method whose first argument after ``self`` is a wire
+            message dictionary.
+
+    Returns:
+        Callable: Wrapped method protected by the per-database lock.
     """
 
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
+        """Acquire the target database lock and invoke the wrapped handler.
+
+        Args:
+            *args: Positional arguments forwarded to ``func``; ``args[0]``
+                is inspected for the target database name.
+            **kwargs: Keyword arguments forwarded to ``func``.
+
+        Returns:
+            Any: Return value of ``func(self, *args, **kwargs)``.
+        """
         msg = args[0] if args else {}
         db_name = _msg_db_name(msg) if isinstance(msg, dict) else "test"
         with self._lock_for(db_name):
@@ -167,7 +221,15 @@ def _serialize(func):
 
 
 class NeoSQLiteHandler:
-    """Handle MongoDB commands and translate them to SQLite operations."""
+    """Handle MongoDB commands and translate them to SQLite operations.
+
+    Supports single-file legacy mode, directory-backed per-database SQLite
+    files (``files`` mode with LRU connection eviction), and isolated
+    in-memory databases (``memory`` mode). Coordinates per-database reentrant
+    locks, client sessions and transactions, cursor batching, GridFS bucket
+    operations, and trigger-backed change streams across ``OP_MSG`` and
+    legacy ``OP_QUERY`` wire commands.
+    """
 
     KNOWN_COMMANDS = frozenset(
         {
@@ -214,8 +276,12 @@ class NeoSQLiteHandler:
         """Create the handler.
 
         Args:
-            db_path: Legacy single-file path or ":memory:". A directory path
-                enables multi-file mode (one ``<db>.db`` per logical db).
+            db_path: Legacy single-file path or ``":memory:"``. A directory
+                path enables multi-file mode (one ``<db>.db`` per logical db).
+            tokenizers: Optional list of FTS tokenizer configurations passed
+                to each ``neosqlite.Connection``.
+            journal_mode: SQLite journal mode string (such as ``"WAL"``)
+                applied to opened connections.
             data_dir: Explicit multi-file base directory. Takes precedence
                 over a file-style ``db_path``. ``"memory"`` selects isolated
                 in-memory databases.
@@ -311,7 +377,15 @@ class NeoSQLiteHandler:
         self._change_stream_manager = ChangeStreamManager()
 
     def _lock_for(self, db_name: str) -> threading.RLock:
-        """Return the lock guarding a logical database."""
+        """Return the lock guarding a logical database.
+
+        Args:
+            db_name: Logical database name.
+
+        Returns:
+            threading.RLock: Global ``_db_lock`` in single-file mode or the
+                per-database ``RLock`` otherwise.
+        """
         if self._mode == "single":
             return self._db_lock
         with self._dict_lock:
@@ -322,12 +396,31 @@ class NeoSQLiteHandler:
             return lock
 
     def _db_file(self, db_name: str) -> str:
-        """SQLite file backing a logical database (files mode only)."""
+        """Return the SQLite file path backing a logical database.
+
+        Intended for ``files`` mode only (requires ``self._data_dir``).
+
+        Args:
+            db_name: Sanitized logical database name.
+
+        Returns:
+            str: Filesystem path ``<data_dir>/<db_name>.db``.
+        """
         assert self._data_dir is not None
         return os.path.join(self._data_dir, f"{db_name}.db")
 
     def _open_db_conn(self, db_name: str) -> Connection:
-        """Open (but not yet cache) the connection for a logical database."""
+        """Open (but not yet cache) the connection for a logical database.
+
+        Args:
+            db_name: Logical database name to validate and open.
+
+        Returns:
+            Connection: Newly opened ``neosqlite.Connection`` instance.
+
+        Raises:
+            ValueError: If ``db_name`` fails ``_sanitize_db_name``.
+        """
         safe = _sanitize_db_name(db_name)
         if self._mode == "memory":
             return Connection(
@@ -344,6 +437,22 @@ class NeoSQLiteHandler:
         )
 
     def get_database(self, db_name: str) -> Connection:
+        """Return the ``Connection`` for ``db_name``, opening it if needed.
+
+        In ``single`` mode all logical database names alias ``self.conn``.
+        In ``files`` or ``memory`` mode validates ``db_name``, looks up or
+        opens a dedicated connection under ``_dict_lock``, updates LRU order,
+        and triggers ``_evict_lru_locked`` when opening a new database.
+
+        Args:
+            db_name: Logical database name.
+
+        Returns:
+            Connection: Active connection backing ``db_name``.
+
+        Raises:
+            ValueError: If ``db_name`` is invalid in multi-database mode.
+        """
         if self._mode == "single":
             if db_name not in self.databases:
                 self.databases[db_name] = self.conn
@@ -361,7 +470,17 @@ class NeoSQLiteHandler:
             return conn
 
     def _conn_is_busy(self, db_name: str) -> bool:
-        """True when a database must not be evicted (open tx or watch)."""
+        """Return whether a database has an open transaction or watch stream.
+
+        Busy databases must not be evicted by ``_evict_lru_locked``.
+
+        Args:
+            db_name: Logical database name to inspect.
+
+        Returns:
+            bool: ``True`` if a session on ``db_name`` has an open
+                transaction or active change stream activity exists.
+        """
         with self._sessions_lock:
             if any(
                 key[1] == db_name and session.in_transaction
@@ -371,7 +490,14 @@ class NeoSQLiteHandler:
         return self._change_stream_manager.has_activity(db_name)
 
     def _evict_db_locked(self, db_name: str) -> None:
-        """Close and forget one evicted connection (holds _dict_lock)."""
+        """Close and forget one evicted connection (holds ``_dict_lock``).
+
+        Ends any cached sessions bound to ``db_name`` and closes the
+        connection, ignoring cleanup exceptions.
+
+        Args:
+            db_name: Logical database name to evict from ``_conns``.
+        """
         conn = self._conns.pop(db_name, None)
         self.databases.pop(db_name, None)
         with self._sessions_lock:
@@ -416,7 +542,12 @@ class NeoSQLiteHandler:
             self._evict_db_locked(victim)
 
     def close_all(self) -> None:
-        """Close every open database connection (multi-DB shutdown)."""
+        """Close every open database connection for shutdown.
+
+        Clears cached connection maps, invalidates all change streams, and
+        closes every connection including ``self.conn`` while ignoring
+        close errors.
+        """
         with self._dict_lock:
             conns = list(self._conns.values())
             self._conns.clear()
@@ -434,19 +565,43 @@ class NeoSQLiteHandler:
                 pass
 
     def __enter__(self) -> Self:
+        """Enter the handler context manager.
+
+        Returns:
+            Self: This ``NeoSQLiteHandler`` instance.
+        """
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit the context manager and close all database connections.
+
+        Args:
+            exc_type: Exception class if raised within the context, else
+                ``None``.
+            exc_val: Exception instance if raised within the context, else
+                ``None``.
+            exc_tb: Traceback object if raised within the context, else
+                ``None``.
+        """
         self.close_all()
 
     def __del__(self) -> None:
+        """Close open database connections on garbage collection."""
         try:
             self.close_all()
         except Exception:
             pass
 
     def _drop_file_db(self, db_name: str) -> None:
-        """Close, unlink and forget a file/memory database."""
+        """Close, unlink, and forget a file or memory database.
+
+        Invalidates change streams, closes and removes the cached connection,
+        deletes the ``.db`` file in ``files`` mode, and removes matching
+        scoped sessions.
+
+        Args:
+            db_name: Logical database name to drop.
+        """
         self._change_stream_manager.invalidate(db_name)
         with self._dict_lock:
             conn = self._conns.pop(db_name, None)
@@ -471,11 +626,17 @@ class NeoSQLiteHandler:
 
     @staticmethod
     def _first_batch_size(cmd: dict[str, Any]) -> int:
-        """Batch size for a find/aggregate first batch.
+        """Return the first-batch size for a find or aggregate command.
 
         Honors top-level ``batchSize`` and ``cursor: {batchSize}`` (the
-        aggregate form). Missing/zero means the server default; negative
-        mirrors MongoDB single-batch semantics via abs().
+        aggregate form). Missing or zero uses ``_DEFAULT_BATCH_SIZE``;
+        negative values mirror MongoDB single-batch semantics via ``abs()``.
+
+        Args:
+            cmd: Parsed command body dictionary.
+
+        Returns:
+            int: Positive batch size for the initial cursor response.
         """
         raw = cmd.get("batchSize", None)
         if raw is None:
@@ -494,11 +655,19 @@ class NeoSQLiteHandler:
     def _fit_bson_budget(
         docs: list[dict[str, Any]], limit: int = MAX_BSON_DOCUMENT_SIZE
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Split docs so the head fits in a BSON size budget.
+        """Split documents so the head fits within a BSON size budget.
 
-        Always keeps at least one document in the head (an oversized
-        single document is returned as-is; real MongoDB would error,
-        NX documents the leniency).
+        Always keeps at least one document in ``head`` (an oversized single
+        document is returned as-is rather than raising, documenting NX's
+        leniency compared to MongoDB).
+
+        Args:
+            docs: Ordered list of candidate response documents.
+            limit: Maximum cumulative BSON byte budget for ``head``.
+
+        Returns:
+            tuple[list[dict[str, Any]], list[dict[str, Any]]]: Tuple of
+                ``(head, remainder)`` slices.
         """
         from bson import BSON
 
@@ -523,7 +692,19 @@ class NeoSQLiteHandler:
         db_name: str,
         owner: Any = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Split docs into (firstBatch, cursorId), storing the remainder."""
+        """Split ``docs`` into ``(firstBatch, cursorId)``, storing remainder.
+
+        Args:
+            docs: Full list of result documents.
+            batch_size: Maximum document count for the first batch.
+            ns: Target namespace string (``"<db>.<collection>"``).
+            db_name: Logical database name owning the cursor.
+            owner: Optional connection identifier owning the cursor.
+
+        Returns:
+            tuple[list[dict[str, Any]], int]: First batch of documents and
+                allocated cursor ID (``0`` if all documents fit).
+        """
         first, rest = self._fit_bson_budget(docs[:batch_size])
         rest = rest + docs[batch_size:]
         if not rest:
@@ -541,7 +722,16 @@ class NeoSQLiteHandler:
     def _getmore_data(
         self, cursor_id: int, batch_size: int
     ) -> dict[str, Any] | None:
-        """Next batch for a data cursor, or None if unknown/exhausted."""
+        """Return the next batch for a data cursor, or ``None`` if absent.
+
+        Args:
+            cursor_id: Numeric cursor identifier from a prior response.
+            batch_size: Maximum number of documents to return in this batch.
+
+        Returns:
+            dict[str, Any] | None: Cursor payload with ``id`` (``0`` when
+                exhausted), ``ns``, and ``nextBatch``, or ``None`` if unknown.
+        """
         with self._cursors_lock:
             entry = self._cursors.get(cursor_id)
             if entry is None:
@@ -559,7 +749,14 @@ class NeoSQLiteHandler:
         return {"id": live_id, "ns": ns, "nextBatch": batch}
 
     def _kill_data_cursors(self, cursor_ids: list[int]) -> list[int]:
-        """Remove data cursors, returning the killed ids."""
+        """Remove data cursors by ID and return the removed identifiers.
+
+        Args:
+            cursor_ids: List of numeric data cursor IDs to close.
+
+        Returns:
+            list[int]: Subset of ``cursor_ids`` that existed and were removed.
+        """
         killed = []
         with self._cursors_lock:
             for cid in cursor_ids:
@@ -569,7 +766,11 @@ class NeoSQLiteHandler:
         return killed
 
     def close_cursors_for_owner(self, owner: Any) -> None:
-        """Drop data cursors owned by a disconnected client connection."""
+        """Drop data cursors owned by a disconnected client connection.
+
+        Args:
+            owner: Client connection identifier, or ``None`` (no-op).
+        """
         if owner is None:
             return
         with self._cursors_lock:
@@ -581,21 +782,44 @@ class NeoSQLiteHandler:
                 del self._cursors[cid]
 
     def _convert_objectids(self, doc: dict) -> dict:
-        """Convert PyMongo ObjectIds to NeoSQLite ObjectIds recursively."""
+        """Convert PyMongo ObjectIds to NeoSQLite ObjectIds recursively.
+
+        Args:
+            doc: Document or filter dictionary to transform.
+
+        Returns:
+            dict: Converted dictionary with NeoSQLite ``ObjectId`` instances.
+        """
         from nx_27017.utils import convert_bson_to_neo_objectids
 
         return convert_bson_to_neo_objectids(doc)
 
     def _session_scope(self, db_name: str) -> str:
-        """Session namespace: one shared scope in single-file mode (all
-        logical databases share one connection there), per-database
-        otherwise."""
+        """Return the session namespace key for ``db_name``.
+
+        Single-file mode uses one shared empty-string scope because all
+        logical databases share one SQLite connection; multi-DB modes scope
+        sessions per database.
+
+        Args:
+            db_name: Logical database name.
+
+        Returns:
+            str: ``""`` in single-file mode, otherwise ``db_name``.
+        """
         if self._mode == "single":
             return ""
         return db_name
 
     def _tx_sessions(self, session_id: str) -> list[Any]:
-        """Sessions with an open transaction for an lsid (any scope)."""
+        """Return all sessions with an open transaction for ``session_id``.
+
+        Args:
+            session_id: Extracted logical session ID string.
+
+        Returns:
+            list[Any]: Active transactional session objects across all scopes.
+        """
         with self._sessions_lock:
             return [
                 sess
@@ -606,12 +830,17 @@ class NeoSQLiteHandler:
     def _apply_write_concern(
         self, db: Connection, db_name: str, write_concern: Any
     ) -> None:
-        """Map a writeConcern document onto SQLite PRAGMAs for one database.
+        """Map a ``writeConcern`` document onto SQLite PRAGMAs for one db.
 
-        w:0 -> synchronous=OFF, w:1 -> NORMAL, j:true -> FULL (see
-        Connection._apply_write_concern). w:majority/w:2+ and wtimeoutMS
-        have no single-node meaning and are accepted without effect.
-        Re-applies only on change per database.
+        ``w:0`` maps to ``synchronous=OFF``, ``w:1`` maps to ``NORMAL``, and
+        ``j:true`` maps to ``FULL`` (see ``Connection._apply_write_concern``).
+        ``w:majority``/``w:2+`` and ``wtimeoutMS`` have no single-node meaning
+        and are accepted without effect. Re-applies only on change per db.
+
+        Args:
+            db: Target ``neosqlite.Connection`` instance.
+            db_name: Logical database name used as cache key.
+            write_concern: Raw ``writeConcern`` value from the command doc.
         """
         if not isinstance(write_concern, dict) or not write_concern:
             return
@@ -626,7 +855,18 @@ class NeoSQLiteHandler:
             logger.debug("writeConcern apply skipped: %s", exc)
 
     def _find_session(self, session_id: str, db_name: str) -> Any | None:
-        """Find a session for (lsid, db), falling back to any db (compat)."""
+        """Find a cached session for ``(session_id, db_name)``.
+
+        In ``single`` mode, falls back to any session matching ``session_id``
+        regardless of database scope.
+
+        Args:
+            session_id: Extracted logical session ID string.
+            db_name: Target logical database name.
+
+        Returns:
+            Any | None: Matching session object, or ``None`` if absent.
+        """
         scope = self._session_scope(db_name)
         with self._sessions_lock:
             session = self._sessions.get((session_id, scope))
@@ -642,12 +882,19 @@ class NeoSQLiteHandler:
             return None
 
     def _reject_cross_db_tx(self, session_id: str, scope: str) -> None:
-        """Fail explicitly when an lsid with an open tx touches another db.
+        """Fail if an ``lsid`` with an open transaction touches another db.
 
-        SQLite files cannot share a transaction, so a transactional
-        session may only operate on the database where its transaction
-        began. An explicit error replaces silently executing outside the
-        transaction. (holds ``_sessions_lock``.)
+        SQLite files cannot share a transaction, so a transactional session
+        may only operate on the database where its transaction began. Must
+        be called while holding ``_sessions_lock``.
+
+        Args:
+            session_id: Extracted logical session ID string.
+            scope: Target session scope from ``_session_scope``.
+
+        Raises:
+            CrossDBTransactionError: If ``session_id`` already has an open
+                transaction on a different database scope.
         """
         if self._mode == "single" or not scope:
             return
@@ -670,10 +917,21 @@ class NeoSQLiteHandler:
         db: Connection | None = None,
         db_name: str = "test",
     ) -> Any | None:
-        """Extract session from command document if lsid is provided.
+        """Get or create a session from ``command_doc`` if ``lsid`` is set.
 
         Sessions are scoped to one logical database because SQLite files
-        cannot share a transaction.
+        cannot share a transaction. Starts a transaction on the session when
+        ``startTransaction`` is truthy and none is active yet.
+
+        Args:
+            command_doc: Parsed command body dictionary.
+            db: Optional ``Connection`` used to create a new session; falls
+                back to ``self.conn``.
+            db_name: Logical database name for session scoping.
+
+        Returns:
+            Any | None: Session object for ``lsid``, or ``None`` if ``lsid``
+                is missing or yields no session ID.
         """
         lsid = command_doc.get("lsid")
         if not lsid:
@@ -709,11 +967,26 @@ class NeoSQLiteHandler:
             self._active_connections -= 1
 
     def _is_gridfs_collection(self, coll_name: str) -> bool:
-        """Check if collection name is a GridFS collection."""
+        """Check whether ``coll_name`` refers to a GridFS collection.
+
+        Args:
+            coll_name: Collection name string.
+
+        Returns:
+            bool: ``True`` if ``coll_name`` is a ``.files`` or ``.chunks``
+                GridFS collection.
+        """
         return _is_gridfs_collection(coll_name)
 
     def _get_gridfs_bucket_name(self, coll_name: str) -> str | None:
-        """Extract bucket name from GridFS collection name, or None if not GridFS."""
+        """Extract the GridFS bucket name from ``coll_name``, if any.
+
+        Args:
+            coll_name: Collection name string.
+
+        Returns:
+            str | None: Bucket name prefix, or ``None`` if not GridFS.
+        """
         return _get_gridfs_bucket_name(coll_name)
 
     def _handle_gridfs_insert(
@@ -723,7 +996,22 @@ class NeoSQLiteHandler:
         docs: list[dict],
         db: Connection,
     ) -> tuple[int, dict[str, Any]]:
-        """Handle insert operations on GridFS collections using the GridFSAdapter."""
+        """Handle insert operations on GridFS collections via adapter.
+
+        Ensures parent file metadata exists before inserting ``.chunks``
+        documents and delegates writes to ``adapter.handle_insert``.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            coll_name: Target GridFS collection name (``*.files`` or
+                ``*.chunks``).
+            docs: List of documents to insert.
+            db: Active ``neosqlite.Connection`` for the target database.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                document.
+        """
         logger.debug(
             f"_handle_gridfs_insert called: coll_name={coll_name}, doc_count={len(docs)}"
         )
@@ -766,6 +1054,23 @@ class NeoSQLiteHandler:
 
     @_serialize
     def handle_insert(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        """Handle an ``OP_MSG`` ``insert`` command.
+
+        Extracts the command body and payload documents, resolves the target
+        database and session, dispatches GridFS collections to
+        ``_handle_gridfs_insert``, ensures the collection table exists, and
+        inserts documents sequentially while honoring ``ordered`` and
+        collecting ``insertedIds`` and ``writeErrors``.
+
+        Args:
+            msg: Decoded ``OP_MSG`` request dictionary containing
+                ``request_id`` and ``sections``.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                with ``ok``, ``n``, ``insertedIds``, and optional
+                ``writeErrors``.
+        """
         request_id = msg["request_id"]
         sections = msg["sections"]
 
@@ -898,7 +1203,23 @@ class NeoSQLiteHandler:
     def handle_command(  # noqa: E501
         self, msg: dict[str, Any]
     ) -> tuple[int, dict[str, Any]]:
-        """Handle command by passing directly to NeoSQLite."""
+        """Dispatch a MongoDB ``$cmd`` message to NeoSQLite or GridFS handlers.
+
+        Parses ``body`` and ``payload`` sections from ``msg`` and handles
+        handshake commands (``ismaster``/``hello``), session and transaction
+        lifecycle commands, collection/index/search-index DDL, CRUD and
+        aggregation commands, GridFS operations, cursor commands
+        (``getMore``/``killCursors``), diagnostics, and maintenance commands,
+        falling back to ``db.command`` for unrecognized commands.
+
+        Args:
+            msg: Decoded ``OP_MSG`` (or adapted ``OP_QUERY``) message dict
+                with ``request_id`` and ``sections``.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                dictionary.
+        """
         request_id = msg["request_id"]
         sections = msg["sections"]
 
@@ -1986,7 +2307,23 @@ class NeoSQLiteHandler:
         coll_name: str,
         db_name: str = "test",
     ) -> tuple[int, dict[str, Any]]:
-        """Handle find command on GridFS collections (fs.files or fs.chunks)."""
+        """Handle find command on GridFS collections (fs.files or fs.chunks).
+
+        Delegates ``.chunks`` queries to ``_handle_gridfs_chunks_find`` and
+        queries ``.files`` via ``GridFSAdapter``, applying multi-key sorting,
+        ``skip``, and ``limit`` before returning a cursor response.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            command_doc: Parsed ``find`` command dictionary.
+            db: Active ``neosqlite.Connection`` for the target database.
+            coll_name: GridFS collection name (``*.files`` or ``*.chunks``).
+            db_name: Logical database name for cursor namespace formatting.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                with ``cursor`` or error information.
+        """
         logger.debug(f"_handle_gridfs_find called with coll_name={coll_name}")
 
         if coll_name.endswith(".chunks"):
@@ -2021,6 +2358,15 @@ class NeoSQLiteHandler:
                     reverse = int(direction) < 0
 
                     def _nested_get(doc, key):
+                        """Resolve a dotted key path inside ``doc``.
+
+                        Args:
+                            doc: Document dictionary to traverse.
+                            key: Dotted field path string.
+
+                        Returns:
+                            Any: Value at ``key``, or ``None`` if absent.
+                        """
                         cur = doc
                         for part in key.split("."):
                             if isinstance(cur, dict) and part in cur:
@@ -2043,6 +2389,15 @@ class NeoSQLiteHandler:
                     def sort_value(
                         doc: dict[str, Any], key: str = sort_key
                     ) -> Any:
+                        """Extract the sort key value at dotted ``key``.
+
+                        Args:
+                            doc: Document dictionary to inspect.
+                            key: Dotted field path to extract.
+
+                        Returns:
+                            Any: Field value, or ``None`` if missing.
+                        """
                         # Support dotted sort keys (e.g. "metadata.order")
                         cur: Any = doc
                         for part in key.split("."):
@@ -2055,6 +2410,15 @@ class NeoSQLiteHandler:
                     def sort_value_str(
                         doc: dict[str, Any], key: str = sort_key
                     ) -> str:
+                        """Return string sort key for mixed-type fallback.
+
+                        Args:
+                            doc: Document dictionary to inspect.
+                            key: Dotted field path to extract.
+
+                        Returns:
+                            str: String representation, or ``""`` if ``None``.
+                        """
                         v = sort_value(doc, key)
                         return str(v) if v is not None else ""
 
@@ -2094,11 +2458,22 @@ class NeoSQLiteHandler:
     ) -> tuple[int, dict[str, Any]]:
         """Handle aggregate command on GridFS collections.
 
-        GridFS collections (fs.files / fs.chunks) are backed by NeoSQLite
-        tables without a ``data`` column, so the generic temporary-table
-        aggregation path fails. This handler supports the subset of
-        pipelines used by PyMongo (count_documents, simple find-like
-        aggregations) by delegating to the GridFS adapter.
+        GridFS collections (``fs.files`` / ``fs.chunks``) are backed by
+        NeoSQLite tables without a ``data`` column, so the generic
+        temporary-table aggregation path fails. This handler supports the
+        subset of pipelines used by PyMongo (``count_documents``, simple
+        find-like aggregations) by delegating to the GridFS adapter.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            command_doc: Parsed ``aggregate`` command dictionary.
+            db: Active ``neosqlite.Connection`` for the target database.
+            coll_name: GridFS collection name (``*.files`` or ``*.chunks``).
+            db_name: Logical database name for cursor namespace formatting.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                containing a cursor document or error response.
         """
         try:
             adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
@@ -2144,9 +2519,27 @@ class NeoSQLiteHandler:
                         missing = [d for d in docs if d.get(sort_key) is None]
 
                         def _sv(doc, key=sort_key):
+                            """Return the sort field value for ``doc``.
+
+                            Args:
+                                doc: Document dictionary to read.
+                                key: Field name to look up.
+
+                            Returns:
+                                Any: Value at ``key`` in ``doc``.
+                            """
                             return doc.get(key)
 
                         def _sv_str(doc: Any, key: Any = sort_key) -> str:
+                            """Return stringified sort field value.
+
+                            Args:
+                                doc: Document dictionary to read.
+                                key: Field name to look up.
+
+                            Returns:
+                                str: ``str(doc.get(key))``.
+                            """
                             return str(doc.get(key))
 
                         try:
@@ -2230,7 +2623,19 @@ class NeoSQLiteHandler:
         coll_name: str,
         db_name: str = "test",
     ) -> tuple[int, dict[str, Any]]:
-        """Handle find command on fs.chunks collection."""
+        """Handle find command on a GridFS ``.chunks`` collection.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            command_doc: Parsed ``find`` command dictionary.
+            db: Active ``neosqlite.Connection`` for the target database.
+            coll_name: GridFS ``*.chunks`` collection name.
+            db_name: Logical database name for cursor namespace formatting.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                with the matching chunk cursor batch or error details.
+        """
         try:
             adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
             if adapter is None:
@@ -2274,7 +2679,19 @@ class NeoSQLiteHandler:
         query: dict[str, Any],
         db: Connection,
     ) -> tuple[int, dict[str, Any]]:
-        """Distinct over a GridFS collection via the bucket adapter."""
+        """Compute distinct field values over a GridFS collection.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            coll_name: GridFS collection name (``*.files`` or ``*.chunks``).
+            key: Top-level field name to collect distinct values from.
+            query: Filter query dictionary applied before collecting values.
+            db: Active ``neosqlite.Connection`` for the target database.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                containing ``values`` or an error message.
+        """
         try:
             adapter, _bucket = create_gridfs_adapter(db.db, coll_name)
             if adapter is None:
@@ -2305,6 +2722,16 @@ class NeoSQLiteHandler:
         ``fs.files`` deletes match ``_id`` or ``filename`` (filename
         deletes remove every version, like legacy ``delete_by_name``);
         ``fs.chunks`` deletes match ``files_id``.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            cmd_copy: Parsed ``delete`` command dictionary.
+            db: Active ``neosqlite.Connection`` for the target database.
+            coll_name: GridFS collection name (``*.files`` or ``*.chunks``).
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                from the GridFS adapter or an error dictionary.
         """
         logger.debug(f"_handle_gridfs_delete: coll_name={coll_name}")
         if not coll_name.endswith((".files", ".chunks")):
@@ -2353,7 +2780,19 @@ class NeoSQLiteHandler:
     def _handle_gridfs_upload(
         self, request_id: int, cmd_copy: dict, db: Connection
     ) -> tuple[int, dict[str, Any]]:
-        """Handle GridFS upload commands."""
+        """Handle custom GridFS upload commands via ``GridFSBucket``.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            cmd_copy: Parsed upload command dictionary containing
+                ``filename`` and optional ``bucket``, ``metadata``,
+                ``chunkSize``, and ``data``.
+            db: Active ``neosqlite.Connection`` for the target database.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                containing ``fileId`` on success or an error message.
+        """
         try:
             filename = cmd_copy.get("filename")
             if not filename:
@@ -2389,7 +2828,18 @@ class NeoSQLiteHandler:
     def _handle_gridfs_download(
         self, request_id: int, cmd_copy: dict, db: Connection
     ) -> tuple[int, dict[str, Any]]:
-        """Handle GridFS download commands."""
+        """Handle custom GridFS download commands via ``GridFSBucket``.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            cmd_copy: Parsed download command dictionary containing
+                ``fileId`` and optional ``bucket``.
+            db: Active ``neosqlite.Connection`` for the target database.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                containing ``data`` bytes on success or an error message.
+        """
         try:
             file_id = cmd_copy.get("fileId")
             if not file_id:
@@ -2414,11 +2864,22 @@ class NeoSQLiteHandler:
     def _handle_bulk_write(
         self, request_id: int, cmd: dict, command_doc: dict
     ) -> tuple[int, dict[str, Any]]:
-        """Handle the client-level bulkWrite command (MongoDB 8.0+).
+        """Handle the client-level ``bulkWrite`` command (MongoDB 8.0+).
 
         Fans each op out to the target namespace's collection. Ops may span
         databases; each runs under its own database session (cross-file
         atomicity is unsupported and documented).
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            cmd: Mutable command dictionary containing ``ops``, ``nsInfo``,
+                ``ordered``, ``errorsOnly``, and optional ``writeConcern``.
+            command_doc: Original command body used to resolve client
+                sessions (``lsid``).
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                summarizing operation counts and cursor batch results.
         """
         ns_info = cmd.get("nsInfo", [])
         namespaces = [
@@ -2571,6 +3032,24 @@ class NeoSQLiteHandler:
         db: Connection,
         db_name: str = "test",
     ) -> tuple[int, dict[str, Any]]:
+        """Handle a ``delete`` command against a regular collection.
+
+        Resolves the collection name, binds any session and write concern,
+        and executes each entry in ``deletes`` via ``delete_many`` (when
+        ``limit == 0``) or ``delete_one``, honoring ``ordered`` and
+        collecting any ``writeErrors``.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            command_doc: Parsed ``delete`` command dictionary.
+            db: Active ``neosqlite.Connection`` for the target database.
+            db_name: Logical database name for session/writeConcern scoping.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                with ``ok``, ``n`` deleted count, and optional
+                ``writeErrors``.
+        """
         coll_name = command_doc.get("delete")
         if not coll_name:
             for key in command_doc:
@@ -2629,10 +3108,22 @@ class NeoSQLiteHandler:
     ) -> tuple[int, dict[str, Any]]:
         """Handle change stream aggregate command.
 
-        Tracking is trigger-backed (see changestream module): opening the
+        Tracking is trigger-backed (see ``changestream`` module): opening the
         stream installs SQLite triggers via a persistent NeoSQLite watcher,
-        and getMore pulls new rows. Dotted names (e.g. GridFS ``fs.files``)
-        cannot have triggers and yield empty streams.
+        and ``getMore`` pulls new rows. Dotted names (e.g. GridFS
+        ``fs.files``) cannot have triggers and yield empty streams.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            coll_name: Target collection name being watched.
+            pipeline: Aggregation pipeline beginning with ``$changeStream``.
+            db: Active ``neosqlite.Connection`` for the target database.
+            db_name: Logical database name for cursor namespace formatting.
+            owner: Optional connection identifier owning the change stream.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                containing an initial empty cursor batch and resume token.
         """
         try:
             options = extract_change_stream_options(pipeline)
@@ -2668,6 +3159,9 @@ class NeoSQLiteHandler:
         Called when a client disconnects so its change streams (and their
         registered listeners) do not leak for the life of the process.
         Data cursors owned by the connection are dropped as well.
+
+        Args:
+            conn_id: Client connection identifier, or ``None`` (no-op).
         """
         if conn_id is None:
             return
@@ -2677,7 +3171,19 @@ class NeoSQLiteHandler:
     def _handle_server_status(
         self, request_id: int, db: Connection
     ) -> tuple[int, dict[str, Any]]:
-        """Handle serverStatus command."""
+        """Handle ``serverStatus`` and ``buildInfo`` diagnostics commands.
+
+        Collects process resident/virtual memory statistics, server uptime,
+        and active connection counts into a MongoDB-compatible status doc.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            db: Active ``neosqlite.Connection`` instance (unused).
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                status dictionary.
+        """
         resident_mem = 0
         virtual_mem = 0
         if platform.system() == "Linux":
@@ -2749,7 +3255,18 @@ class NeoSQLiteHandler:
         coll_name: str | None,
         db_name: str = "test",
     ) -> tuple[int, dict[str, Any]]:
-        """Handle listIndexes command."""
+        """Handle the ``listIndexes`` command for a collection.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            db: Active ``neosqlite.Connection`` for the target database.
+            coll_name: Target collection name, or ``None`` (returns error).
+            db_name: Logical database name for cursor namespace formatting.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                with a cursor containing index descriptor documents.
+        """
         if not coll_name:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
@@ -2808,7 +3325,18 @@ class NeoSQLiteHandler:
         coll_name: str | None,
         db_name: str = "test",
     ) -> tuple[int, dict[str, Any]]:
-        """Handle listSearchIndexes command."""
+        """Handle ``listSearchIndexes`` and ``$listSearchIndexes`` requests.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            db: Active ``neosqlite.Connection`` for the target database.
+            coll_name: Target collection name, or ``None`` (returns error).
+            db_name: Logical database name for cursor namespace formatting.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                with a cursor containing FTS index descriptors.
+        """
         if not coll_name:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
@@ -2842,7 +3370,17 @@ class NeoSQLiteHandler:
     def _handle_list_collections(
         self, request_id: int, db: Connection, db_name: str = "test"
     ) -> tuple[int, dict[str, Any]]:
-        """Handle listCollections command."""
+        """Handle the ``listCollections`` command for a database.
+
+        Args:
+            request_id: Wire-protocol request identifier.
+            db: Active ``neosqlite.Connection`` for the target database.
+            db_name: Logical database name for cursor namespace formatting.
+
+        Returns:
+            tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
+                containing collection metadata entries in ``firstBatch``.
+        """
         coll_names = db.list_collection_names()
         collections = [
             {
@@ -2870,11 +3408,20 @@ class NeoSQLiteHandler:
     def handle_query(
         self, msg: dict[str, Any]
     ) -> tuple[int, list[dict[str, Any]]]:
-        """Handle legacy OP_QUERY (frozen).
+        """Handle legacy ``OP_QUERY`` (frozen).
 
-        OP_QUERY was removed server-side in MongoDB 5.1; every modern
-        driver uses OP_MSG. This path stays as a find-only (plus $cmd
-        passthrough) fallback and is intentionally not extended.
+        ``OP_QUERY`` was removed server-side in MongoDB 5.1; every modern
+        driver uses ``OP_MSG``. This path stays as a find-only (plus
+        ``$cmd`` passthrough) fallback and is intentionally not extended.
+
+        Args:
+            msg: Decoded ``OP_QUERY`` message dictionary containing
+                ``request_id``, ``query``, ``collection``, and optional
+                ``db``, ``number_to_skip``, and ``number_to_return``.
+
+        Returns:
+            tuple[int, list[dict[str, Any]]]: Pair of ``(request_id, docs)``
+                matching the query or wrapping the command response.
         """
         query = msg["query"]
         collection = msg["collection"]

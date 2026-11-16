@@ -33,7 +33,21 @@ def _append_root_column(
     preserve_root: bool,
     table_alias: str = "",
 ) -> None:
-    """Append the root_data projection when $$ROOT preservation is active."""
+    """Append the ``root_data`` projection when ``$$ROOT`` is active.
+
+    Projects ``data AS root_data`` when ``preserve_root`` is ``True`` on the
+    first root-preserving stage, or propagates ``root_data`` when
+    ``context.has_root`` is already ``True``.
+
+    Args:
+        select_parts: Mutable list of SQL ``SELECT`` projection items to
+            extend in place.
+        context: Active ``PipelineContext`` tracking ``has_root`` state.
+        preserve_root: Whether this stage initializes ``root_data`` from
+            ``data``.
+        table_alias: Optional SQL table alias prefix (without trailing dot).
+            Defaults to ``""``.
+    """
     prefix = f"{table_alias}." if table_alias else ""
     if preserve_root:
         select_parts.append(f"{prefix}data AS root_data")
@@ -42,7 +56,19 @@ def _append_root_column(
 
 
 def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
-    """Normalize encoded ObjectId JSON dicts to their 24-hex id string."""
+    """Normalize encoded ObjectId JSON dicts to their 24-hex id string.
+
+    Wraps ``expr_sql`` in a SQL ``CASE`` expression that extracts ``$.id``
+    when the expression evaluates to valid JSON text with
+    ``$.__neosqlite_objectid__ = 1``, leaving all other values unchanged.
+
+    Args:
+        expr_sql: SQL expression whose value may be a scalar or an encoded
+            NeoSQLite ``ObjectId`` JSON string.
+
+    Returns:
+        str: SQL expression yielding the normalized scalar or ObjectId string.
+    """
     return (
         f"CASE WHEN typeof({expr_sql}) = 'text' AND json_valid({expr_sql}) "
         f"AND json_extract({expr_sql}, '$.__neosqlite_objectid__') = 1 "
@@ -53,10 +79,24 @@ def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
 def build_redact_where_sql(
     evaluator: Any, spec: Any
 ) -> tuple[str | None, list[Any]]:
-    """Translate $redact specs using only $$KEEP / $$PRUNE to a SQL WHERE clause.
+    """Translate ``$redact`` specs using ``$$KEEP``/``$$PRUNE`` to SQL WHERE.
 
-    Returns (where_clause, params) where where_clause is '' for keep-all or
-    'WHERE ...', or (None, []) when Python fallback (e.g. $$DESCEND) is needed.
+    Supports ``"$$KEEP"``, ``"$$PRUNE"``, and ``{"$cond": ...}`` (dict or
+    3-element list forms) whose ``then`` and ``else`` branches evaluate solely
+    to ``"$$KEEP"`` or ``"$$PRUNE"``. Returns ``(None, [])`` when Python
+    fallback is required (for example, when ``$$DESCEND`` is used or the
+    condition cannot be compiled).
+
+    Args:
+        evaluator: Expression evaluator exposing
+            ``evaluate_for_aggregation``.
+        spec: MongoDB ``$redact`` expression specification.
+
+    Returns:
+        tuple[str | None, list[Any]]: ``(where_clause, params)`` where
+            ``where_clause`` is ``""`` for keep-all, ``"WHERE ..."`` for
+            filtered execution, or ``None`` when SQL compilation is not
+            possible.
     """
     if spec == "$$KEEP":
         return "", []
@@ -99,7 +139,30 @@ def build_graph_lookup_parts(
     spec: dict[str, Any],
     has_root: bool = False,
 ) -> tuple[str, str, list[Any]] | None:
-    """Build SQL pieces (recursive CTE query, final SELECT, params) for $graphLookup."""
+    """Build recursive CTE and SELECT SQL parts for ``$graphLookup``.
+
+    Validates the ``$graphLookup`` specification (``from``, ``startWith``,
+    ``connectFromField``, ``connectToField``, ``as``, and optional
+    ``maxDepth``, ``depthField``, ``restrictSearchWithMatch``), constructs the
+    ``UNION ALL`` recursive CTE with cycle prevention via ``visited`` row IDs,
+    and builds the outer ``SELECT`` grouping deduplicated matches per source
+    document.
+
+    Args:
+        collection: Source ``Collection`` instance providing database access
+            for resolving ``restrictSearchWithMatch`` on the target collection.
+        jsonb: Active ``JSONBContext`` supplying JSON function names.
+        source_table: Name of the source table or CTE feeding ``$graphLookup``.
+        recurse_cte: Name assigned to the generated recursive CTE.
+        spec: MongoDB ``$graphLookup`` stage specification dictionary.
+        has_root: Whether ``root_data`` must be preserved in the output
+            projection. Defaults to ``False``.
+
+    Returns:
+        tuple[str, str, list[Any]] | None: ``(recurse_sql, select_sql,
+            rec_params)`` when compilable to SQL, or ``None`` when Python
+            fallback is required.
+    """
     if not isinstance(spec, dict):
         return None
 
@@ -194,6 +257,17 @@ def build_graph_lookup_parts(
         restrict_params = list(r_params)
 
     def target_match(val_sql: str) -> str:
+        """Build a SQL join predicate matching a value to ``connectToField``.
+
+        Normalizes encoded ObjectId values on both sides and checks scalar or
+        array membership on target table alias ``t``.
+
+        Args:
+            val_sql: SQL expression yielding the lookup key value.
+
+        Returns:
+            str: SQL boolean predicate matching ``t`` against ``val_sql``.
+        """
         norm_val = _graph_lookup_scalar_or_oid(val_sql)
         if connect_to_field == "_id":
             return f"t._id = {norm_val}"
@@ -304,22 +378,90 @@ def build_graph_lookup_parts(
 
 
 class StageBuildersMixin:
-    """Mixin providing _build_*_sql methods for SQLTierAggregator."""
+    """Mixin providing ``_build_*_sql`` stage compilers for SQLTierAggregator.
+
+    Translates individual MongoDB aggregation pipeline stages into SQLite CTE
+    queries preserving the ``(id, _id, data[, root_data])`` column contract.
+    Expects the host class to supply ``evaluator``, ``collection``,
+    ``jsonb``, ``_get_json_extract``, ``_get_json_set``,
+    ``can_optimize_pipeline``, and ``_pipeline_needs_root``.
+    """
 
     # Attributes supplied by SQLTierAggregator
     evaluator: Any
     collection: Any
     jsonb: Any
 
-    def _get_json_extract(self, path: str | None = None) -> str: ...  # type: ignore[empty-body]
-    def _get_json_set(self) -> str: ...  # type: ignore[empty-body]
-    def can_optimize_pipeline(self, pipeline: list[dict[str, Any]]) -> bool: ...  # type: ignore[empty-body]
-    def _pipeline_needs_root(self, pipeline: list[dict[str, Any]]) -> bool: ...  # type: ignore[empty-body]
+    def _get_json_extract(  # type: ignore[empty-body]
+        self, path: str | None = None
+    ) -> str:
+        """Return the SQL JSON extract function name or call expression.
+
+        Args:
+            path: Optional JSON path suffix (without leading ``"$"``).
+                Defaults to ``None``.
+
+        Returns:
+            str: Function name (``json_extract`` or ``jsonb_extract``), or a
+                call expression against ``data`` when ``path`` is given.
+        """
+        ...
+
+    def _get_json_set(self) -> str:  # type: ignore[empty-body]
+        """Return the SQL JSON set function name for this connection.
+
+        Returns:
+            str: ``"json_set"`` or ``"jsonb_set"`` based on JSONB support.
+        """
+        ...
+
+    def can_optimize_pipeline(  # type: ignore[empty-body]
+        self, pipeline: list[dict[str, Any]]
+    ) -> bool:
+        """Check whether an aggregation pipeline can run in the SQL tier.
+
+        Args:
+            pipeline: List of MongoDB aggregation stage dictionaries.
+
+        Returns:
+            bool: ``True`` if all stages can be compiled to SQL, ``False``
+                otherwise.
+        """
+        ...
+
+    def _pipeline_needs_root(  # type: ignore[empty-body]
+        self, pipeline: list[dict[str, Any]]
+    ) -> bool:
+        """Check whether any stage in a pipeline references ``$$ROOT``.
+
+        Args:
+            pipeline: List of MongoDB aggregation stage dictionaries.
+
+        Returns:
+            bool: ``True`` if ``$$ROOT`` must be preserved across stages,
+                ``False`` otherwise.
+        """
+        ...
 
     def _make_agg_context(
         self, context: PipelineContext, preserve_root: bool = False
     ) -> AggregationContext:
-        """Create an AggregationContext scoped to the current pipeline stage."""
+        """Create an AggregationContext scoped to the current pipeline stage.
+
+        Copies the current stage index from ``context`` and configures
+        ``root_column = "root_data"`` when root preservation is active and not
+        initialized by the current stage.
+
+        Args:
+            context: Active ``PipelineContext`` for the pipeline being built.
+            preserve_root: Whether the current stage is the first stage
+                initializing ``root_data`` from ``data``. Defaults to
+                ``False``.
+
+        Returns:
+            AggregationContext: Context instance configured for evaluating
+                stage expressions.
+        """
         agg_ctx = AggregationContext()
         agg_ctx.stage_index = context.stage_index
         if context.has_root and not preserve_root:
@@ -334,7 +476,26 @@ class StageBuildersMixin:
         context: PipelineContext,
         needs_root: bool = False,
     ) -> tuple[str | None, list[tuple[str, str, list[Any]]]]:
-        """Compile a sequence of stages into ordered (cte_name, cte_sql, cte_params) triples."""
+        """Compile a sequence of stages into ordered CTE definitions.
+
+        Iterates through ``pipeline``, builds SQL for each stage, drains any
+        auxiliary pre-CTEs registered on ``context`` before appending the stage
+        CTE, and aborts with ``(None, [])`` if any stage requires fallback.
+
+        Args:
+            pipeline: Ordered list of MongoDB aggregation stage dictionaries.
+            prev_stage: Name of the initial input table or CTE.
+            cte_prefix: Prefix used to generate sequential CTE names.
+            context: Mutable ``PipelineContext`` tracking stage state and
+                auxiliary CTEs.
+            needs_root: Whether the pipeline requires preserving ``$$ROOT``
+                from the first stage onward. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[tuple[str, str, list[Any]]]]: Pair of the
+                final CTE/table name (or ``None`` on fallback) and ordered
+                ``(cte_name, cte_sql, cte_params)`` tuples.
+        """
         ctes: list[tuple[str, str, list[Any]]] = []
         for i, stage in enumerate(pipeline):
             stage_name = next(iter(stage.keys()))
@@ -368,7 +529,20 @@ class StageBuildersMixin:
         context: PipelineContext,
         preserve_root: bool = False,
     ) -> tuple[str | None, list[Any]]:
-        """Build SQL for a single pipeline stage."""
+        """Dispatch a single aggregation stage to its SQL builder method.
+
+        Args:
+            stage_name: MongoDB stage operator name (e.g. ``"$match"``).
+            stage_spec: Stage configuration payload from the pipeline dict.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext`` for the enclosing pipeline.
+            preserve_root: Whether this stage should capture ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: Compiled SQL query and parameter
+                list, or ``(None, [])`` if the stage is unsupported in SQL.
+        """
         match stage_name:
             case "$addFields":
                 return self._build_addfields_sql(
@@ -456,6 +630,24 @@ class StageBuildersMixin:
                 return None, []
 
     def _build_addfields_sql(self, spec, prev_stage, context, preserve_root):
+        """Build SQL for the ``$addFields`` (and ``$set``) stage.
+
+        Updates or inserts fields in ``data`` via ``json_set``/``jsonb_set``,
+        supporting ``$$CURRENT``, ``$$ROOT``, and compiled expressions while
+        registering computed fields on ``context``.
+
+        Args:
+            spec: Dictionary mapping field paths to field expressions.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext`` for tracking computed fields.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when an unsupported aggregation variable is
+                referenced.
+        """
         all_params = []
         json_set_args = []
         for field, expr in spec.items():
@@ -503,6 +695,25 @@ class StageBuildersMixin:
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
 
     def _build_project_sql(self, spec, prev_stage, context, preserve_root):
+        """Build SQL for the ``$project`` stage.
+
+        Supports exclusion projections (via ``json_remove``/``jsonb_remove``)
+        and inclusion or computed-field projections (via
+        ``json_object``/``jsonb_object`` with missing-field cleanup), keeping
+        ``_id`` unless ``_id: 0`` is specified. Returns ``(None, [])`` for
+        dotted non-``_id`` keys or uncompilable expressions.
+
+        Args:
+            spec: Projection specification dictionary.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext`` for tracking computed fields.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when Python fallback is required.
+        """
         if any("." in k for k in spec if k != "_id"):
             return None, []
         all_params = []
@@ -617,6 +828,22 @@ class StageBuildersMixin:
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
 
     def _build_unset_sql(self, spec, prev_stage, context, preserve_root):
+        """Build SQL for the ``$unset`` stage.
+
+        Removes one or more specified field paths from ``data`` using
+        ``json_remove``/``jsonb_remove`` and ensures ``$._id`` remains set.
+
+        Args:
+            spec: Single field name string or list of field names to remove.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``.
+
+        Returns:
+            tuple[str, list[Any]]: SQL ``SELECT`` query and empty parameter
+                list.
+        """
         fields = [spec] if isinstance(spec, str) else spec
         json_remove_func = self.jsonb.function("remove")
         json_set_func = self._get_json_set()
@@ -627,6 +854,23 @@ class StageBuildersMixin:
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", []
 
     def _build_replace_root_sql(self, spec, prev_stage, context, preserve_root):
+        """Build SQL for ``$replaceRoot`` and ``$replaceWith`` stages.
+
+        Replaces each document's ``data`` column with ``spec["newRoot"]``
+        (supporting ``$field`` references, ``$$ROOT``, ``$$CURRENT``, or
+        compiled expressions) while keeping ``$._id`` populated from ``_id``.
+
+        Args:
+            spec: Stage dictionary containing the ``"newRoot"`` expression.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``.
+
+        Returns:
+            tuple[str, list[Any]]: SQL ``SELECT`` query and bound parameter
+                list.
+        """
         new_root = spec.get("newRoot")
         all_params = []
         json_set_func = self._get_json_set()
@@ -660,6 +904,20 @@ class StageBuildersMixin:
     def _build_sample_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$sample`` stage using ``ORDER BY RANDOM()``.
+
+        Args:
+            spec: Stage specification dictionary with optional ``"size"`` key
+                (default ``1``).
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str, list[Any]]: SQL query and single-element parameter list
+                containing the sample size.
+        """
         size = spec.get("size", 1)
         select_parts = ["id", "_id", "data"]
         _append_root_column(select_parts, context, preserve_root)
@@ -669,6 +927,27 @@ class StageBuildersMixin:
     def _build_bucket_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$bucket`` stage.
+
+        Categorizes documents into half-open ``[lower, upper)`` intervals
+        defined by ``boundaries`` (with an optional ``default`` bucket
+        defaulting to ``"Other"``) and computes ``output`` accumulators per
+        bucket while preserving the ``(id, _id, data)`` CTE column contract.
+
+        Args:
+            spec: Bucket specification containing ``"groupBy"``,
+                ``"boundaries"``, optional ``"default"``, and optional
+                ``"output"``.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` if required keys are missing or an accumulator
+                is unsupported.
+        """
         group_by = spec.get("groupBy")
         boundaries = spec.get("boundaries")
         default = spec.get("default", "Other")
@@ -751,6 +1030,27 @@ class StageBuildersMixin:
     def _build_bucket_auto_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$bucketAuto`` stage using equal-width bins.
+
+        Partitions documents across up to ``buckets`` (default ``10``) uniform
+        intervals spanning ``[MIN(key), MAX(key)]`` and outputs
+        ``{_id: {min, max}, ...}`` documents. Falls back to ``(None, [])``
+        when ``groupBy`` is missing, ``granularity`` is specified, or an
+        accumulator cannot be mapped to SQL.
+
+        Args:
+            spec: Auto-bucket specification with ``"groupBy"``, optional
+                ``"buckets"``, optional ``"output"``, and optional
+                ``"granularity"``.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when Python fallback is required.
+        """
         group_by = spec.get("groupBy")
         buckets = spec.get("buckets", 10)
         output = spec.get("output", {"count": {"$sum": 1}})
@@ -872,6 +1172,25 @@ class StageBuildersMixin:
     def _build_union_with_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$unionWith`` stage using ``UNION ALL``.
+
+        Accepts either a collection name string or a ``{"coll": ...,
+        "pipeline": ...}`` dictionary, compiling any sub-pipeline via
+        ``SQLTierAggregator.build_pipeline_sql`` and aligning ``root_data``
+        columns when ``context.has_root`` is active.
+
+        Args:
+            spec: Collection name string or specification dictionary with
+                ``"coll"`` and optional ``"pipeline"``.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: ``UNION ALL`` SQL query and bound
+                parameters, or ``(None, [])`` when invalid or uncompilable.
+        """
         coll_name: str | None
         if isinstance(spec, str):
             coll_name = spec
@@ -917,10 +1236,22 @@ class StageBuildersMixin:
     def _build_redact_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
-        """
-        Build SQL for $redact stage.
-        Optimizes KEEP/PRUNE patterns into a WHERE clause.
-        Falls back to Python for DESCEND pattern as it requires recursive JSON modification.
+        """Build SQL for the ``$redact`` stage.
+
+        Optimizes ``$$KEEP``/``$$PRUNE`` patterns into a ``WHERE`` clause via
+        ``build_redact_where_sql`` and returns ``(None, [])`` to fall back to
+        Python when ``$$DESCEND`` or unsupported expressions appear.
+
+        Args:
+            spec: MongoDB ``$redact`` expression specification.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when Python fallback is required.
         """
         agg_ctx = self._make_agg_context(context, preserve_root)
         old_ctx = self.evaluator._current_context
@@ -945,6 +1276,28 @@ class StageBuildersMixin:
     def _build_lookup_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$lookup`` left outer join stage.
+
+        Supports equality joins on ``localField``/``foreignField`` against a
+        foreign collection or a SQL-optimizable sub-``pipeline``. Aggregates
+        matched documents into a JSON array under ``as`` using
+        ``FILTER (WHERE ...)`` on SQLite >= 3.30.0 or a correlated subquery on
+        older SQLite versions.
+
+        Args:
+            spec: Lookup specification containing ``"from"``, ``"as"``,
+                ``"localField"``, ``"foreignField"``, and optional
+                ``"pipeline"``.
+            prev_stage: SQL table or CTE name supplying left-side rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when required fields are missing or the nested
+                pipeline cannot be SQL-optimized.
+        """
         from ..sql_utils import quote_table_name
 
         from_coll = spec.get("from")
@@ -1082,34 +1435,45 @@ class StageBuildersMixin:
         return sql, []
 
     def _build_merge_sql(self, spec, prev_stage, context):
+        """Return fallback sentinel for ``$merge`` (not executed as read SQL).
+
+        Args:
+            spec: The ``$merge`` stage specification.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+
+        Returns:
+            tuple[None, list[Any]]: Always ``(None, [])`` so ``$merge`` runs
+                in the Python tier.
+        """
         return None, []
 
     def _build_densify_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
-        """
-        Build SQL for $densify stage - fills gaps in numeric sequences.
+        """Build SQL for ``$densify`` to fill numeric sequence gaps.
 
-        Algorithm:
-        1. Extract existing distinct values from the field into CTE "existing"
-        2. Calculate min/max bounds from existing values in CTE "bounds_calc"
-        3. Generate series of values from min to max with given step using
-           CROSS JOIN with a numbers table (0-50) in CTE "series"
-        4. UNION ALL:
-           - Original documents from prev_stage
-           - New documents with densified field values (where value not in existing)
-        5. Use NOT EXISTS to filter out values that already exist
-
-        Example: field=[1,3,5], step=1 produces [1,2,3,4,5]
-        - existing: {1,3,5}
-        - series: {1,2,3,4,5}
-        - result: original docs + new docs for {2,4}
+        Uses ``WITH RECURSIVE`` CTEs (``existing`` for distinct non-null field
+        values and ``series`` generating up to 1001 stepped points across
+        ``[lower_bound, upper_bound]``) and ``UNION ALL`` with ``NOT EXISTS``
+        to synthesize missing documents.
 
         Limitations:
-        - Only supports numeric fields (int/float)
-        - Does not support partitionBy/partitionByFields (requires group-by)
-        - Does not support date fields or granularity
-        - Max gap filling limited to 1000 values (falls back to Python for larger)
+        - Only supports non-dotted numeric fields with numeric ``step > 0``
+          and two numeric ``bounds``.
+        - Does not support ``partitionBy``, ``partitionByFields``, or ``unit``.
+        - Series generation is capped at ``idx < 1000`` steps.
+
+        Args:
+            spec: Densify stage dictionary with ``"field"`` and ``"range"``.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: Recursive CTE ``SELECT`` query and
+                bound parameters, or ``(None, [])`` when fallback is required.
         """
         field = spec.get("field")
         range_spec = spec.get("range")
@@ -1208,11 +1572,26 @@ class StageBuildersMixin:
     def _build_group_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
-        """Build $group SQL preserving the (id, _id, data) CTE invariant (#94).
+        """Build ``$group`` SQL preserving the ``(id, _id, data)`` invariant.
 
-        Downstream stages read fields via json_extract(data, ...) and the
-        final wrapper selects id/_id/data, so the aggregate SELECT is wrapped
-        in an outer projection that materializes those columns.
+        Wraps the aggregate ``SELECT`` in an outer projection that materializes
+        ``id``, ``_id``, and ``data`` (re-parsing ``json_group_array`` outputs
+        so array accumulators store JSON arrays rather than strings) and adds a
+        ``COUNT(*) AS __cnt`` guard when grouping without ``GROUP BY`` so
+        empty input yields zero rows. Bails out with ``(None, [])`` on literal
+        list/object accumulator inputs or unsupported accumulators.
+
+        Args:
+            spec: Group specification containing ``"_id"`` and accumulator
+                fields.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when Python fallback is required.
         """
         agg_ctx = self._make_agg_context(context, preserve_root)
         all_params = []
@@ -1321,6 +1700,16 @@ class StageBuildersMixin:
         )
 
     def _map_accumulator_to_sql(self, op):
+        """Map a MongoDB ``$group`` accumulator operator to a SQL aggregate.
+
+        Args:
+            op: MongoDB accumulator operator name (such as ``"$sum"`` or
+                ``"$addToSet"``).
+
+        Returns:
+            tuple[str, bool] | None: ``(sql_agg_func, use_distinct)`` if
+                supported, or ``None`` otherwise.
+        """
         mapping = {
             "$sum": ("SUM", False),
             "$avg": ("AVG", False),
@@ -1333,7 +1722,15 @@ class StageBuildersMixin:
         return mapping.get(op)
 
     def _get_match_sql_translator(self):
-        """Return a cached SQLTranslator matching this aggregator's JSONB context."""
+        """Return a cached SQLTranslator matching this aggregator's JSONB mode.
+
+        Lazily initializes and caches ``self._match_sql_translator`` bound to
+        ``self.collection.name``, ``data``/``id`` columns,
+        ``self.collection.db``, and ``self.jsonb``.
+
+        Returns:
+            SQLTranslator: Cached translator for ``$match`` field operators.
+        """
         translator = getattr(self, "_match_sql_translator", None)
         if translator is None:
             from .sql_translator_unified import SQLTranslator
@@ -1353,7 +1750,24 @@ class StageBuildersMixin:
         spec: dict[str, Any],
         agg_ctx: AggregationContext | None = None,
     ) -> tuple[list[str] | None, list[Any]]:
-        """Translate a $match query dictionary into SQL WHERE predicates."""
+        """Translate a ``$match`` query dictionary into SQL WHERE predicates.
+
+        Compiles ``$jsonSchema``, ``$expr``, logical combinators (``$and``,
+        ``$or``, ``$nor``, ``$not``), direct ``$`` expressions, field operator
+        maps (including range operators with array/type guards and ``$not``),
+        regex patterns, datetimes, ``None``, ``_id`` comparisons, dict/list
+        equality, and JSON containment clauses. Returns ``(None, [])`` for
+        ``$text`` or unsupported predicates.
+
+        Args:
+            spec: MongoDB ``$match`` filter specification dictionary.
+            agg_ctx: Optional ``AggregationContext`` used when compiling
+                direct aggregation expressions. Defaults to ``None``.
+
+        Returns:
+            tuple[list[str] | None, list[Any]]: List of SQL predicate strings
+                (or ``None`` on fallback) and bound parameters.
+        """
         from ..objectid import ObjectId
         from .type_utils import (
             build_json_containment_clause,
@@ -1371,7 +1785,14 @@ class StageBuildersMixin:
         where_clauses: list[str] = []
 
         def _wrap_for_where(expr_sql: str) -> str:
-            """Wrap expression to work in WHERE clause if it returns JSON booleans."""
+            """Wrap an expression for SQL WHERE if it yields JSON booleans.
+
+            Args:
+                expr_sql: Compiled SQL expression string.
+
+            Returns:
+                str: SQL predicate suitable for a ``WHERE`` clause.
+            """
             if "json('true')" in expr_sql or 'json("true")' in expr_sql:
                 return f"({expr_sql} = json('true'))"
             return expr_sql
@@ -1606,6 +2027,23 @@ class StageBuildersMixin:
     def _build_match_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$match`` stage.
+
+        Temporarily sets ``self.evaluator._current_context`` while compiling
+        ``spec`` via ``_translate_match_spec``, restoring it in a ``finally``
+        block.
+
+        Args:
+            spec: MongoDB ``$match`` query filter dictionary.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: Filtered ``SELECT`` query and bound
+                parameters, or ``(None, [])`` when Python fallback is needed.
+        """
         agg_ctx = self._make_agg_context(context, preserve_root)
         old_ctx = self.evaluator._current_context
         self.evaluator._current_context = agg_ctx
@@ -1631,6 +2069,20 @@ class StageBuildersMixin:
     def _build_sort_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$sort`` stage using ``ORDER BY``.
+
+        Args:
+            spec: Dictionary mapping field paths to sort directions (``-1`` for
+                descending, anything else for ascending).
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str, list[Any]]: Ordered ``SELECT`` query and empty
+                parameter list.
+        """
         order_parts = []
         for field, direction in spec.items():
             order_dir = "DESC" if direction == -1 else "ASC"
@@ -1652,6 +2104,19 @@ class StageBuildersMixin:
     def _build_skip_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$skip`` stage using ``LIMIT -1 OFFSET ?``.
+
+        Args:
+            spec: Integer count of documents to skip.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str, list[Any]]: SQL query and single-element parameter list
+                ``[int(spec)]``.
+        """
         select_parts = ["id", "_id", "data"]
         _append_root_column(select_parts, context, preserve_root)
         return (
@@ -1662,6 +2127,22 @@ class StageBuildersMixin:
     def _build_limit_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
+        """Build SQL for the ``$limit`` stage using ``LIMIT ?``.
+
+        Validates that ``spec`` is a non-negative integer (not ``bool``) and
+        raises ``ValueError`` otherwise.
+
+        Args:
+            spec: Non-negative integer maximum number of rows to return.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str, list[Any]]: SQL query and single-element parameter list
+                ``[int(spec)]``.
+        """
         if not isinstance(spec, int) or isinstance(spec, bool) or spec < 0:
             raise ValueError(
                 f"The $limit stage requires a non-negative integer, got {spec}"
@@ -1674,6 +2155,20 @@ class StageBuildersMixin:
         )
 
     def _build_count_sql(self, spec, prev_stage, context):
+        """Build SQL for the ``$count`` stage.
+
+        Emits a single row whose ``data`` JSON object maps ``spec`` to
+        ``COUNT(*)`` with ``NULL`` ``id`` and ``_id``.
+
+        Args:
+            spec: Output field name for the document count.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+
+        Returns:
+            tuple[str, list[Any]]: Aggregate ``SELECT`` query and ``[spec]``
+                parameter list.
+        """
         select_parts = [
             "NULL as id",
             "NULL as _id",
@@ -1689,6 +2184,27 @@ class StageBuildersMixin:
     def _build_set_window_fields_sql(
         self, spec, prev_stage, context, preserve_root
     ):
+        """Build SQL for the ``$setWindowFields`` stage using window functions.
+
+        Supports ``$rank``, ``$denseRank``, ``$documentNumber``, ``$first``,
+        and ``$last`` over optional ``partitionBy`` and ``sortBy`` clauses,
+        merging computed window columns into ``data`` via
+        ``json_set``/``jsonb_set``. Returns ``(None, [])`` for compound
+        ``partitionBy`` objects, explicit ``window`` frames, multi-operator
+        output specs, or unsupported operators.
+
+        Args:
+            spec: Window specification containing optional ``"partitionBy"``,
+                ``"sortBy"``, and ``"output"`` mappings.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext``.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``.
+
+        Returns:
+            tuple[str | None, list[Any]]: SQL query and bound parameters, or
+                ``(None, [])`` when Python fallback is required.
+        """
         partition_by = spec.get("partitionBy")
         sort_by = spec.get("sortBy", {})
         output = spec.get("output", {})
@@ -1781,6 +2297,16 @@ class StageBuildersMixin:
         return sql, all_params
 
     def _map_window_op_to_sql(self, op):
+        """Map a MongoDB window operator name to a SQLite window function.
+
+        Args:
+            op: Window operator name (``"$rank"``, ``"$denseRank"``,
+                ``"$documentNumber"``, ``"$first"``, or ``"$last"``).
+
+        Returns:
+            str | None: SQLite window function name, or ``None`` if
+                unsupported.
+        """
         mapping = {
             "$rank": "RANK",
             "$denseRank": "DENSE_RANK",
@@ -1793,7 +2319,24 @@ class StageBuildersMixin:
     def _build_graph_lookup_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
-        """Build Tier-1 CTE SQL for $graphLookup using top-level recursive CTE."""
+        """Build Tier-1 CTE SQL for ``$graphLookup`` via recursive CTEs.
+
+        Materializes ``prev_stage`` into a pre-CTE, registers the recursive
+        lookup CTE generated by ``build_graph_lookup_parts``, marks
+        ``context.mark_recursive()``, and returns the outer ``SELECT``.
+
+        Args:
+            spec: MongoDB ``$graphLookup`` stage specification dictionary.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext`` for registering pre-CTEs.
+            preserve_root: Whether this stage captures ``data`` as
+                ``root_data``. Defaults to ``False``.
+
+        Returns:
+            tuple[str | None, list[Any]]: Outer ``SELECT`` SQL and empty
+                parameter list (recursive parameters live on the pre-CTE), or
+                ``(None, [])`` when fallback is required.
+        """
         uid = context.next_aux_id()
         src_cte = f"{context.cte_prefix}_glsrc_{uid}"
         rec_cte = f"{context.cte_prefix}_glrec_{uid}"
@@ -1820,7 +2363,26 @@ class StageBuildersMixin:
         return select_sql, []
 
     def _build_facet_sql(self, spec, prev_stage, context):
-        """Build Tier-1 CTE SQL for $facet by compiling sub-pipelines over shared source CTE."""
+        """Build Tier-1 CTE SQL for ``$facet`` over a shared source CTE.
+
+        Captures ``prev_stage`` once into an auxiliary source CTE, compiles
+        each facet sub-pipeline into auxiliary pre-CTEs using an isolated
+        ``PipelineContext``, and aggregates each facet's output array into a
+        single ``json_object`` document (or empty ``json('{}')`` if ``spec`` is
+        empty).
+
+        Args:
+            spec: Dictionary mapping facet output field names to sub-pipeline
+                lists.
+            prev_stage: SQL table or CTE name supplying input rows.
+            context: Active ``PipelineContext`` receiving sub-pipeline
+                pre-CTEs.
+
+        Returns:
+            tuple[str | None, list[Any]]: Single-row ``SELECT`` query and
+                facet-name parameters, or ``(None, [])`` when invalid or a
+                sub-pipeline cannot be SQL-optimized.
+        """
         if not isinstance(spec, dict):
             return None, []
 

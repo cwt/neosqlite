@@ -1,4 +1,4 @@
-"""Core Python evaluation: dispatcher, logical/comparison, conditionals, operands."""
+"""Core Python evaluation: dispatch, logic, comparisons, and operands."""
 
 from __future__ import annotations
 
@@ -10,23 +10,28 @@ from .base import BasePythonMixin
 
 
 class CorePythonMixin(BasePythonMixin):
-    """Entry point, operator dispatch, and basic evaluation helpers."""
+    """Entry point, operator dispatch, and basic evaluation helpers.
+
+    Implements the Tier-3 Python fallback evaluator for ``$expr`` expressions,
+    covering operator dispatch, logical and comparison operators, conditional
+    expressions, literal escaping, and document field/variable resolution.
+    """
 
     def evaluate_python(
         self, expr: dict[str, Any], document: dict[str, Any]
     ) -> bool:
-        """
-        Python fallback evaluation for $expr.
+        """Evaluate an ``$expr`` expression against a document in Python.
 
-        This ensures identical results to SQL evaluation and provides
-        the kill switch functionality.
+        Provides the Tier-3 Python fallback matching SQL evaluation semantics
+        and supporting the force-fallback kill switch. Converts non-boolean
+        evaluation results to ``bool`` using Python truthiness.
 
         Args:
-            expr: The $expr expression
-            document: Document to evaluate against
+            expr: The ``$expr`` expression dictionary to evaluate.
+            document: Document dictionary to evaluate the expression against.
 
         Returns:
-            Boolean result of expression evaluation
+            bool: Truthiness of the evaluated expression result.
         """
         result = self._evaluate_expr_python(expr, document)
         # For boolean context, ensure we return a boolean
@@ -38,7 +43,24 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_expr_python(
         self, expr: dict[str, Any], document: dict[str, Any]
     ) -> Any:
-        """Recursively evaluate expression in Python."""
+        """Recursively evaluate a single-key ``$expr`` dictionary in Python.
+
+        Dispatches the operator key to the corresponding Python evaluator
+        method across logical, comparison, arithmetic, math, trigonometric,
+        conditional, array, string, date, object, type, and size operators.
+
+        Args:
+            expr: Single-key expression dictionary ``{operator: operands}``.
+            document: Document dictionary providing field and variable context.
+
+        Returns:
+            Any: Evaluated Python value for the expression.
+
+        Raises:
+            ValueError: If ``expr`` is not a single-key dictionary.
+            NotImplementedError: If the operator (or ``$meta`` argument) is
+                not supported in Python evaluation.
+        """
         if not isinstance(expr, dict) or len(expr) != 1:
             raise ValueError("Invalid $expr expression structure")
 
@@ -237,7 +259,25 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_logical_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> bool:
-        """Evaluate logical operators in Python."""
+        """Evaluate logical ``$expr`` operators in Python.
+
+        Supports ``$not`` (both single-element list and bare-dict forms),
+        short-circuiting ``$and`` and ``$or``, and ``$nor``.
+
+        Args:
+            operator: Logical operator name (``$and``, ``$or``, ``$not``, or
+                ``$nor``).
+            operands: Operator operands (list of expressions or operands, or a
+                single expression dict for ``$not``).
+            document: Document dictionary used for operand evaluation.
+
+        Returns:
+            bool: Boolean result of the logical operation.
+
+        Raises:
+            ValueError: If ``$not`` has invalid operands or ``operator`` is
+                unknown.
+        """
         if operator == "$not":
             # Accept both {"$not": [<expr>]} and the documented bare-dict
             # form {"$not": {"$gt": [...]}} (#122)
@@ -269,7 +309,24 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_comparison_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> bool:
-        """Evaluate comparison operators in Python."""
+        """Evaluate comparison ``$expr`` operators in Python.
+
+        Evaluates ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, and ``$lte``
+        with MongoDB missing-field vs. null semantics for equality and
+        cross-type rank ordering for relational comparisons.
+
+        Args:
+            operator: Comparison operator name.
+            operands: Two-element sequence ``[left, right]`` to compare.
+            document: Document dictionary used for operand evaluation.
+
+        Returns:
+            bool: Result of the comparison.
+
+        Raises:
+            ValueError: If ``operator`` is not a recognized comparison
+                operator.
+        """
         left = self._evaluate_operand_python(operands[0], document)
         right = self._evaluate_operand_python(operands[1], document)
 
@@ -297,6 +354,19 @@ class CorePythonMixin(BasePythonMixin):
                 right_missing = self._is_field_missing(operands[1], document)
 
                 def _type_rank(v, missing):
+                    """Return a rank for cross-type comparison ordering.
+
+                    Ranks missing fields (0) below ``None`` (1), numbers and
+                    ``Decimal`` (2), strings (3), dicts (4), lists/tuples (5),
+                    other values (6), and booleans (9).
+
+                    Args:
+                        v: Evaluated operand value.
+                        missing: True if the operand was a missing field.
+
+                    Returns:
+                        int: Relative type rank used for relational ordering.
+                    """
                     if missing:
                         return 0
                     if v is None:
@@ -348,7 +418,19 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_cmp_python(
         self, operands: list[Any], document: dict[str, Any]
     ) -> int:
-        """Evaluate $cmp operator in Python."""
+        """Evaluate the ``$cmp`` operator in Python using BSON sort keys.
+
+        Args:
+            operands: Two-element list ``[left, right]`` to compare.
+            document: Document dictionary used for operand evaluation.
+
+        Returns:
+            int: ``-1`` if left < right, ``1`` if left > right, or ``0`` if
+                equal according to ``bson_sort_key()``.
+
+        Raises:
+            ValueError: If ``operands`` does not contain exactly 2 elements.
+        """
         if len(operands) != 2:
             raise ValueError("$cmp requires exactly 2 operands")
 
@@ -370,7 +452,24 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_cond_python(
         self, operands: dict[str, Any], document: dict[str, Any]
     ) -> Any:
-        """Evaluate $cond operator in Python."""
+        """Evaluate the ``$cond`` conditional operator in Python.
+
+        Accepts either a 3-element array ``[if, then, else]`` or a dictionary
+        with ``"if"``, ``"then"``, and optional ``"else"`` keys (returning
+        None when ``"else"`` is omitted and the condition is falsy).
+
+        Args:
+            operands: Conditional specification as a dict or 3-element list.
+            document: Document dictionary used for evaluation.
+
+        Returns:
+            Any: Evaluated result of the selected branch, or None if falsy
+                without an ``"else"`` branch.
+
+        Raises:
+            ValueError: If ``operands`` is neither a valid dict nor a
+                3-element list, or lacks ``"if"`` or ``"then"``.
+        """
         if not isinstance(operands, dict):
             # Handle array format: [condition, true_case, false_case]
             if isinstance(operands, list) and len(operands) == 3:
@@ -395,7 +494,19 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_ifNull_python(
         self, operands: list[Any], document: dict[str, Any]
     ) -> Any:
-        """Evaluate $ifNull operator in Python."""
+        """Evaluate the ``$ifNull`` null-coalescing operator in Python.
+
+        Args:
+            operands: Two-element list ``[expression, replacement]``.
+            document: Document dictionary used for operand evaluation.
+
+        Returns:
+            Any: Evaluated ``operands[0]`` if it is not None, otherwise
+                evaluated ``operands[1]``.
+
+        Raises:
+            ValueError: If ``operands`` is not a 2-element list.
+        """
         if not isinstance(operands, list) or len(operands) != 2:
             raise ValueError("$ifNull requires exactly 2 operands")
 
@@ -407,7 +518,24 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_switch_python(
         self, operands: dict[str, Any], document: dict[str, Any]
     ) -> Any:
-        """Evaluate $switch operator in Python."""
+        """Evaluate the ``$switch`` multi-branch operator in Python.
+
+        Evaluates each dictionary entry in ``branches`` in order and returns
+        the ``then`` operand of the first branch whose ``case`` evaluates
+        truthy, falling back to ``default`` or None.
+
+        Args:
+            operands: Dictionary containing ``branches`` and optional
+                ``default`` expression.
+            document: Document dictionary used for evaluation.
+
+        Returns:
+            Any: Evaluated ``then`` or ``default`` operand, or None if no
+                branch matched and ``default`` is None.
+
+        Raises:
+            ValueError: If ``operands`` is not a dictionary.
+        """
         if not isinstance(operands, dict):
             raise ValueError("$switch requires a dictionary")
 
@@ -427,12 +555,20 @@ class CorePythonMixin(BasePythonMixin):
         return None
 
     def _is_field_missing(self, operand: Any, document: dict[str, Any]) -> bool:
-        """Check whether a $field reference points to a missing field.
+        """Check whether a ``$field`` reference points to a missing field.
 
-        Returns True if operand is a field reference ($field) and the
-        referenced field does not exist in the document.  Returns False
-        for non-field operands (literals, expressions) and for fields
-        that exist (even if their value is None).
+        Returns True if ``operand`` is a field or variable reference starting
+        with ``$`` and the referenced key or path does not exist in
+        ``document``. Returns False for non-field operands (literals,
+        expressions) and for fields that exist even if their value is None.
+
+        Args:
+            operand: Expression operand to inspect.
+            document: Document dictionary to traverse.
+
+        Returns:
+            bool: True if ``operand`` references a missing field or variable,
+                False otherwise.
         """
         if not isinstance(operand, str) or not operand.startswith("$"):
             return False
@@ -452,14 +588,38 @@ class CorePythonMixin(BasePythonMixin):
     def _evaluate_literal_python(
         self, operands: Any, document: dict[str, Any]
     ) -> Any:
-        """Evaluate $literal operator in Python."""
+        """Evaluate the ``$literal`` operator in Python.
+
+        Delegates to ``_evaluate_operand_python()`` on the wrapped operand.
+
+        Args:
+            operands: The operand wrapped by ``$literal``.
+            document: Document dictionary passed to operand evaluation.
+
+        Returns:
+            Any: Result of evaluating ``operands``.
+        """
         # $literal just returns its argument as-is (used to escape special characters)
         return self._evaluate_operand_python(operands, document)
 
     def _evaluate_operand_python(
         self, operand: Any, document: dict[str, Any]
     ) -> Any:
-        """Evaluate an operand in Python context."""
+        """Evaluate an expression operand in Python context.
+
+        Resolves ``$field`` paths and ``$$variable`` references (including
+        ``$$REMOVE``, ``$$ROOT``, and ``$$CURRENT``), evaluates nested
+        single-key ``$`` expression dicts, and returns literal values
+        unchanged.
+
+        Args:
+            operand: Operand value, field/variable path, or expression dict.
+            document: Document dictionary providing fields and variables.
+
+        Returns:
+            Any: Resolved field value, evaluated subexpression, sentinel, or
+                literal value (or None when traversing through non-dicts).
+        """
         match operand:
             case str() if operand.startswith("$"):
                 # Field reference - navigate document

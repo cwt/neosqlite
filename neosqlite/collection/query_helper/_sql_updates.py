@@ -37,7 +37,19 @@ logger = logging.getLogger(__name__)
 
 
 def _contains_binary_value(obj: Any) -> bool:
-    """Return True if obj contains a Binary instance."""
+    """Return True if ``obj`` contains a ``Binary`` instance.
+
+    Recursively inspects dicts, lists, and ``bytes`` subclasses carrying
+    ``encode_for_storage`` so callers can avoid SQL paths that do not
+    safely handle encoded binary payloads.
+
+    Args:
+        obj: Value, dictionary, or list to inspect.
+
+    Returns:
+        bool: True if a ``Binary``-like object is present anywhere inside
+            ``obj``, False otherwise.
+    """
     if isinstance(obj, bytes) and hasattr(obj, "encode_for_storage"):
         return True
     if isinstance(obj, dict):
@@ -48,7 +60,19 @@ def _contains_binary_value(obj: Any) -> bool:
 
 
 def _format_sql_value_expr(value: Any) -> tuple[str, list[Any]]:
-    """Bind a Python value as a SQLite JSON/scalar parameter preserving bool/objects."""
+    """Bind a Python value as a SQLite JSON or scalar parameter expression.
+
+    Converts ``bytes`` via ``_convert_bytes_to_binary``. Booleans are wrapped
+    with ``json(?)`` so SQLite stores JSON booleans rather than integers;
+    scalars (``None``, ``int``, ``float``, ``str``) use ``?``; complex
+    objects and ``Binary`` instances are JSON-dumped into ``json(?)``.
+
+    Args:
+        value: Python value to bind into a SQL expression.
+
+    Returns:
+        tuple[str, list[Any]]: Pair of ``(sql_placeholder, bind_params)``.
+    """
     converted = _convert_bytes_to_binary(value)
     if isinstance(converted, bool):
         return "json(?)", ["true" if converted else "false"]
@@ -58,7 +82,19 @@ def _format_sql_value_expr(value: Any) -> tuple[str, list[Any]]:
 
 
 def _je_preserved_value_expr(alias: str) -> str:
-    """Preserve JSON types (including booleans and sub-objects) from json_each."""
+    """Preserve JSON types (including booleans and sub-objects) from json_each.
+
+    Builds a SQL ``CASE`` expression over ``<alias>.type`` and
+    ``<alias>.value`` so ``json_group_array`` or ``json_set`` retains nested
+    objects, arrays, and boolean literals instead of coercing them to text
+    or integers.
+
+    Args:
+        alias: Table alias or name of the ``json_each`` virtual table.
+
+    Returns:
+        str: SQL ``CASE`` expression evaluating to the typed JSON value.
+    """
     return (
         f"CASE {alias}.type "
         f"WHEN 'object' THEN json({alias}.value) "
@@ -72,7 +108,21 @@ def _je_preserved_value_expr(alias: str) -> str:
 def _extract_preserved_json_expr(
     extract_func: str, data_expr: str, json_path: str
 ) -> str:
-    """Extract a JSON value preserving booleans, objects, and arrays for json_set."""
+    """Extract a JSON value preserving booleans, objects, and arrays.
+
+    Wraps ``<extract_func>(data_expr, json_path)`` in a ``CASE`` on
+    ``json_type`` so nested containers and booleans remain valid JSON
+    fragments when passed to ``json_set``/``jsonb_set``.
+
+    Args:
+        extract_func: SQLite extraction function name (e.g., ``json_extract``
+            or ``jsonb_extract``).
+        data_expr: SQL expression representing the JSON document.
+        json_path: Quoted SQL JSON path string literal (e.g., ``'$.a'``).
+
+    Returns:
+        str: SQL ``CASE`` expression producing a type-preserving value.
+    """
     extracted = f"{extract_func}({data_expr}, {json_path})"
     return (
         f"CASE json_type({data_expr}, {json_path}) "
@@ -90,7 +140,24 @@ def _wrap_single_eval(
     build_fn: Callable[[str], tuple[str, list[Any]]],
     counter: list[int],
 ) -> tuple[str, list[Any]]:
-    """Evaluate cur_expr once via a subquery alias when transforming conditionally."""
+    """Evaluate ``cur_expr`` once via a subquery alias during composition.
+
+    When ``cur_expr`` is already a simple column/alias reference (``"data"``
+    or ``"_je*.value"``), ``build_fn`` is invoked directly. Otherwise,
+    ``cur_expr`` is bound to a fresh ``_d<n>`` subquery column so ``build_fn``
+    can reference the intermediate document multiple times without
+    re-evaluating ``cur_expr``.
+
+    Args:
+        cur_expr: Current SQL expression producing the document JSON.
+        cur_params: Bind parameters required by ``cur_expr``.
+        build_fn: Callback taking a source column/alias string and returning
+            ``(sql_expr, params)``.
+        counter: Single-element mutable list used to generate unique aliases.
+
+    Returns:
+        tuple[str, list[Any]]: Composed ``(sql_expr, combined_params)``.
+    """
     if cur_expr == "data" or (
         cur_expr.startswith("_je") and cur_expr.endswith(".value")
     ):
@@ -107,7 +174,20 @@ def _wrap_single_eval(
 def _compile_json_scalar_eq(
     type_expr: str, val_expr: str, expected: Any
 ) -> tuple[str, list[Any]] | None:
-    """Compile scalar equality predicate on (json_type, json_extract/value)."""
+    """Compile scalar equality predicate on ``(json_type, value)``.
+
+    Supports ``None``, ``bool``, ``int``, ``float``, and ``str`` while
+    checking ``bool`` before numeric types. Non-scalar values return ``None``.
+
+    Args:
+        type_expr: SQL expression yielding the SQLite ``json_type`` string.
+        val_expr: SQL expression yielding the extracted JSON value.
+        expected: Expected Python scalar value to match.
+
+    Returns:
+        tuple[str, list[Any]] | None: ``(sql_predicate, params)`` if
+            ``expected`` is a supported scalar, else ``None``.
+    """
     if expected is None:
         return f"{type_expr} = 'null'", []
     if isinstance(expected, bool):
@@ -125,9 +205,17 @@ def _compile_json_scalar_eq(
 def _is_sql_exact_json_array(value: Any) -> bool:
     """Return True when a nested list can be compared accurately via JSON text.
 
-    Restricts leaves to None, exact int (excluding bool), str, and nested lists
-    so SQLite JSON text equality matches Python/MongoDB semantics (avoiding 1 vs
-    1.0 or dict key-order ambiguities).
+    Restricts leaves to ``None``, exact ``int`` (excluding ``bool``),
+    ``str``, and nested lists so SQLite JSON text equality matches
+    Python/MongoDB semantics (avoiding ``1`` vs ``1.0`` or dict key-order
+    ambiguities).
+
+    Args:
+        value: Value to check for exact JSON array comparability.
+
+    Returns:
+        bool: True if ``value`` is a list containing only supported exact
+            leaves or nested lists, False otherwise.
     """
     if not isinstance(value, list):
         return False
@@ -143,7 +231,17 @@ def _is_sql_exact_json_array(value: Any) -> bool:
 def _compile_json_value_eq(
     type_expr: str, val_expr: str, expected: Any
 ) -> tuple[str, list[Any]] | None:
-    """Compile scalar or exact nested-array equality on (json_type, value)."""
+    """Compile scalar or exact nested-array equality on ``(json_type, value)``.
+
+    Args:
+        type_expr: SQL expression yielding the SQLite ``json_type`` string.
+        val_expr: SQL expression yielding the extracted JSON value.
+        expected: Scalar or exact nested list value to match.
+
+    Returns:
+        tuple[str, list[Any]] | None: ``(sql_predicate, params)`` if
+            compilable, else ``None``.
+    """
     scalar_eq = _compile_json_scalar_eq(type_expr, val_expr, expected)
     if scalar_eq is not None:
         return scalar_eq
@@ -158,7 +256,22 @@ def _compile_json_value_eq(
 def _build_legacy_pull_sql_pairs(
     value: dict[str, Any], *, is_pull_all: bool
 ) -> tuple[list[str], list[Any]] | None:
-    """Build parameterized json_set (path, expr) pairs for legacy $pull/$pullAll."""
+    """Build parameterized json_set ``(path, expr)`` pairs for $pull/$pullAll.
+
+    Returns ``None`` if ``$pull`` encounters a dict value (operator or
+    subdocument filter) so the caller can use another tier or Python
+    fallback. Empty target lists in ``$pullAll`` are skipped.
+
+    Args:
+        value: Mapping of target array field paths to pull values (or lists
+            of values when ``is_pull_all`` is True).
+        is_pull_all: Whether the operator is ``$pullAll`` rather than
+            ``$pull``.
+
+    Returns:
+        tuple[list[str], list[Any]] | None: ``(clauses, params)`` suitable
+            for ``json_set``, or ``None`` if fallback is required.
+    """
     clauses: list[str] = []
     params: list[Any] = []
     preserved_val = _je_preserved_value_expr("json_each")
@@ -213,7 +326,26 @@ def _compile_json_value_operators(
     exists_always_true: bool = False,
     safe_obj_expr: str | None = None,
 ) -> tuple[str, list[Any]] | None:
-    """Compile MongoDB query operator dict against a SQLite JSON value."""
+    """Compile MongoDB query operator dict against a SQLite JSON value.
+
+    Supports ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, ``$in``,
+    ``$nin``, ``$exists``, ``$size``, ``$regex`` (with optional ``$options``),
+    and ``$type``. Returns ``("1", [])`` for an empty dict or ``None`` if any
+    operator or operand cannot be translated safely.
+
+    Args:
+        type_expr: SQL expression yielding the SQLite ``json_type`` string.
+        val_expr: SQL expression yielding the extracted JSON value.
+        operators: Dictionary of MongoDB query operators and operands.
+        exists_always_true: When True, ``$exists`` evaluates as a constant
+            ``1`` or ``0`` (e.g., for existing array elements).
+        safe_obj_expr: Optional SQL expression guarded to be an object JSON
+            text value for ``$type`` checks.
+
+    Returns:
+        tuple[str, list[Any]] | None: ``(sql_predicate, params)`` joined by
+            ``AND``, or ``None`` if unsupported.
+    """
     if not operators:
         return "1", []
     clauses: list[str] = []
@@ -317,7 +449,21 @@ def _compile_json_value_operators(
 def _compile_elem_predicate(
     je_alias: str, filter_spec: Any
 ) -> tuple[str, list[Any]] | None:
-    """Compile an array-element filter (used by $pull and $[id] arrayFilters)."""
+    """Compile an array-element filter for ``$pull`` or ``$[id]`` filters.
+
+    Handles scalar/exact-array equality, empty filter dicts, pure operator
+    dicts, and object sub-field match specifications against a ``json_each``
+    row alias. Returns ``None`` for mixed ``$``/field keys, ``$`` in sub-field
+    names, or unsupported nested filters.
+
+    Args:
+        je_alias: SQLite alias of the ``json_each`` virtual table.
+        filter_spec: Element value, operator dict, or object-field filter.
+
+    Returns:
+        tuple[str, list[Any]] | None: ``(sql_predicate, params)`` or ``None``
+            when Python fallback is required.
+    """
     type_col = f"{je_alias}.type"
     val_col = f"{je_alias}.value"
     safe_obj = f"(CASE WHEN {type_col} = 'object' THEN {val_col} ELSE NULL END)"
@@ -378,7 +524,14 @@ def _compile_elem_predicate(
 class SqlUpdatesMixin:
     """Mixin providing SQL-based update operations.
 
-    Designed to be composed into UpdateOperationsMixin.
+    Designed to be composed into ``UpdateOperationsMixin``. Translates
+    MongoDB update specifications into SQLite JSON/JSONB update expressions
+    when direct SQL execution is safe and supported.
+
+    Expected attributes from host class:
+        - collection: Target ``Collection`` instance.
+        - jsonb: ``JSONBContext`` describing connection capabilities.
+        - _get_integer_id_for_oid: Resolver mapping document IDs to row IDs.
     """
 
     collection: Collection
@@ -391,20 +544,22 @@ class SqlUpdatesMixin:
         doc_id: int,
         original_doc: dict[str, Any] | None = None,
     ) -> bool:
-        """
-        Check if all operations in the update spec can be handled with SQL.
+        """Check if all operations in ``update_spec`` can run in SQL.
 
-        This method determines whether the update operations can be efficiently
-        executed using SQL directly, which allows for better performance compared
-        to iterating over each document and applying updates in Python.
+        Verifies the force-fallback kill switch, non-upsert status
+        (``doc_id != 0``), absence of positional ``$`` operators, SQLite
+        relative JSON indexing support for ``$pop``/``$push``/``$addToSet``,
+        ``Binary`` restrictions for ``$min``/``$max``/``$pull``/``$pullAll``,
+        and existing list preconditions when ``original_doc`` is supplied.
 
         Args:
-            update_spec (dict[str, Any]): The update operations to be checked.
-            doc_id (int): The document ID, which is used to determine if the update
-                          is an upsert.
+            update_spec: MongoDB update specification dictionary.
+            doc_id: Document ID; ``0`` indicates an upsert requiring fallback.
+            original_doc: Optional pre-update document used to validate
+                ``$pull`` and ``$pullAll`` target fields.
 
         Returns:
-            bool: True if all operations can be handled with SQL, False otherwise.
+            bool: True if all operations can be handled in SQL, else False.
         """
         # Respect the kill switch - force fallback if enabled
         if get_force_fallback():
@@ -432,6 +587,14 @@ class SqlUpdatesMixin:
         # unquoted JSON fragments ($pull/$pullAll). $set, $push, $addToSet, etc.
         # serialize Binary cleanly into JSON/JSONB.
         def _contains_binary(obj: Any) -> bool:
+            """Return True if ``obj`` recursively contains a Binary object.
+
+            Args:
+                obj: Value, dict, or list to inspect.
+
+            Returns:
+                bool: True if any nested value is a ``Binary``-like object.
+            """
             if isinstance(obj, bytes) and hasattr(obj, "encode_for_storage"):
                 return True
             if isinstance(obj, dict):
@@ -513,26 +676,24 @@ class SqlUpdatesMixin:
         doc_id: int,
         update_spec: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Perform update operations using SQL JSON functions.
+        """Perform update operations using consolidated SQL JSON functions.
 
-        This method builds SQL clauses for updating document fields based on the
-        provided update specification. It supports both `$set` and `$unset` operations
-        using SQLite's `json_set` and `json_remove` functions, respectively. The
-        method then executes the SQL commands to apply the updates and fetches
-        the updated document from the database.
+        Builds SQLite ``remove``/``set`` clauses for each operator in
+        ``update_spec`` via ``_build_sql_update_clause``, runs a single
+        ``UPDATE`` statement on the target row, and reloads the updated
+        document.
 
         Args:
-            doc_id (int): The ID of the document to be updated.
-            update_spec (dict[str, Any]): A dictionary specifying the update
-                                          operations to be performed.
+            doc_id: ID of the document to update.
+            update_spec: Dictionary mapping MongoDB update operators to their
+                field specifications.
 
         Returns:
-            dict[str, Any]: The updated document.
+            dict[str, Any]: The updated document loaded from the database.
 
         Raises:
-            RuntimeError: If no rows are updated or if an error occurs during the
-                          update process.
+            RuntimeError: If no valid operations exist, no rows are updated,
+                or the updated document cannot be fetched.
         """
         set_clauses = []
         set_params = []
@@ -610,26 +771,29 @@ class SqlUpdatesMixin:
         slice_value: int | None,
         data_expr: str = "data",
     ) -> tuple[str, list[Any]] | None:
-        """Build the SET-clause fragment for $push with $position/$slice.
+        """Build the SET-clause fragment for ``$push`` with $position/$slice.
 
         Assembles the new array from explicit ordered blocks (front /
-        inserted values / tail) so no LIMIT appears before UNION ALL —
-        the previous template was rejected by SQLite (#97). $slice follows
-        MongoDB semantics including negative counts, which keep the LAST
-        n elements instead of everything (#98).
+        inserted values / tail) so no ``LIMIT`` appears before
+        ``UNION ALL`` — the previous template was rejected by SQLite (#97).
+        ``$slice`` follows MongoDB semantics including negative counts, which
+        keep the LAST ``n`` elements instead of everything (#98).
 
         Args:
-            field: target field name
-            new_values_json: JSON text array of converted values to insert
-                (None when only slicing is requested)
-            position_value: $position value (negative counts from end)
-            slice_value: $slice value (negative keeps the tail)
+            field: Target field name.
+            values_json: JSON text array of converted values to insert, or
+                ``None`` when only slicing is requested.
+            position_value: ``$position`` index (negative counts from end),
+                or ``None`` to append at the end.
+            slice_value: ``$slice`` limit (negative keeps the tail), or
+                ``None`` for no truncation.
+            data_expr: SQL expression representing the source JSON document.
+                Defaults to ``"data"``.
 
         Returns:
-            (fragment, extra_params): the "<json_path>, (<subquery>)"
-            fragment plus parameters to append to the statement's bind list
-            (the inserted-values JSON array), or None when the caller should
-            fall back to the Python tier.
+            tuple[str, list[Any]] | None: ``("<json_path>, <expr>", params)``
+                fragment and bind parameters, or ``None`` if Python fallback
+                should be used.
         """
         json_path = f"'{parse_json_path(field)}'"
         cur = f"json_extract({data_expr}, {json_path})"
@@ -699,27 +863,27 @@ class SqlUpdatesMixin:
         update_spec: dict[str, Any],
         original_doc: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """
-        Perform update operations using SQL JSON functions with field-level granularity.
+        """Perform update operations with field-level SQL JSON granularity.
 
-        This method optimizes update operations by using specialized JSON functions
-        (json_insert, json_replace, etc.) based on whether fields already exist.
-        It provides field-level updates rather than whole-document rewrites.
+        Chooses between ``insert``, ``replace``, ``set``, and ``remove`` JSON
+        functions depending on whether target fields already exist, handles
+        ``$push``, ``$pop``, ``$addToSet``, ``$bit``, ``$currentDate``, and
+        ``$rename``, and delegates remaining operators to
+        ``_build_sql_update_clause``.
 
         Args:
-            doc_id (Any): The ID of the document to be updated.
-            update_spec (dict[str, Any]): A dictionary specifying the update
-                                          operations to be performed.
-            original_doc (dict[str, Any], optional): The original document before the update.
-                                                     If provided, used to determine existing fields
-                                                     instead of fetching again.
+            doc_id: ID of the document to update.
+            update_spec: Dictionary mapping MongoDB update operators to their
+                field specifications.
+            original_doc: Optional pre-update document used to inspect
+                existing top-level fields without an extra database query.
 
         Returns:
-            dict[str, Any]: The updated document.
+            dict[str, Any]: The updated document loaded from the database.
 
         Raises:
-            RuntimeError: If no rows are updated or if an error occurs during the
-                          update process.
+            RuntimeError: If no rows are updated or the updated document
+                cannot be fetched.
         """
         # Get integer ID for the document immediately to avoid UnboundLocalError
         int_doc_id = self._get_integer_id_for_oid(doc_id)
@@ -1057,18 +1221,18 @@ class SqlUpdatesMixin:
         raise RuntimeError("Failed to fetch updated document")
 
     def _get_document_fields(self, doc_id: Any) -> set[str]:
-        """
-        Get the set of field names in a document.
+        """Get the set of top-level field names in a document.
 
-        This method extracts the field names from a document to determine which fields
-        already exist and which are new. This is used to decide between json_insert
-        and json_replace operations.
+        Fetches and parses the stored JSON document to determine which fields
+        already exist so callers can choose between ``json_insert`` and
+        ``json_replace``. Returns an empty set if the row is missing or JSON
+        parsing fails.
 
         Args:
-            doc_id (Any): The ID of the document to analyze.
+            doc_id: ID of the document to inspect.
 
         Returns:
-            set: A set of field names in the document.
+            set[str]: Top-level field names present in the document.
         """
         # Get the integer ID for the document
         int_doc_id = self._get_integer_id_for_oid(doc_id)
@@ -1102,16 +1266,20 @@ class SqlUpdatesMixin:
         self,
         update: dict[str, Any],
     ) -> tuple[str, list[Any]] | None:
-        """
-        Build the SQL update clause based on the provided update operations.
+        """Build a SQL ``SET data = ...`` assignment clause for an update dict.
+
+        Translates supported update operators (``$set``, ``$inc``, ``$mul``,
+        ``$min``, ``$max``, ``$unset``, ``$currentDate``, ``$pop``, ``$push``,
+        ``$setOnInsert``, ``$pull``, ``$pullAll``) into a single assignment
+        expression, returning ``None`` when ``$rename`` or an unsupported
+        operator/capability requires another execution path.
 
         Args:
-            update (dict[str, Any]): A dictionary containing update operations.
+            update: Dictionary of MongoDB update operators and payloads.
 
         Returns:
-            tuple[str, list[Any]] | None: A tuple containing the SQL update clause
-                                          and parameters, or None if no update
-                                          clauses are generated.
+            tuple[str, list[Any]] | None: ``(set_clause_sql, params)`` or
+                ``None`` if no SQL clause can be generated.
         """
         set_clauses = []
         params = []
@@ -1324,16 +1492,21 @@ class SqlUpdatesMixin:
         op: str,
         value: Any,
     ) -> tuple[list[str], list[Any]]:
-        """
-        Build SQL update clause for a single operation.
+        """Build SQL JSON clause fragments and params for one update operator.
+
+        Supports ``$set``, ``$inc``, ``$mul``, ``$min``, ``$max``, ``$push``,
+        ``$pop``, ``$addToSet``, ``$unset``, ``$pull``, ``$pullAll``,
+        ``$currentDate``, and ``$setOnInsert``. Returns ``([], [])`` when
+        ``$rename``, complex ``$addToSet`` values, or missing SQLite relative
+        indexing require fallback.
 
         Args:
-            op (str): The update operation, such as "$set", "$inc", "$mul", etc.
-            value (Any): The value associated with the update operation.
+            op: MongoDB update operator name (e.g., ``"$set"``, ``"$inc"``).
+            value: Field-mapping payload for the update operator.
 
         Returns:
-            tuple[list[str], list[Any]]: A tuple containing the SQL update clauses
-                                         and parameters.
+            tuple[list[str], list[Any]]: Pair of ``(clauses, params)`` for
+                use inside ``json_set`` or ``json_remove``.
         """
         clauses = []
         params = []
@@ -1592,22 +1765,24 @@ class SqlUpdatesMixin:
         update: dict[str, Any],
         jsonb_supported: bool,
     ) -> bool:
-        """
-        Validate that fields in $inc/$mul operations are numeric.
+        """Validate that fields in ``$inc``/``$mul`` operations are numeric.
 
-        This checks the JSON type of each field being incremented/multiplied
-        to ensure they're numeric types.
+        Queries ``json_type`` on the first matching row for each field
+        referenced by ``$inc`` or ``$mul`` and verifies every existing value is
+        numeric or JSON null.
 
         Args:
-            db: Database connection
-            collection_name: Name of the collection
-            where_clause: The translated WHERE clause
-            where_params: Parameters for the WHERE clause
-            update: The update operations
-            jsonb_supported: Whether JSONB is supported
+            db: SQLite database connection.
+            collection_name: Name of the target collection table.
+            where_clause: Translated SQL ``WHERE`` clause, or ``None``.
+            where_params: Bind parameters for ``where_clause``.
+            update: MongoDB update specification dictionary.
+            jsonb_supported: Whether JSONB is enabled on ``db``.
 
         Returns:
-            True if all fields are numeric or don't exist, False if any field is non-numeric
+            bool: True if all checked fields are numeric, null, or missing
+                (or no row matches); False if a non-numeric type or SQL error
+                occurs.
         """
         fields_to_check = []
         for op in ("$inc", "$mul"):
@@ -1658,7 +1833,27 @@ class SqlUpdatesMixin:
         order_by: str = "",
         limit_one: bool = True,
     ) -> bool:
-        """Validate $inc/$mul operand & existing DB field types for one or many rows."""
+        """Validate ``$inc``/``$mul`` operands and DB field types via SQL.
+
+        Ensures every target field path is non-empty without ``$``, every
+        operand is numeric via ``_is_numeric_value``, and existing database
+        values across the first row (``limit_one=True``) or all matching rows
+        (``limit_one=False``) are missing, ``null``, ``integer``, ``real``,
+        or ``number``.
+
+        Args:
+            where_clause: SQL ``WHERE`` clause string (may be empty).
+            where_params: Bind parameters for ``where_clause``.
+            update: MongoDB update specification dictionary.
+            order_by: Optional SQL ``ORDER BY`` clause used when
+                ``limit_one`` is True.
+            limit_one: If True, inspect only the first matching row; if False,
+                verify no matching row has a non-numeric field value.
+
+        Returns:
+            bool: True if operands and existing DB field types are valid for
+                SQL arithmetic, False otherwise.
+        """
         fields_to_check: list[str] = []
         for op in ("$inc", "$mul"):
             op_val = update.get(op)
@@ -1725,7 +1920,26 @@ class SqlUpdatesMixin:
         jsonb_supported: bool,
         counter: list[int],
     ) -> tuple[str, list[Any]] | None:
-        """Compile a $set field path containing $[] or $[identifier] to SQL."""
+        """Compile a ``$set`` field path with ``$[]`` or ``$[id]`` to SQL.
+
+        Recursively handles nested positional segments, validates intermediate
+        object types for tail paths, and treats missing ``arrayFilters``
+        bindings as no-ops to match Python fallback behavior. Returns ``None``
+        for unsupported ``$`` positional operators or invalid path segments.
+
+        Args:
+            cur_expr: Current SQL expression yielding the document JSON.
+            cur_params: Bind parameters associated with ``cur_expr``.
+            parts: Dot-split components of the ``$set`` field path.
+            value: Target value to assign at matched positions.
+            array_filters: Optional list of ``arrayFilters`` binding dicts.
+            jsonb_supported: Whether JSONB functions should be emitted.
+            counter: Single-element mutable list for unique SQL aliases.
+
+        Returns:
+            tuple[str, list[Any]] | None: Updated ``(sql_expr, params)`` or
+                ``None`` if Python fallback is needed.
+        """
         pos_idx = next(
             (
                 i
@@ -1838,6 +2052,14 @@ class SqlUpdatesMixin:
         arr_path = f"'{parse_json_path(prefix)}'"
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
+            """Build SQL rebuilding the target array for positional ``$set``.
+
+            Args:
+                src: SQL expression or alias referencing the document JSON.
+
+            Returns:
+                tuple[str, list[Any]]: ``(sql_expr, elem_params)``.
+            """
             target_src = (
                 f"json({src})"
                 if (src.startswith("_je") and src.endswith(".value"))
@@ -1866,7 +2088,24 @@ class SqlUpdatesMixin:
         jsonb_supported: bool,
         counter: list[int],
     ) -> tuple[str, list[Any]] | None:
-        """Compile scalar or condition $pull (top-level or dotted) into SQL."""
+        """Compile scalar or condition ``$pull`` (top-level or dotted) to SQL.
+
+        Leaves non-array target fields untouched and rejects ``Binary``
+        payloads or field paths containing ``$``.
+
+        Args:
+            cur_expr: Current SQL expression yielding the document JSON.
+            cur_params: Bind parameters associated with ``cur_expr``.
+            field: Target array field path.
+            pull_value: Scalar, exact array, or operator/subdocument filter
+                matching elements to remove.
+            jsonb_supported: Whether JSONB functions should be emitted.
+            counter: Single-element mutable list for unique SQL aliases.
+
+        Returns:
+            tuple[str, list[Any]] | None: Updated ``(sql_expr, params)`` or
+                ``None`` if Python fallback is needed.
+        """
         if _contains_binary_value(pull_value) or not field or "$" in field:
             return None
         je = f"_je{counter[0]}"
@@ -1881,6 +2120,14 @@ class SqlUpdatesMixin:
         empty_arr = json_literal("[]", jsonb_supported)
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
+            """Build SQL filtering matched ``$pull`` elements from an array.
+
+            Args:
+                src: SQL expression or alias referencing the document JSON.
+
+            Returns:
+                tuple[str, list[Any]]: ``(sql_expr, pred_params)``.
+            """
             filtered = json_constructor(
                 f"COALESCE((SELECT {ga_func}({_je_preserved_value_expr(je)}) "
                 f"FROM json_each({src}, {json_path}) AS {je} "
@@ -1905,7 +2152,23 @@ class SqlUpdatesMixin:
         jsonb_supported: bool,
         counter: list[int],
     ) -> tuple[str, list[Any]] | None:
-        """Compile $pullAll into a type-safe SQL array filter expression."""
+        """Compile ``$pullAll`` into a type-safe SQL array filter expression.
+
+        Rejects ``Binary`` payloads, empty/``$`` field paths, and non-list
+        ``pull_values``. An empty ``pull_values`` sequence is a no-op.
+
+        Args:
+            cur_expr: Current SQL expression yielding the document JSON.
+            cur_params: Bind parameters associated with ``cur_expr``.
+            field: Target array field path.
+            pull_values: List or tuple of element values to remove.
+            jsonb_supported: Whether JSONB functions should be emitted.
+            counter: Single-element mutable list for unique SQL aliases.
+
+        Returns:
+            tuple[str, list[Any]] | None: Updated ``(sql_expr, params)`` or
+                ``None`` if Python fallback is needed.
+        """
         if _contains_binary_value(pull_values) or not field or "$" in field:
             return None
         if not isinstance(pull_values, (list, tuple)):
@@ -1929,6 +2192,14 @@ class SqlUpdatesMixin:
         empty_arr = json_literal("[]", jsonb_supported)
 
         def _build_body(src: str) -> tuple[str, list[Any]]:
+            """Build SQL filtering ``$pullAll`` values from a JSON array.
+
+            Args:
+                src: SQL expression or alias referencing the document JSON.
+
+            Returns:
+                tuple[str, list[Any]]: ``(sql_expr, cond_params)``.
+            """
             filtered = json_constructor(
                 f"COALESCE((SELECT {ga_func}({_je_preserved_value_expr(je)}) "
                 f"FROM json_each({src}, {json_path}) AS {je} "
@@ -1953,7 +2224,25 @@ class SqlUpdatesMixin:
         jsonb_supported: bool,
         counter: list[int],
     ) -> tuple[str, list[Any]] | None:
-        """Compile $addToSet (scalar or Binary, with optional $each) into SQL."""
+        """Compile ``$addToSet`` (with optional ``$each``) into SQL.
+
+        Supports scalar and ``Binary`` elements, creates a new single-element
+        array when the target field is missing, and returns ``None`` for
+        empty/``$`` field paths, more than 20 ``$each`` values, or complex
+        non-scalar/non-Binary items.
+
+        Args:
+            cur_expr: Current SQL expression yielding the document JSON.
+            cur_params: Bind parameters associated with ``cur_expr``.
+            field: Target array field path.
+            val: Value to add, or ``{"$each": ...}`` modifier dict.
+            jsonb_supported: Whether JSONB functions should be emitted.
+            counter: Single-element mutable list for unique SQL aliases.
+
+        Returns:
+            tuple[str, list[Any]] | None: Updated ``(sql_expr, params)`` or
+                ``None`` if Python fallback is needed.
+        """
         if not field or "$" in field:
             return None
         if isinstance(val, dict) and "$each" in val:
@@ -1999,6 +2288,19 @@ class SqlUpdatesMixin:
                 ep: list[Any] = exists_params,
                 je_name: str = je,
             ) -> tuple[str, list[Any]]:
+                """Build SQL inserting one element when absent from an array.
+
+                Args:
+                    src: SQL expression or alias referencing the document.
+                    vs: SQL placeholder expression for the candidate value.
+                    vp: Bind parameters for ``vs``.
+                    ec: SQL existence predicate against ``je_name``.
+                    ep: Bind parameters for ``ec``.
+                    je_name: Alias of the ``json_each`` virtual table.
+
+                Returns:
+                    tuple[str, list[Any]]: ``(sql_expr, params)``.
+                """
                 sql = (
                     f"CASE "
                     f"WHEN json_type({src}, {json_path}) IS NULL "
@@ -2020,10 +2322,23 @@ class SqlUpdatesMixin:
         update_spec: dict[str, Any],
         array_filters: list[dict[str, Any]] | None = None,
     ) -> tuple[str, list[Any], str] | None:
-        """Build a composable SQL expression for `SET data = <expr>` + tier label.
+        """Build a composable SQL expression for ``SET data = <expr>``.
 
-        Returns ``(data_expr, params, tier)`` where ``tier`` is ``"tier1"`` or
-        ``"tier2"``, or ``None`` if Python fallback is required.
+        Translates all operators in ``update_spec`` into a nested SQL JSON or
+        JSONB expression suitable for single-statement ``UPDATE`` execution,
+        tracking whether any tier-2 feature (positional ``$set``, ``$push``
+        with ``$position``/``$slice``, ``$addToSet``, ``$pull``, ``$pullAll``)
+        was used. Returns ``None`` when Python fallback is required.
+
+        Args:
+            update_spec: MongoDB update specification dictionary.
+            array_filters: Optional list of ``arrayFilters`` dictionaries used
+                by ``$[identifier]`` positional paths in ``$set``.
+
+        Returns:
+            tuple[str, list[Any], str] | None: ``(data_expr, params, tier)``
+                where ``tier`` is ``"tier1"`` or ``"tier2"``, or ``None`` if
+                Python fallback is required.
         """
         if not isinstance(update_spec, dict) or not update_spec:
             return None
@@ -2140,6 +2455,17 @@ class SqlUpdatesMixin:
                             a: str = arith,
                             val: Any = operand,
                         ) -> tuple[str, list[Any]]:
+                            """Build SQL arithmetic update for one field.
+
+                            Args:
+                                src: SQL expression or alias for the document.
+                                p: Quoted JSON path literal for the field.
+                                a: Arithmetic operator (``"+"`` or ``"*"``).
+                                val: Numeric operand to bind.
+
+                            Returns:
+                                tuple[str, list[Any]]: ``(sql_expr, params)``.
+                            """
                             expr = (
                                 f"COALESCE({extract_func}({src}, {p}), 0) {a} ?"
                             )
@@ -2171,6 +2497,20 @@ class SqlUpdatesMixin:
                             val: Any = field_val,
                             types_sql: str = allowed_types,
                         ) -> tuple[str, list[Any]]:
+                            """Build SQL ``min``/``max`` conditional update.
+
+                            Args:
+                                src: SQL expression or alias for the document.
+                                p: Quoted JSON path literal for the field.
+                                f_name: SQL aggregate function (``"min"`` or
+                                    ``"max"``).
+                                val: Comparison scalar value to bind.
+                                types_sql: SQL tuple of compatible
+                                    ``json_type`` names.
+
+                            Returns:
+                                tuple[str, list[Any]]: ``(sql_expr, params)``.
+                            """
                             ext = f"{extract_func}({src}, {p})"
                             preserved = _extract_preserved_json_expr(
                                 extract_func, src, p
@@ -2200,6 +2540,16 @@ class SqlUpdatesMixin:
                         def _bit_body(
                             src: str, p: str = jp, bs: dict[str, Any] = bit_spec
                         ) -> tuple[str, list[Any]]:
+                            """Build SQL bitwise update expression for a field.
+
+                            Args:
+                                src: SQL expression or alias for the document.
+                                p: Quoted JSON path literal for the field.
+                                bs: Bitwise spec dict (``and``/``or``/``xor``).
+
+                            Returns:
+                                tuple[str, list[Any]]: ``(sql_expr, params)``.
+                            """
                             bit_expr = (
                                 f"COALESCE({extract_func}({src}, {p}), 0)"
                             )
@@ -2247,6 +2597,17 @@ class SqlUpdatesMixin:
                         def _ren_body(
                             src: str, op_p: str = old_p, np_p: str = new_p
                         ) -> tuple[str, list[Any]]:
+                            """Build SQL conditional field rename expression.
+
+                            Args:
+                                src: SQL expression or alias for the document.
+                                op_p: Quoted JSON path of the source field.
+                                np_p: Quoted JSON path of the destination
+                                    field.
+
+                            Returns:
+                                tuple[str, list[Any]]: ``(sql_expr, params)``.
+                            """
                             preserved = _extract_preserved_json_expr(
                                 extract_func, src, op_p
                             )
@@ -2312,6 +2673,20 @@ class SqlUpdatesMixin:
                                 pv: Any = pos_val,
                                 sv: Any = slice_val,
                             ) -> tuple[str, list[Any]]:
+                                """Build SQL ``$push`` modifier expression.
+
+                                Args:
+                                    src: SQL expression or alias for the
+                                        document.
+                                    f_name: Target array field path.
+                                    nj: JSON-encoded array of values to push.
+                                    pv: Optional ``$position`` modifier value.
+                                    sv: Optional ``$slice`` modifier value.
+
+                                Returns:
+                                    tuple[str, list[Any]]: ``(sql_expr,
+                                        params)``.
+                                """
                                 built = self._build_push_position_slice_clause(
                                     f_name, nj, pv, sv, data_expr=src
                                 )

@@ -16,8 +16,16 @@ from .base import BasePythonMixin
 def _bson_sort_key(value: Any) -> tuple[int, Any]:
     """Return a sort key tuple that encodes BSON comparison order.
 
-    The first element is the BSON type group (0..9), the second is the
-    value itself for same-type comparison.  Unknown types fall at the end.
+    The first element is the BSON type rank (0..7, or 99 for unknown types),
+    and the second is a comparable representation of the value within that
+    group.
+
+    Args:
+        value: Value to compute a BSON comparison sort key for.
+
+    Returns:
+        tuple[int, Any]: Pair of ``(type_rank, comparable_value)`` preserving
+        MongoDB BSON type ordering.
     """
     if value is None:
         return (0, None)
@@ -47,7 +55,18 @@ def _bson_sort_key(value: Any) -> tuple[int, Any]:
 
 
 def _bson_sort(array: list[Any]) -> list[Any]:
-    """Sort a list using MongoDB BSON comparison order."""
+    """Sort a list using MongoDB BSON comparison order.
+
+    Falls back to returning the original list order if comparing elements
+    within the same type group raises ``TypeError``.
+
+    Args:
+        array: List of elements to sort.
+
+    Returns:
+        list[Any]: Sorted list under BSON ordering, or ``array`` unchanged
+        when same-group elements cannot be compared.
+    """
     try:
         return sorted(array, key=_bson_sort_key)
     except TypeError:
@@ -57,7 +76,18 @@ def _bson_sort(array: list[Any]) -> list[Any]:
 
 
 def _set_key(v: Any) -> Any:
-    """Hashable canonical form of an element for $set* operators (#122)."""
+    """Return a hashable canonical key for ``$set*`` operators (#122).
+
+    Converts dicts, lists, booleans, numbers, strings, and other objects into
+    type-tagged hashable tuples so unhashable containers can be compared and
+    deduplicated without losing type distinction.
+
+    Args:
+        v: Element value to canonicalize.
+
+    Returns:
+        Any: Tagged hashable tuple representing the element's type and value.
+    """
     if isinstance(v, dict):
         return ("d", _json.dumps(v, sort_keys=True, default=str))
     if isinstance(v, list):
@@ -74,6 +104,17 @@ def _set_key(v: Any) -> Any:
 
 
 def _dedupe(seq: list) -> list:
+    """Deduplicate elements in a list while preserving first-seen order.
+
+    Uses ``_set_key`` so unhashable elements such as dicts and nested lists
+    can be deduplicated cleanly.
+
+    Args:
+        seq: List of elements to deduplicate.
+
+    Returns:
+        list: New list containing unique elements in original order.
+    """
     seen: set = set()
     out: list = []
     for x in seq:
@@ -85,7 +126,18 @@ def _dedupe(seq: list) -> list:
 
 
 def _bson_min_max(array: list, is_min: bool):
-    """min/max under BSON type ordering; None if no non-null values."""
+    """Return min or max under BSON ordering, or None if no non-null values.
+
+    Filters out ``None`` values and compares remaining items using
+    ``bson_sort_key`` so mixed-type arrays do not raise ``TypeError``.
+
+    Args:
+        array: List of values to inspect.
+        is_min: Whether to compute the minimum (True) or maximum (False).
+
+    Returns:
+        Any: Minimum or maximum non-null element, or ``None`` if empty.
+    """
     from neosqlite.collection.type_utils import bson_sort_key
 
     vals = [v for v in array if v is not None]
@@ -96,12 +148,40 @@ def _bson_min_max(array: list, is_min: bool):
 
 
 class ArrayPythonMixin(BasePythonMixin):
-    """Array, set, and transform ($filter/$map/$reduce) operators."""
+    """Mixin implementing array, set, and transform operators in Python.
+
+    Provides Python-tier evaluation for aggregation array operators (such as
+    ``$size``, ``$in``, ``$isArray``, ``$sum``, ``$avg``, ``$min``, ``$max``,
+    ``$arrayElemAt``, ``$first``, ``$last``, ``$firstN``, ``$lastN``,
+    ``$maxN``, ``$minN``, ``$sortArray``, ``$slice``, ``$indexOfArray``,
+    ``$set*``, ``$anyElementTrue``, ``$allElementsTrue``) and variable-scoping
+    transform operators (``$filter``, ``$map``, ``$reduce``).
+    """
 
     def _evaluate_array_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
-        """Evaluate array operators in Python."""
+        """Evaluate array and set operators against a document in Python.
+
+        Normalizes single-value operands for unary operators, evaluates nested
+        operands using ``_evaluate_operand_python``, and dispatches across all
+        supported MongoDB array and set expression operators.
+
+        Args:
+            operator: MongoDB array or set operator name (e.g., ``$size``).
+            operands: Operand list, single operand, or operator configuration
+                dict (for ``$firstN``, ``$lastN``, ``$maxN``, ``$minN``, or
+                ``$sortArray``).
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            Any: Result of evaluating the array or set operator.
+
+        Raises:
+            ValueError: If operand count or structure is invalid for the
+                operator.
+            NotImplementedError: If ``operator`` is not supported here.
+        """
         # Normalize operands for operators that accept single values
         if operator in (
             "$size",
@@ -344,8 +424,13 @@ class ArrayPythonMixin(BasePythonMixin):
                     try:
 
                         def sort_key(x: Any) -> Any:
-                            """
-                            Extract the sort field from a dictionary or return the value.
+                            """Extract the sort field or raw value.
+
+                            Args:
+                                x: Array item to extract a sort key from.
+
+                            Returns:
+                                Any: Field value if dict, else ``x``.
                             """
                             return (
                                 x.get(sort_field) if isinstance(x, dict) else x
@@ -466,12 +551,29 @@ class ArrayPythonMixin(BasePythonMixin):
     def _evaluate_array_transform_python(
         self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
-        """Evaluate $filter, $map, $reduce operators in Python.
+        """Evaluate ``$filter``, ``$map``, and ``$reduce`` in Python.
 
-        These operators use variable scoping:
-        - $filter: {input: <array>, as: <var>, cond: <expr>}
-        - $map: {input: <array>, as: <var>, in: <expr>}
-        - $reduce: {input: <array>, initialValue: <val>, in: <expr>}
+        These operators introduce local variable bindings over ``document``
+        when iterating over the input array:
+
+        - ``$filter``: ``{input: <array>, as: <var>, cond: <expr>}``
+        - ``$map``: ``{input: <array>, as: <var>, in: <expr>}``
+        - ``$reduce``: ``{input: <array>, initialValue: <val>, in: <expr>}``
+
+        Args:
+            operator: Transform operator name (``$filter``, ``$map``, or
+                ``$reduce``).
+            operands: Dictionary specifying the operator's configuration keys.
+            document: Document dictionary providing outer fields and variables.
+
+        Returns:
+            Any: Filtered list, mapped list, or reduced accumulator value. For
+            non-list inputs, returns ``[]`` for ``$filter``/``$map`` and
+            ``None`` for ``$reduce``.
+
+        Raises:
+            ValueError: If ``operands`` is not a dict or lacks required keys.
+            NotImplementedError: If ``operator`` is not a supported transform.
         """
         match operator:
             case "$filter":

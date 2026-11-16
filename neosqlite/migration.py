@@ -1,8 +1,7 @@
-"""
-Auto-vacuum migration utilities for NeoSQLite.
+"""Auto-vacuum migration utilities for NeoSQLite.
 
-Provides functionality to migrate SQLite databases to different auto_vacuum modes
-while preserving all data.
+Provides functionality to migrate SQLite databases to different
+auto_vacuum modes while preserving all data.
 """
 
 from __future__ import annotations
@@ -21,36 +20,44 @@ def needs_migration(
     db: sqlite3.Connection,
     target_autovacuum: int,
 ) -> bool:
-    """
-    Check if the database needs auto_vacuum migration.
+    """Check if the database needs auto_vacuum migration.
 
     Args:
-        db: SQLite connection
-        target_autovacuum: Desired auto_vacuum mode
+        db: SQLite connection to inspect.
+        target_autovacuum: Desired ``auto_vacuum`` mode integer.
 
     Returns:
-        True if migration is needed, False otherwise
+        bool: True if current ``auto_vacuum`` differs from target, else False.
     """
     current = db.execute("PRAGMA auto_vacuum").fetchone()[0]
     return current != target_autovacuum
 
 
 def get_journal_mode(db: sqlite3.Connection) -> str:
-    """Get the current journal mode of a database."""
+    """Get the current journal mode of a database.
+
+    Args:
+        db: SQLite connection to inspect.
+
+    Returns:
+        str: Active SQLite ``journal_mode`` pragma value.
+    """
     return db.execute("PRAGMA journal_mode").fetchone()[0]
 
 
 def checkpoint_and_prepare_for_migration(
     db: sqlite3.Connection,
 ) -> list[str]:
-    """
-    Ensure database is ready for migration by checkpointing WAL.
+    """Ensure database is ready for migration by checkpointing WAL.
+
+    Attempts ``PRAGMA wal_checkpoint(TRUNCATE)`` and ``COMMIT``, logging a
+    warning and continuing if either statement fails.
 
     Args:
-        db: SQLite connection
+        db: SQLite connection to checkpoint.
 
     Returns:
-        List of files that need to be backed up (main db + wal/shm if exist)
+        list[str]: Empty list after checkpoint preparation completes.
     """
     # Ensure all WAL data is written to main file
     try:
@@ -74,25 +81,29 @@ def migrate_autovacuum(
     target_journal_mode: str = "WAL",
     extra_conn_kwargs: dict | None = None,
 ) -> bool:
-    """
-    Migrate a database to a different auto_vacuum mode.
+    """Migrate a database to a different auto_vacuum mode.
 
-    This function:
-    1. Check if migration is actually needed
-    2. Checkpoints any WAL data
-    3. Backs up all database files (main + WAL + SHM)
-    4. Closes the database
-    5. Opens backup and VACUUM INTO new file with desired auto_vacuum
-    6. Replaces original with vacuumed file
+    Performs an on-disk migration by checking ``needs_migration``,
+    checkpointing WAL state, backing up the database (and any ``-wal``/``-shm``
+    files), streaming a consistent on-disk snapshot via SQLite's backup API,
+    rebuilding with ``VACUUM INTO`` (or ``VACUUM`` plus copy on SQLite older
+    than 3.27.0), applying ``target_journal_mode``, and replacing ``db_path``.
+    Restores backups and deletes transient files if any step raises.
 
     Args:
-        db_path: Path to the database file
-        target_autovacuum: Desired auto_vacuum mode (0, 1, or 2)
-        target_journal_mode: Desired journal mode (default: WAL)
-        extra_conn_kwargs: Extra arguments for sqlite3.connect()
+        db_path: Path to the SQLite database file.
+        target_autovacuum: Desired ``auto_vacuum`` mode (0, 1, or 2).
+        target_journal_mode: Desired ``journal_mode`` for output DB.
+            Defaults to ``"WAL"``.
+        extra_conn_kwargs: Optional extra kwargs accepted for compatibility
+            (currently unused).
 
     Returns:
-        True if migration succeeded, False if skipped (already correct)
+        bool: True if migration ran and succeeded, False if already at the
+            requested ``auto_vacuum`` mode.
+
+    Raises:
+        Exception: Re-raises any error encountered after restoring backups.
     """
     initial_conn = sqlite3.connect(db_path)
     try:
@@ -231,10 +242,9 @@ def migrate_autovacuum(
 
 
 def should_migrate() -> bool:
-    """
-    Check if auto_vacuum migration is enabled via environment variable.
+    """Check if auto_vacuum migration is enabled via environment variable.
 
     Returns:
-        True if AUTOVACUUM_MIGRATION=1 is set, False otherwise
+        bool: True if ``AUTOVACUUM_MIGRATION=1`` is set, False otherwise.
     """
     return os.environ.get("AUTOVACUUM_MIGRATION", "0") == "1"

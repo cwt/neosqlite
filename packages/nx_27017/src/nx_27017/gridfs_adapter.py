@@ -25,14 +25,21 @@ DEFAULT_CHUNK_SIZE_BYTES = 261_120  # 256 KiB (MongoDB default)
 
 
 class GridFSAdapter:
-    """Adapter to translate PyMongo GridFS operations to NeoSQLite GridFS."""
+    """Adapter translating PyMongo GridFS operations to NeoSQLite GridFS.
+
+    Intercepts operations targeting GridFS collections (such as ``fs.files``
+    and ``fs.chunks``) and translates between MongoDB document semantics and
+    NeoSQLite's relational ``<bucket>_files`` / ``<bucket>_chunks`` tables,
+    handling schema migration, ``ObjectId`` normalization, and integer
+    ``files_id`` foreign keys.
+    """
 
     def __init__(self, db: Any, bucket_name: str = "fs"):
         """Initialize the GridFS adapter.
 
         Args:
-            db: NeoSQLite database connection (sqlite3 connection, not neosqlite Connection)
-            bucket_name: Name of the GridFS bucket (default: "fs")
+            db: NeoSQLite SQLite connection (not a ``neosqlite.Connection``).
+            bucket_name: Name of the GridFS bucket (defaults to ``"fs"``).
         """
         self._db = db
         self._bucket_name = bucket_name
@@ -40,10 +47,11 @@ class GridFSAdapter:
         self._ensure_bucket()
 
     def _ensure_gridfs_schema(self) -> None:
-        """Ensure the GridFS tables have the correct schema.
+        """Ensure the GridFS tables have the required schema columns.
 
-        If the tables already exist from an older schema, this adds any missing columns
-        before GridFSBucket tries to create indexes on them.
+        If ``<bucket>_files`` or ``<bucket>_chunks`` tables already exist from
+        an older schema, adds any missing columns via ``ALTER TABLE`` before
+        ``GridFSBucket`` creates indexes on them.
         """
         files_table = f"{self._bucket_name}_files"
         chunks_table = f"{self._bucket_name}_chunks"
@@ -161,7 +169,12 @@ class GridFSAdapter:
         )
 
     def _ensure_bucket(self) -> None:
-        """Ensure the GridFSBucket is initialized."""
+        """Ensure the underlying ``GridFSBucket`` instance is initialized.
+
+        Runs schema verification first, reuses existing properly structured
+        tables directly when present, or instantiates a new ``GridFSBucket``
+        with ``DEFAULT_CHUNK_SIZE_BYTES``.
+        """
         if self._bucket is None:
             from neosqlite.gridfs import GridFSBucket
 
@@ -239,19 +252,24 @@ class GridFSAdapter:
             logger.debug("GridFSBucket created successfully")
 
     def _get_bucket(self) -> GridFSBucket:
-        """Get the GridFSBucket with type safety assertion."""
+        """Return the initialized ``GridFSBucket`` with a non-None assertion.
+
+        Returns:
+            GridFSBucket: Active GridFS bucket instance for this adapter.
+        """
         assert self._bucket is not None, "GridFS bucket not initialized"
         return self._bucket
 
     def ensure_file_metadata_exists(self, files_id: Any, db: Any) -> None:
-        """Ensure file metadata exists in fs_files for the given files_id.
+        """Ensure file metadata exists in ``<bucket>_files`` for a file.
 
-        This is called when inserting chunks to auto-create file metadata if it doesn't exist.
-        Since PyMongo doesn't explicitly send file metadata inserts, we create minimal metadata.
+        Called during chunk insertion to auto-create minimal file metadata
+        when PyMongo writes chunks before sending the corresponding file
+        metadata document.
 
         Args:
-            files_id: The ObjectId (or string) of the file
-            db: The SQLite database connection
+            files_id: The ``ObjectId`` (or string ID) of the file.
+            db: SQLite database connection supporting ``execute``.
         """
         files_id_str = str(files_id)
 
@@ -292,7 +310,19 @@ class GridFSAdapter:
         logger.debug(f"Auto-created file metadata for _id={files_id_str}")
 
     def _convert_objectid(self, oid: Any) -> ObjectId | str | None:
-        """Convert ObjectId from various formats."""
+        """Convert an ObjectId value from wire or query formats.
+
+        Unwraps ``$eq`` and ``$oid`` dict wrappers and attempts to parse
+        string values into ``ObjectId`` instances, returning unrecognized
+        strings or other values unchanged.
+
+        Args:
+            oid: Raw identifier value, query wrapper dict, or ``None``.
+
+        Returns:
+            ObjectId | str | None: Normalized ``ObjectId``, fallback string or
+            raw value, or ``None`` if ``oid`` is ``None``.
+        """
         if oid is None:
             return None
         if isinstance(oid, dict) and "$eq" in oid:
@@ -309,7 +339,16 @@ class GridFSAdapter:
         return oid
 
     def _convert_gridfs_result(self, grid_out: Any) -> dict[str, Any]:
-        """Convert GridOut to MongoDB-compatible dict."""
+        """Convert a ``GridOut`` object into a MongoDB-compatible file dict.
+
+        Args:
+            grid_out: NeoSQLite ``GridOut`` instance returned by bucket find.
+
+        Returns:
+            dict[str, Any]: File metadata dictionary with ``_id``,
+            ``filename``, ``length``, ``chunkSize``, ``uploadDate``, ``md5``,
+            and ``metadata``.
+        """
         return {
             "_id": grid_out._id,
             "filename": grid_out.filename,
@@ -323,14 +362,16 @@ class GridFSAdapter:
     def handle_insert(
         self, docs: list[dict], is_files: bool = True
     ) -> dict[str, Any]:
-        """Handle insert operation on GridFS collection.
+        """Handle insert operations on a GridFS files or chunks collection.
 
         Args:
-            docs: List of documents to insert
-            is_files: True if inserting into files collection, False for chunks
+            docs: List of file or chunk documents to insert.
+            is_files: True if inserting into files collection, False for
+                chunks.
 
         Returns:
-            MongoDB-style insert response
+            dict[str, Any]: MongoDB-style insert response with ``ok``, ``n``,
+            and ``insertedIds`` (or ``errmsg`` on error).
         """
         self._ensure_bucket()
 
@@ -373,16 +414,18 @@ class GridFSAdapter:
             return {"ok": 0, "errmsg": str(e)}
 
     def _insert_file(self, doc: dict) -> ObjectId | str:
-        """Insert a file document into GridFS files collection.
+        """Insert or update a file document in the GridFS files table.
 
-        This directly inserts into the files table using raw SQL since
-        the document structure matches the table columns.
+        Writes directly to ``<bucket>_files`` via SQL. If a placeholder row
+        was already auto-created by ``ensure_file_metadata_exists``, updates
+        that row with the incoming metadata fields.
 
         Args:
-            doc: File document with fields like _id, filename, length, etc.
+            doc: File document containing ``_id``, ``filename``, ``length``,
+                ``chunkSize``, ``uploadDate``, ``md5``, and ``metadata``.
 
         Returns:
-            The inserted file ID
+            ObjectId | str: The inserted or updated file identifier.
         """
         file_id = self._convert_objectid(doc.get("_id")) or ObjectId()
         filename = doc.get("filename", "")
@@ -463,13 +506,19 @@ class GridFSAdapter:
         return file_id
 
     def _insert_chunk(self, doc: dict) -> ObjectId | str:
-        """Insert a chunk document into GridFS chunks collection.
+        """Insert a chunk document into the GridFS chunks table.
+
+        Resolves the parent file's integer row ID from ``<bucket>_files`` and
+        inserts ``(files_id, n, data)`` into ``<bucket>_chunks`` so SQLite
+        auto-generates the chunk row ID.
 
         Args:
-            doc: Chunk document with fields like _id, files_id, n, data
+            doc: Chunk document containing ``_id``, ``files_id``, ``n``, and
+                ``data``.
 
         Returns:
-            The inserted chunk ID
+            ObjectId | str: The chunk identifier from ``doc`` or a new
+            ``ObjectId``.
         """
         chunk_id = self._convert_objectid(doc.get("_id")) or ObjectId()
         files_id = doc.get("files_id")
@@ -519,13 +568,13 @@ class GridFSAdapter:
     def handle_find(
         self, filter_query: dict | None = None
     ) -> list[dict[str, Any]]:
-        """Handle find operation on GridFS files collection.
+        """Handle find operations on the GridFS files collection.
 
         Args:
-            filter_query: Query filter dictionary
+            filter_query: Optional MongoDB-style query filter dictionary.
 
         Returns:
-            List of matching file documents in MongoDB format
+            list[dict[str, Any]]: Matching file documents in MongoDB format.
         """
         self._ensure_bucket()
 
@@ -545,13 +594,17 @@ class GridFSAdapter:
     def handle_chunks_find(
         self, filter_query: dict | None = None
     ) -> list[dict[str, Any]]:
-        """Handle find operation on GridFS chunks collection.
+        """Handle find operations on the GridFS chunks collection.
+
+        Supports querying all chunks when ``files_id`` is omitted, or filtering
+        by ``files_id`` (including ``{"$eq": ...}``) and chunk index ``n``
+        equality or comparison operators.
 
         Args:
-            filter_query: Query filter dictionary with files_id
+            filter_query: Optional query filter dictionary for chunks.
 
         Returns:
-            List of matching chunk documents in MongoDB format
+            list[dict[str, Any]]: Matching chunk documents in MongoDB format.
         """
         self._ensure_bucket()
 
@@ -631,15 +684,16 @@ class GridFSAdapter:
     def handle_delete(
         self, file_ids: list[Any], filenames: list[str] | None = None
     ) -> dict[str, Any]:
-        """Handle delete operation on GridFS files collection.
+        """Handle delete operations on the GridFS files collection.
 
         Args:
-            file_ids: List of file IDs to delete
-            filenames: Optional list of filenames (all versions deleted,
-                matching legacy ``GridFS.delete_by_name`` semantics)
+            file_ids: List of file IDs to delete from the bucket.
+            filenames: Optional list of filenames to delete (all versions
+                removed via ``GridFSBucket.delete_by_name``).
 
         Returns:
-            MongoDB-style delete response
+            dict[str, Any]: MongoDB-style delete response with ``ok`` and
+            ``n`` (or ``errmsg`` on error).
         """
         self._ensure_bucket()
 
@@ -660,15 +714,17 @@ class GridFSAdapter:
             return {"ok": 0, "errmsg": str(e)}
 
     def handle_chunks_delete(self, file_ids: list[Any]) -> dict[str, Any]:
-        """Handle delete operation on GridFS chunks collection.
+        """Handle delete operations on the GridFS chunks collection.
 
-        PyMongo deletes chunks by ``files_id`` while cleaning up a file.
+        Deletes chunks matching each resolved file integer ID when PyMongo
+        cleans up chunks directly by ``files_id``.
 
         Args:
-            file_ids: List of file IDs whose chunks should be removed
+            file_ids: List of file IDs whose chunks should be removed.
 
         Returns:
-            MongoDB-style delete response
+            dict[str, Any]: MongoDB-style delete response with ``ok`` and
+            ``n`` (or ``errmsg`` on error).
         """
         self._ensure_bucket()
 
@@ -699,14 +755,17 @@ class GridFSAdapter:
             return {"ok": 0, "errmsg": str(e)}
 
     def handle_update(self, file_id: Any, update: dict) -> dict[str, Any]:
-        """Handle update operation on GridFS files collection.
+        """Handle update operations on the GridFS files collection.
+
+        Supports ``$set`` updates for ``filename`` and ``metadata``.
 
         Args:
-            file_id: ID of file to update
-            update: Update document with $set and/or other operators
+            file_id: Identifier of the file to update.
+            update: Update specification dictionary containing ``$set``.
 
         Returns:
-            MongoDB-style update response
+            dict[str, Any]: MongoDB-style update response with ``ok``, ``n``,
+            and ``nModified`` (or ``errmsg`` on error).
         """
         self._ensure_bucket()
 
@@ -750,10 +809,10 @@ class GridFSAdapter:
             return {"ok": 0, "errmsg": str(e)}
 
     def create_indexes(self) -> dict[str, Any]:
-        """Create indexes on GridFS collections.
+        """Return a compatibility createIndexes response for GridFS.
 
         Returns:
-            MongoDB-style createIndexes response
+            dict[str, Any]: MongoDB-style ``createIndexes`` response dict.
         """
         self._ensure_bucket()
 
@@ -771,7 +830,16 @@ class GridFSAdapter:
 
 
 def _convert_objectids_in_dict(doc: dict) -> dict | None:
-    """Recursively convert ObjectIds in a document."""
+    """Recursively convert extended-JSON ``$oid`` dicts in a document.
+
+    Args:
+        doc: Document dictionary potentially containing ``{"$oid": ...}``
+            wrappers.
+
+    Returns:
+        dict | None: Converted document with NeoSQLite ``ObjectId`` instances,
+        or ``None`` if conversion returns ``None``.
+    """
     from nx_27017.utils import convert_json_to_neo_objectids
 
     return convert_json_to_neo_objectids(doc)
@@ -780,14 +848,16 @@ def _convert_objectids_in_dict(doc: dict) -> dict | None:
 def create_gridfs_adapter(
     db: Any, coll_name: str
 ) -> tuple[GridFSAdapter | None, str | None]:
-    """Create a GridFSAdapter for the given collection.
+    """Create a ``GridFSAdapter`` for a GridFS collection name if applicable.
 
     Args:
-        db: NeoSQLite database connection
-        coll_name: Collection name (e.g., "fs.files", "fs.chunks")
+        db: NeoSQLite SQLite database connection.
+        coll_name: Collection name (e.g., ``"fs.files"``, ``"fs.chunks"``).
 
     Returns:
-        Tuple of (GridFSAdapter, bucket_name) if GridFS collection, else (None, None)
+        tuple[GridFSAdapter | None, str | None]: Tuple of
+        ``(GridFSAdapter, bucket_name)`` if ``coll_name`` is a GridFS
+        collection, otherwise ``(None, None)``.
     """
     if not _is_gridfs_collection(coll_name):
         return None, None
@@ -801,12 +871,28 @@ def create_gridfs_adapter(
 
 
 def _is_gridfs_collection(coll_name: str) -> bool:
-    """Check if collection name is a GridFS collection."""
+    """Check whether a collection name denotes a GridFS files or chunks table.
+
+    Args:
+        coll_name: Collection name to inspect.
+
+    Returns:
+        bool: True if ``coll_name`` ends with ``.files`` or ``.chunks``, else
+        False.
+    """
     return coll_name.endswith(".files") or coll_name.endswith(".chunks")
 
 
 def _get_gridfs_bucket_name(coll_name: str) -> str | None:
-    """Extract bucket name from GridFS collection name."""
+    """Extract the GridFS bucket name from a GridFS collection name.
+
+    Args:
+        coll_name: Collection name ending with ``.files`` or ``.chunks``.
+
+    Returns:
+        str | None: Bucket prefix before ``.files`` or ``.chunks``, or
+        ``None`` if ``coll_name`` is not a GridFS collection name.
+    """
     if coll_name.endswith(".files"):
         return coll_name.rsplit(".files", 1)[0]
     if coll_name.endswith(".chunks"):

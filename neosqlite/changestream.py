@@ -27,12 +27,17 @@ _RESUME_RETENTION_ROWS = 1000
 def _parse_resume_id(token: Any) -> int:
     """Extract the changelog row id from a NeoSQLite resume token.
 
-    Our resume token is the change event's ``_id`` field, i.e.
-    ``{"id": <changelog row id>}``. Raw ints and ``{"_id": {...}}``
-    wrappers are also accepted.
+    Accepts the change event's ``_id`` field (``{"id": <int>}``), raw integer
+    ids, or full ``{"_id": {"id": <int>}}`` wrappers (excluding booleans).
+
+    Args:
+        token: Resume token dictionary or integer changelog row id.
+
+    Returns:
+        int: Integer primary-key id in ``_neosqlite_changestream``.
 
     Raises:
-        ValueError: If the token has none of the known shapes.
+        ValueError: If ``token`` does not match any supported resume shape.
     """
     candidate = token
     if isinstance(candidate, dict) and set(candidate) == {"_id"}:
@@ -48,6 +53,16 @@ def _parse_resume_id(token: Any) -> int:
 
 
 def _get_dotted(document: Any, path: str) -> Any:
+    """Resolve a dotted field path against a nested dictionary.
+
+    Args:
+        document: Root document or value to traverse.
+        path: Dot-separated field path (e.g., ``"fullDocument.status"``).
+
+    Returns:
+        Any: Resolved value, or ``None`` if any path segment is missing or
+            a non-dict value is encountered along the path.
+    """
     current = document
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
@@ -57,6 +72,17 @@ def _get_dotted(document: Any, path: str) -> Any:
 
 
 def _field_present(document: Any, path: str) -> bool:
+    """Return whether a dotted field path exists in a nested dictionary.
+
+    Distinguishes missing keys from keys explicitly mapped to ``None``.
+
+    Args:
+        document: Root document or value to inspect.
+        path: Dot-separated field path.
+
+    Returns:
+        bool: ``True`` if every segment exists as a dict key, else ``False``.
+    """
     current = document
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
@@ -66,6 +92,19 @@ def _field_present(document: Any, path: str) -> bool:
 
 
 def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
+    """Evaluate field-level ``$match`` comparison operators on a value.
+
+    Supports ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, ``$in``,
+    ``$nin``, and ``$exists`` (treating non-``None`` as existing). Unsupported
+    operators are debug-logged and cause the match to return ``False``.
+
+    Args:
+        value: Resolved field value to test.
+        operators: Mapping from MongoDB operator names to expected operands.
+
+    Returns:
+        bool: ``True`` if all operators match ``value``, else ``False``.
+    """
     for op, expected in operators.items():
         if op == "$eq":
             if value != expected:
@@ -102,6 +141,19 @@ def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
 
 
 def _match_filter(document: dict[str, Any], spec: dict[str, Any]) -> bool:
+    """Evaluate a change-stream ``$match`` filter against a change event.
+
+    Supports logical combinators (``$and``, ``$or``, ``$nor``), field-level
+    operator dicts (handling ``$exists`` via ``_field_present``), and direct
+    equality comparisons on dotted field paths.
+
+    Args:
+        document: Change event dictionary to evaluate.
+        spec: MongoDB ``$match`` filter specification dictionary.
+
+    Returns:
+        bool: ``True`` if ``document`` satisfies every criterion in ``spec``.
+    """
     for key, condition in spec.items():
         if key == "$and":
             if not all(_match_filter(document, sub) for sub in condition):
@@ -134,10 +186,18 @@ def _match_filter(document: dict[str, Any], spec: dict[str, Any]) -> bool:
 def _pipeline_matches(
     change: dict[str, Any], pipeline: list[dict[str, Any]]
 ) -> bool:
-    """Library-side pipeline filtering (minimal useful subset).
+    """Filter a change event through a library-side change-stream pipeline.
 
-    Only ``$match`` stages are evaluated; any other stage is accepted and
-    ignored (debug-logged), matching the documented subset.
+    Only ``$match`` stages with dict specs are evaluated; non-``$match`` stages
+    are debug-logged and ignored, matching the documented subset.
+
+    Args:
+        change: Change event dictionary constructed by ``ChangeStream``.
+        pipeline: List of change-stream aggregation stage dictionaries.
+
+    Returns:
+        bool: ``True`` if all ``$match`` stages accept ``change``, else
+            ``False``.
     """
     for stage in pipeline:
         if not isinstance(stage, dict) or set(stage) != {"$match"}:
@@ -150,10 +210,18 @@ def _pipeline_matches(
 
 
 def _registry_entry(db: Any) -> dict[str, Any]:
-    """Per-connection registry of active ChangeStreams (#110).
+    """Return or create the per-connection active ``ChangeStream`` registry.
 
-    Keyed by id(db) with a strong reference to db kept in the entry, which
-    pins the id for as long as any stream is registered.
+    Keyed by ``id(db)`` while retaining a strong reference to ``db`` and
+    verifying identity with ``is`` so recycled connection ids never collide
+    (#110).
+
+    Args:
+        db: SQLite database connection associated with a collection.
+
+    Returns:
+        dict[str, Any]: Registry entry containing ``"db"``, ``"counts"``, and
+            ``"streams"`` dictionaries.
     """
     entry = _stream_registry.get(id(db))
     if entry is None or entry["db"] is not db:
@@ -163,11 +231,13 @@ def _registry_entry(db: Any) -> dict[str, Any]:
 
 
 class ChangeStream:
-    """
-    A change stream that watches for changes on a collection.
+    """Watch SQLite-backed collection changes through an iterator interface.
 
-    This implementation uses SQLite's built-in features to monitor changes.
-    It provides an iterator interface to receive change events.
+    Captures ``INSERT``, ``UPDATE``, and ``DELETE`` operations via shared
+    SQLite triggers writing to ``_neosqlite_changestream``, tracks per-stream
+    watermarks for concurrent consumers, and supports context management,
+    ``resume_after``/``start_after`` tokens, ``updateLookup`` full documents,
+    and ``$match`` pipeline filtering.
     """
 
     def __init__(
@@ -183,20 +253,31 @@ class ChangeStream:
         session: ClientSession | None = None,
         start_after: dict[str, Any] | None = None,
     ):
-        """
-        Initialize a change stream for a specific collection.
+        """Initialize a change stream and install collection change triggers.
 
         Args:
-            collection (Collection): The collection to monitor for changes.
-            pipeline (list[dict[str, Any]], optional): A pipeline of operations to apply to the change stream.
-            full_document (str, optional): Specifies whether to include the full document in change events.
-            resume_after (dict[str, Any], optional): A resume token to start the change stream from a specific point.
-            max_await_time_ms (int, optional): The maximum time in milliseconds to wait for change events.
-            batch_size (int, optional): The batch size for the change stream.
-            collation (dict[str, Any], optional): Collation options to apply to change events.
-            start_at_operation_time (Any, optional): Operation time to start the change stream from.
-            session (Any, optional): The session to use for the change stream.
-            start_after (dict[str, Any], optional): A document ID to start the change stream from.
+            collection: Target ``Collection`` to watch for writes.
+            pipeline: Optional aggregation pipeline stages (only ``$match``
+                stages are applied). Defaults to ``None``.
+            full_document: Set to ``"updateLookup"`` to embed the logged
+                document under ``fullDocument``. Defaults to ``None``.
+            resume_after: Resume token to replay changes after a prior event.
+                Mutually exclusive with ``start_after``.
+            max_await_time_ms: Polling timeout in milliseconds before
+                ``__next__`` raises ``StopIteration``. Defaults to ``10000``
+                ms when ``None`` or ``0``.
+            batch_size: Query limit per poll cycle (defaults to ``1`` when
+                falsy or ``None``).
+            collation: Accepted collation configuration stored on the stream.
+            start_at_operation_time: Accepted for API compatibility; ignored
+                when no resume token is supplied.
+            session: Optional ``ClientSession`` stored on the stream.
+            start_after: Resume token to start after a prior event. Mutually
+                exclusive with ``resume_after``.
+
+        Raises:
+            ValueError: If both ``resume_after`` and ``start_after`` are
+                provided, or if the collection name or resume token is invalid.
         """
         if resume_after is not None and start_after is not None:
             raise ValueError(
@@ -229,17 +310,16 @@ class ChangeStream:
 
     @staticmethod
     def _sanitize_collection_name(name: str) -> str:
-        """
-        Validate and sanitize a collection name to prevent SQL injection.
+        """Validate a collection name before interpolating into SQL triggers.
 
         Args:
-            name: The collection name to validate.
+            name: Collection name string to validate.
 
         Returns:
-            The validated collection name.
+            str: The validated collection name.
 
         Raises:
-            ValueError: If the collection name contains invalid characters.
+            ValueError: If ``name`` is not a string or fails identifier checks.
         """
         if not isinstance(name, str):
             raise ValueError(
@@ -253,17 +333,13 @@ class ChangeStream:
         return name
 
     def _setup_triggers(self):
-        """
-        Set up SQLite triggers to capture changes to the collection.
+        """Create changelog storage, triggers, and initial stream watermark.
 
-        This method ensures that triggers are created in the SQLite database to
-        log INSERT, UPDATE, and DELETE operations on the specified collection.
-        These triggers insert records into a change tracking table, enabling the
-        change stream to monitor these events.
-
-        Triggers are created dynamically using SQL commands. They are designed
-        to capture the essential details of each change operation, including the
-        operation type, document ID, and data.
+        Ensures ``_neosqlite_changestream`` exists, registers this stream in
+        the per-connection registry, creates shared ``INSERT``/``UPDATE``/
+        ``DELETE`` triggers if this is the first active stream on the
+        collection, commits when not inside a transaction, and sets
+        ``self._last_id`` from any resume token or the current max row id.
         """
         # Create a table to store change events if it doesn't exist
         self._collection.db.execute("""
@@ -360,10 +436,13 @@ class ChangeStream:
             self._last_id = row[0] if row else 0
 
     def _cleanup_triggers(self):
-        """Drop shared triggers when the LAST stream for this collection
-        closes, and purge its now-unconsumable events (#110, #111).
+        """Drop shared triggers on last close and prune unconsumable rows.
 
-        Called from close(); the _closed flag is set by the caller.
+        When no active streams remain for this collection (#110, #111), drops
+        the ``INSERT``/``UPDATE``/``DELETE`` triggers and retains only the
+        most recent ``_RESUME_RETENTION_ROWS`` rows for future resume tokens;
+        otherwise prunes rows already consumed by every active co-stream.
+        Called from ``close()`` after ``_closed`` is set.
         """
         entry = _registry_entry(self._collection.db)
         counts: dict[str, int] = entry["counts"]
@@ -413,12 +492,19 @@ class ChangeStream:
             logger.warning(f"Error during ChangeStream cleanup: {e}")
 
     def _advance_watermark(self, change_id: int) -> None:
+        """Advance this stream's last processed changelog row id.
+
+        Args:
+            change_id: Changelog row id most recently inspected or delivered.
+        """
         self._last_id = change_id
 
     def _prune_consumed(self) -> None:
-        """Delete events that EVERY active stream on this collection has
-        already consumed (#111). With no co-streams this is just this
-        stream's own watermark."""
+        """Delete changelog rows consumed by every active co-stream (#111).
+
+        Computes the minimum ``_last_id`` watermark across all open streams
+        watching the same collection and deletes rows with smaller ids.
+        """
         try:
             entry = _registry_entry(self._collection.db)
             streams = entry["streams"].get(self._collection.name, {})
@@ -437,53 +523,47 @@ class ChangeStream:
             logger.debug(f"ChangeStream prune skipped: {e}")
 
     def __iter__(self) -> Self:
-        """
-        Return the iterator object for the change stream.
+        """Return the iterator object for this change stream.
 
-        This method is required for the change stream to be used in a for loop
-        or other iteration contexts. It returns the iterator object itself,
-        allowing the change stream to provide a sequence of change events for
-        iteration.
+        Returns:
+            Self: This ``ChangeStream`` instance.
         """
         return self
 
     @property
     def resume_token(self) -> dict[str, int] | None:
-        """
-        Resume token for the most recently returned change event.
+        """Resume token for the most recently returned change event.
 
-        Pass it as ``watch(resume_after=token)`` to replay events after a
-        worker restart without missing committed changes or processing any
-        event twice.
+        Pass as ``watch(resume_after=token)`` to replay subsequent events after
+        reopening a stream without missing committed changes or duplicating
+        delivered events.
 
         Returns:
-            dict | None: ``{"id": <changelog row id>}``, or None when no
-                event has been returned yet.
+            dict[str, int] | None: ``{"id": <changelog row id>}``, or ``None``
+                if no event has been yielded yet.
         """
         if self._last_token_id is None:
             return None
         return {"id": self._last_token_id}
 
     def __next__(self) -> dict[str, Any]:
-        """
-        Poll for and return the next change event from the change stream.
+        """Poll for and return the next matching change event.
 
-        This method continuously polls for new change events from the change tracking
-        table created by the change stream. It waits for changes, respecting the
-        specified timeout, and returns the first change event found. If no changes
-        are detected within the timeout, it continues polling until a change is
-        available or the timeout is exceeded, raising a StopIteration exception
-        if no changes are detected within the timeout.
+        Polls ``_neosqlite_changestream`` in 0.1-second intervals until a new
+        event matching ``self._pipeline`` arrives or ``max_await_time_ms``
+        elapses (default 10 seconds). Decodes document ids, attaches
+        ``fullDocument`` when ``full_document == "updateLookup"``, advances
+        this stream's watermark, and prunes rows consumed by all active
+        co-streams.
 
         Returns:
-            dict[str, Any]: The next change event document, containing details
-                            such as the operation type, document ID, and data.
-                            If full_document is set to "updateLookup", the full
-                            document before and/or after the change operation is
-                            also included.
+            dict[str, Any]: Change event containing ``_id``, ``operationType``,
+                ``clusterTime``, ``ns``, ``documentKey``, and optionally
+                ``fullDocument``.
 
         Raises:
-            StopIteration: If the timeout is exceeded and no changes are detected.
+            StopIteration: If the stream is closed or no matching change event
+                arrives before the await timeout expires.
         """
         if self._closed:
             raise StopIteration("Change stream is closed")
@@ -674,43 +754,29 @@ class ChangeStream:
             time.sleep(0.1)
 
     def __enter__(self) -> Self:
-        """
-        Return the change stream itself.
+        """Enter the context manager and return this change stream.
 
-        This method is required to support the context manager protocol, allowing
-        the change stream to be used in a `with` statement. By returning the
-        change stream itself, the `with` statement can manage the lifecycle of
-        the change stream, ensuring that it is properly closed when the block is
-        exited.
-
-        This method is essential for enabling the change stream to be used in a
-        clean and efficient manner within a `with` block, facilitating the
-        monitoring of collection changes within a controlled and predictable scope.
+        Returns:
+            Self: This ``ChangeStream`` instance.
         """
         return self
 
     def close(self) -> None:
-        """
-        Close the change stream and clean up resources.
+        """Close the change stream and clean up triggers and changelog state.
 
-        This method ensures that the change stream is properly closed and resources
-        are released. It sets the `_closed` flag to True and calls the `_cleanup_triggers`
-        method to clean up any triggers that were set up for capturing changes to
-        the collection. This helps in freeing up resources and avoiding unnecessary
-        logging or data handling.
-
-        By calling this method, the change stream is effectively terminated, and
-        no further change events will be received.
+        Marks the stream closed and invokes ``_cleanup_triggers()`` on the
+        first close call; subsequent calls are no-ops.
         """
         if not self._closed:
             self._closed = True
             self._cleanup_triggers()
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_traceback: Any) -> None:
-        """
-        Handle the context management exit of the change stream.
+        """Exit the context manager and close the change stream.
 
-        This method ensures that the change stream is properly closed and resources
-        are released. It calls the `close` method to terminate the change stream.
+        Args:
+            exc_type: Exception type raised inside the ``with`` block, if any.
+            exc_val: Exception instance raised inside the ``with`` block.
+            exc_traceback: Traceback object for the exception, if any.
         """
         self.close()

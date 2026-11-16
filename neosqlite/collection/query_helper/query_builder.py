@@ -1,8 +1,8 @@
-"""
-Query Builder Mixin for NeoSQLite.
+"""Query Builder Mixin for NeoSQLite.
 
-Provides Python-based query application methods (_apply_query).
-SQL WHERE clause building lives in _sql_query_builder.py (SqlQueryBuilderMixin).
+Provides Python-based query application methods (``_apply_query``).
+SQL WHERE clause building lives in ``_sql_query_builder.py``
+(``SqlQueryBuilderMixin``).
 """
 
 import logging
@@ -27,8 +27,17 @@ logger = logging.getLogger(__name__)
 def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
     """Resolve a dotted path, expanding arrays along the way (#99).
 
-    Returns the list of leaf values found (arrays flattened one level per
-    step), or None when the first segment is missing entirely.
+    Walks ``parts`` step by step starting from ``document``, descending into
+    matching dictionary keys and dictionary elements inside lists while
+    flattening list values by one level per step.
+
+    Args:
+        document: Root document dictionary to traverse.
+        parts: Ordered field path segments split on ``"."``.
+
+    Returns:
+        Any | None: List of resolved leaf values found along the path, or
+            ``None`` when any segment is absent everywhere.
     """
     current: list[Any] = [document]
     for part in parts:
@@ -60,14 +69,16 @@ def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
 
 
 class QueryBuilderMixin(SqlQueryBuilderMixin):
-    """
-    A mixin class that provides query building capabilities.
+    """A mixin class that provides Python-side query evaluation helpers.
 
-    This mixin assumes it will be used with a class that has:
-    - self.collection (with db and name attributes)
-    - self.jsonb.jsonb_supported
-    - self.jsonb.json_function_prefix
-    - self._build_expr_where_clause method (for handling $expr queries)
+    Inherits SQL WHERE clause construction from ``SqlQueryBuilderMixin`` and
+    implements the Python fallback query matcher (``_apply_query``).
+
+    This mixin assumes the host class provides:
+    - ``self.collection`` (with ``db`` and ``name`` attributes)
+    - ``self.jsonb.jsonb_supported``
+    - ``self.jsonb.json_function_prefix``
+    - ``self._build_expr_where_clause`` (for handling ``$expr`` queries)
     """
 
     collection: "Collection"
@@ -77,7 +88,21 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
     def _score_text_field(
         self, value: Any, search_term: str, search_lower: str
     ) -> float:
-        """Compute relevance score contribution for an FTS-indexed field value."""
+        """Compute relevance score contribution for an FTS-indexed field value.
+
+        Scores strings via case-insensitive substring count or
+        ``unified_text_search``, recursively sums scores across lists, and
+        checks nested dicts using ``_search_in_value`` or
+        ``unified_text_search``.
+
+        Args:
+            value: Field value extracted from a candidate document.
+            search_term: Raw ``$search`` query string.
+            search_lower: Lowercased ``search_term`` for substring counting.
+
+        Returns:
+            float: Relevance score contribution (``0.0`` when not matched).
+        """
         if isinstance(value, str):
             val_lower = value.lower()
             if search_lower in val_lower:
@@ -99,15 +124,14 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
         return 0.0
 
     def _search_in_value(self, value: Any, search_term: str) -> bool:
-        """
-        Recursively search for a term in a value (string, dict, or list).
+        """Recursively search for a term in a value (string, dict, or list).
 
         Args:
-            value: The value to search in
-            search_term: The term to search for
+            value: The value to search in.
+            search_term: The substring to match case-insensitively.
 
         Returns:
-            bool: True if the search term is found, False otherwise
+            bool: True if the search term is found, False otherwise.
         """
         match value:
             case str():
@@ -129,15 +153,17 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
         query: dict[str, Any],
         document: dict[str, Any],
     ) -> bool:
-        """
-        Applies a query to a document to determine if it matches the query criteria.
+        """Apply a query to a document to check if it matches the criteria.
 
-        Handles logical operators ($and, $or, $nor, $not) and nested field paths.
-        Processes both simple equality checks and complex query operators.
+        Handles ``$expr``, direct 2-argument expression comparisons, ``$text``
+        (updating ``document["_textScore"]`` when FTS tables exist), logical
+        operators (``$and``, ``$or``, ``$nor``, ``$not``), ``$jsonSchema``,
+        field operator dictionaries, regex patterns, and dotted-path equality
+        or array-element matching.
 
         Args:
-            query (dict[str, Any]): A dictionary representing the query criteria.
-            document (dict[str, Any]): The document to apply the query to.
+            query: Dictionary representing the MongoDB-style query criteria.
+            document: Document dictionary to evaluate against ``query``.
 
         Returns:
             bool: True if the document matches the query, False otherwise.
@@ -147,16 +173,13 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
         matches: list[bool] = []
 
         def reapply(q: dict[str, Any]) -> bool:
-            """
-            Recursively apply the query to the document to determine if it matches
-            the query criteria.
+            """Recursively evaluate a sub-query against the outer document.
 
             Args:
-                q (dict[str, Any]): The query to apply.
-                document (dict[str, Any]): The document to apply the query to.
+                q: Sub-query dictionary to apply to ``document``.
 
             Returns:
-                bool: True if the document matches the query, False otherwise.
+                bool: True if ``document`` matches ``q``, False otherwise.
             """
             return self._apply_query(q, document)
 
@@ -334,19 +357,20 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
         return all(matches)
 
     def _get_operator_fn(self, op: str) -> Any:
-        """
-        Retrieve the function associated with the given operator from the
-        query_operators module.
+        """Retrieve the Python operator callable from ``query_operators``.
+
+        Maps a ``$``-prefixed operator name (such as ``"$gt"``) to the
+        corresponding ``_``-prefixed function on ``query_operators``.
 
         Args:
-            op (str): The operator string, which should start with a '$' prefix.
+            op: Operator string starting with ``"$"``.
 
         Returns:
-            Any: The function corresponding to the operator.
+            Any: Callable implementing the query operator.
 
         Raises:
-            MalformedQueryException: If the operator does not start with '$'.
-            MalformedQueryException: If the operator is not currently implemented.
+            MalformedQueryException: If ``op`` does not start with ``"$"`` or
+                is not implemented in ``query_operators``.
         """
         if not op.startswith("$"):
             raise MalformedQueryException(

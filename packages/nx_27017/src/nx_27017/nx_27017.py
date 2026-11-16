@@ -40,7 +40,19 @@ logger = logging.getLogger("nx_27017")
 
 
 def main():
-    """Main entry point with argument parsing."""
+    """Parse CLI arguments and dispatch NX-27017 server or daemon commands.
+
+    Parses command-line flags for daemon control (``--daemon``, ``--stop``,
+    ``--status``), storage paths (``--db``, ``--data-dir``,
+    ``--single-db-compat``), network binding (``--host``, ``--port``), FTS5
+    tokenizers, SQLite journal mode (validated via ``JournalMode.validate``),
+    threading mode, and logging verbosity, then executes the requested command.
+
+    Returns:
+        int | None: Exit status code (``0`` or ``1``) when stopping or
+        checking daemon status, or ``None`` when starting the server in daemon
+        or foreground mode.
+    """
     parser = argparse.ArgumentParser(
         prog="nx_27017",
         description=(

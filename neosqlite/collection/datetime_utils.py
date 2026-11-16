@@ -42,14 +42,19 @@ COMPILED_DATETIME_INDICATORS = [
 
 
 def is_datetime_value(value: Any) -> bool:
-    """
-    Check if a value is a datetime object or datetime string.
+    """Check if a value is a datetime object or datetime string.
+
+    Evaluates ``datetime.datetime`` and ``datetime.date`` instances directly,
+    matches stripped strings of at least 10 characters starting with a digit
+    against ``COMPILED_DATETIME_PATTERNS``, and recursively inspects
+    dictionaries (with a fast path for MongoDB ``$date`` dicts).
 
     Args:
-        value: Value to check
+        value: Value to check.
 
     Returns:
-        True if value is datetime-related, False otherwise
+        bool: True if ``value`` represents or contains a datetime value,
+        False otherwise.
     """
     if isinstance(value, (datetime.datetime, datetime.date)):
         return True
@@ -92,14 +97,18 @@ _COMPILED_INDICATORS = [re.compile(ind) for ind in _INDICATOR_SOURCES]
 
 
 def is_datetime_regex(pattern: str) -> bool:
-    """
-    Check if a regex pattern is likely to be for datetime matching.
+    """Check if a regex pattern is likely to be for datetime matching.
+
+    Returns False for non-string inputs. Otherwise checks whether the
+    pattern string itself matches a datetime value via
+    ``is_datetime_value()`` or searches for common escaped date/time digit
+    regex fragments defined in ``_COMPILED_INDICATORS``.
 
     Args:
-        pattern: Regex pattern string
+        pattern: Regex pattern string to inspect.
 
     Returns:
-        True if pattern is likely datetime-related, False otherwise
+        bool: True if the pattern appears datetime-related, False otherwise.
     """
 
     if not isinstance(pattern, str):

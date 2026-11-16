@@ -1,3 +1,5 @@
+"""Text search operator mixin for temporary-table aggregation pipelines."""
+
 from __future__ import annotations
 
 import hashlib
@@ -15,6 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 class OperatorsTextMixin(OperatorsBaseMixin):
+    """Mixin implementing $text search stages using SQLite FTS5 tables.
+
+    Creates transient FTS5 virtual tables over temporary aggregation table
+    rows, matches the collection's existing FTS tokenizer when present, and
+    attaches BM25 ``_textScore`` metadata to matching documents.
+    """
 
     def _process_text_search_stage(
         self,
@@ -22,32 +30,31 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         current_table: str,
         match_spec: dict[str, Any],
     ) -> str:
-        """
-        Process a $text search stage using FTS5 on temporary table.
+        """Process a $text search stage using FTS5 on a temporary table.
 
-        This method creates an FTS5 virtual table on the temporary data and uses
-        SQLite's FTS5 for efficient text search. The tokenizer configuration is
-        detected from the existing FTS index on the collection to ensure consistent
-        behavior.
+        Creates a transient FTS5 virtual table populated with text extracted
+        recursively from ``current_table`` and queries it with SQLite FTS5.
+        The tokenizer configuration is detected from any existing FTS index on
+        the collection so tokenization matches collection-level searches.
 
-        Note:
-            When $text is used after $unwind (or other stages that create temp tables),
-            the search operates on the unwound elements in the temp table, not on the
-            original collection documents. This differs from MongoDB's semantics where
-            $text always uses the collection-level text index on original documents.
+        When ``$text`` follows ``$unwind`` or other stages that create
+        temporary tables, the search runs over the unwound rows rather than
+        the original collection documents (a NeoSQLite extension differing
+        from MongoDB, where ``$text`` must be the first stage).
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing input data
-            match_spec (dict[str, Any]): The $match stage specification containing the
-                                        $text operator with a $search term
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            match_spec: The ``$match`` stage specification containing a
+                ``$text`` operator with a ``$search`` string.
 
         Returns:
-            str: Name of the newly created temporary table with text search results
+            str: Name of the newly created temporary table containing matching
+                rows with ``_textScore`` attached.
 
         Raises:
-            ValueError: If the $text operator specification is invalid or the search
-                        term is not a string
+            ValueError: If the ``$text`` operator specification is missing
+                ``$search`` or the search term is not a string.
         """
         # Warn about NeoSQLite extension (different semantics from MongoDB)
         # Only warn if $text is used AFTER $unwind (i.e., on a temp table with unwound data)
@@ -138,11 +145,15 @@ class OperatorsTextMixin(OperatorsBaseMixin):
         return result_table
 
     def _detect_fts_tokenizer(self) -> str:
-        """
-        Detect the tokenizer configuration from existing FTS indexes on the collection.
+        """Detect the tokenizer configured on the collection's FTS5 index.
+
+        Inspects ``sqlite_master`` for FTS tables belonging to this collection,
+        skipping tables whose names match another collection with a longer
+        underscore-prefixed name.
 
         Returns:
-            str: The tokenizer clause for FTS5 (e.g., ", tokenize=porter" or "")
+            str: Tokenizer clause for FTS5 creation (for example,
+                ``", tokenize=porter"``), or ``""`` when none is configured.
         """
         escaped_name = quote_table_name(self.collection.name).replace(
             "_", "\\_"

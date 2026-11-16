@@ -21,6 +21,11 @@ _TTL_MAX_SECONDS = 2147483647
 
 
 def _ensure_ttl_table(db) -> None:
+    """Create the TTL index metadata table if it does not already exist.
+
+    Args:
+        db: SQLite database connection.
+    """
     db.execute(
         f"CREATE TABLE IF NOT EXISTS {_TTL_META_TABLE} ("
         "index_name TEXT PRIMARY KEY, "
@@ -33,6 +38,18 @@ def _ensure_ttl_table(db) -> None:
 def _store_ttl_option(
     db, index_name: str, collection_name: str, field: str, expire: int
 ) -> None:
+    """Persist TTL index metadata for a collection field index.
+
+    Ensures ``_neosqlite_ttl_indexes`` exists and inserts or replaces the
+    expiration policy row for ``index_name``.
+
+    Args:
+        db: SQLite database connection.
+        index_name: Generated SQLite index name.
+        collection_name: Name of the collection owning the index.
+        field: Document field path governed by the TTL index.
+        expire: Expiration duration in seconds.
+    """
     _ensure_ttl_table(db)
     db.execute(
         f"INSERT OR REPLACE INTO {_TTL_META_TABLE} "
@@ -43,6 +60,18 @@ def _store_ttl_option(
 
 
 def _load_ttl_option(db, index_name: str) -> int | None:
+    """Load the ``expireAfterSeconds`` value stored for an index.
+
+    Returns ``None`` if the metadata table does not exist, no entry matches
+    ``index_name``, or the stored value cannot be parsed as an integer.
+
+    Args:
+        db: SQLite database connection.
+        index_name: SQLite index name to look up.
+
+    Returns:
+        int | None: Stored expiration duration in seconds, or ``None``.
+    """
     try:
         row = db.execute(
             f"SELECT expire_after_seconds FROM {_TTL_META_TABLE} "
@@ -60,6 +89,14 @@ def _load_ttl_option(db, index_name: str) -> int | None:
 
 
 def _delete_ttl_option(db, index_name: str) -> None:
+    """Remove any stored TTL metadata entry for ``index_name``.
+
+    Suppresses database errors when the metadata table has not been created.
+
+    Args:
+        db: SQLite database connection.
+        index_name: SQLite index name whose TTL entry should be deleted.
+    """
     try:
         db.execute(
             f"DELETE FROM {_TTL_META_TABLE} WHERE index_name = ?",
@@ -70,6 +107,18 @@ def _delete_ttl_option(db, index_name: str) -> None:
 
 
 def _validate_expire_after_seconds(value: Any) -> int:
+    """Validate and return a MongoDB ``expireAfterSeconds`` value.
+
+    Args:
+        value: Candidate TTL expiration duration in seconds.
+
+    Returns:
+        int: Validated non-negative integer within ``_TTL_MAX_SECONDS``.
+
+    Raises:
+        TypeError: If ``value`` is a ``bool`` or not an ``int``.
+        ValueError: If ``value`` is negative or exceeds ``_TTL_MAX_SECONDS``.
+    """
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(
             "expireAfterSeconds must be an integer, "
@@ -84,7 +133,20 @@ def _validate_expire_after_seconds(value: Any) -> int:
 
 
 def list_ttl_specs(db, collection_name: str | None = None) -> list[dict]:
-    """List TTL index specs, optionally filtered by collection."""
+    """List TTL index specifications stored in the metadata table.
+
+    Queries ``_neosqlite_ttl_indexes`` for all collections or a single
+    collection and skips rows whose expiration value is not an integer.
+
+    Args:
+        db: SQLite database connection.
+        collection_name: Optional collection name to filter results. If
+            ``None``, returns TTL specs across all collections.
+
+    Returns:
+        list[dict]: Dictionaries containing ``index_name``,
+            ``collection_name``, ``field``, and ``expireAfterSeconds``.
+    """
     try:
         if collection_name is None:
             rows = db.execute(
@@ -117,6 +179,11 @@ def list_ttl_specs(db, collection_name: str | None = None) -> list[dict]:
 
 
 def _ensure_index_keys_table(db) -> None:
+    """Create the index key specification table if it does not exist.
+
+    Args:
+        db: SQLite database connection.
+    """
     db.execute(
         f"CREATE TABLE IF NOT EXISTS {_INDEX_KEYS_TABLE} ("
         "index_name TEXT PRIMARY KEY, keys_json TEXT NOT NULL)"
@@ -124,12 +191,17 @@ def _ensure_index_keys_table(db) -> None:
 
 
 def _store_index_keys(db, index_name: str, keys: list[str]) -> None:
-    """Record the real key spec for an index (#158).
+    """Record the real key specification for an index (#158).
 
-    Index NAMES lossily encode fields (dots became underscores), so
-    list_indexes(as_keys=True) and the query optimizer previously
-    reconstructed keys with .replace("_", ".") — mangling compound
-    indexes and underscored field names alike.
+    Index names lossily encode fields because dots become underscores, so
+    ``list_indexes(as_keys=True)`` and the query optimizer previously
+    reconstructed keys with ``.replace("_", ".")``, mangling compound indexes
+    and underscored field names alike.
+
+    Args:
+        db: SQLite database connection.
+        index_name: Generated SQLite index or FTS table name.
+        keys: Ordered list of indexed document field names.
     """
     _ensure_index_keys_table(db)
     db.execute(
@@ -140,6 +212,18 @@ def _store_index_keys(db, index_name: str, keys: list[str]) -> None:
 
 
 def _load_index_keys(db, index_name: str) -> list[str] | None:
+    """Load the stored field key list for ``index_name``.
+
+    Returns ``None`` if the metadata table does not exist, the index has no
+    entry, or the stored JSON is invalid or not a list.
+
+    Args:
+        db: SQLite database connection.
+        index_name: SQLite index name to look up.
+
+    Returns:
+        list[str] | None: Stored list of indexed field names, or ``None``.
+    """
     try:
         row = db.execute(
             f"SELECT keys_json FROM {_INDEX_KEYS_TABLE} WHERE index_name = ?",
@@ -157,21 +241,19 @@ def _load_index_keys(db, index_name: str) -> list[str] | None:
 
 
 class IndexManager:
-    """
-    Manages indexes for a NeoSQLite collection.
+    """Manages indexes for a NeoSQLite collection.
 
-    This class provides functionality to create, list, drop, and manage various types of indexes
-    including single-field, compound, unique, sparse, FTS (Full Text Search), and datetime indexes.
-    It handles both regular B-tree indexes using JSON extraction and specialized FTS5 virtual tables
-    for text search capabilities.
+    Provides functionality to create, list, drop, and inspect single-field,
+    compound, unique, sparse, FTS5 full-text search, UTC datetime, and TTL
+    metadata indexes on the underlying SQLite table.
     """
 
     def __init__(self, collection):
-        """
-        Initialize the IndexManager with a collection instance.
+        """Initialize the IndexManager with a collection instance.
 
         Args:
-            collection: The NeoSQLite collection instance to manage indexes for
+            collection: The NeoSQLite collection instance whose indexes are
+                managed.
         """
         self.collection = collection
         # Initialize JSONB capabilities
@@ -190,32 +272,42 @@ class IndexManager:
         name: str | None = None,
         **kwargs: Any,
     ) -> str:
-        """
-        Create an index on the specified key(s) for this collection.
+        """Create an index on the specified key(s) for this collection.
 
-        Handles both single-key and compound indexes by using SQLite's json_extract
-        function to create indexes on the JSON-stored data. For compound indexes,
-        multiple json_extract calls are used for each key in the list.
+        Handles single-field, compound, unique, sparse, FTS5 text, datetime,
+        and TTL indexes using SQLite ``json_extract`` or ``jsonb_extract``
+        expressions and virtual FTS5 tables.
 
         Args:
-            key: A string or list of strings representing the field(s) to index.
-            reindex: Boolean indicating whether to reindex (not used in this implementation).
-            sparse: Boolean indicating whether the index should be sparse (only include documents with the field).
-            unique: Boolean indicating whether the index should be unique.
-            fts: Boolean indicating whether to create an FTS index for text search.
-            tokenizer: Optional tokenizer to use for FTS index (e.g., 'icu', 'icu_th').
-            datetime_field: Boolean indicating whether this is a datetime field that requires special indexing.
-            expireAfterSeconds: Optional TTL in seconds (MongoDB-compatible declaration).
-                Stored in ``_neosqlite_ttl_indexes`` metadata; expiry behavior is
-                owned by the TTL engine (lazy ``purge_expired`` + optional sweeper).
-                Single-field indexes only.
-            name: Optional custom index name (accepted for PyMongo compat;
-                SQLite name is still auto-generated).
-            **kwargs: Additional PyMongo index options (e.g. ``background``).
-                Accepted and ignored.
+            key: Field name, single-element list, or list of PyMongo key
+                tuples (such as ``[("field", 1)]`` or ``[("field", "text")]``)
+                specifying the field(s) to index.
+            reindex: Kept for API compatibility; SQLite indexes update
+                automatically.
+            sparse: If True, create a partial index excluding rows where the
+                field extracts to ``NULL`` (applies to string ``key``).
+            unique: If True, enforce uniqueness on the indexed expression(s).
+            fts: If True, create an FTS5 full-text search index instead of a
+                B-tree index.
+            tokenizer: Optional FTS5 tokenizer name (for example, ``"icu"`` or
+                ``"icu_th"``).
+            datetime_field: If True, create a ``datetime()``-normalized UTC
+                index for a single string ``key``.
+            expireAfterSeconds: Optional TTL in seconds (PyMongo-compatible
+                declaration) stored in ``_neosqlite_ttl_indexes`` for single-
+                field non-FTS, non-datetime indexes.
+            name: Optional custom index name accepted for PyMongo
+                compatibility; the SQLite index name is still auto-generated.
+            **kwargs: Additional PyMongo index options (for example,
+                ``background``), accepted and ignored.
 
         Returns:
-            str: The generated SQLite index name.
+            str: The generated SQLite index or FTS virtual table name.
+
+        Raises:
+            ValueError: If ``expireAfterSeconds`` is combined with FTS,
+                datetime, or compound indexes, if ``datetime_field`` uses a
+                non-string key, or if a compound key format is invalid.
         """
         try:
             self.collection.__dict__["_ttl_specs_cache"] = None
@@ -391,18 +483,17 @@ class IndexManager:
             return compound_full_name
 
     def _create_fts_index(self, field: str, tokenizer: str | None = None):
-        """
-        Creates an FTS5 index on the specified field for text search.
+        """Create an FTS5 virtual table and sync triggers for ``field``.
 
-        For FTS indexes, we create both JSON and JSONB versions to ensure
-        compatibility with both types of queries.
-
-        For nested array fields (e.g., "comments.text"), we use json_tree() to
-        properly index all array elements, not just the first one.
+        Creates ``{collection}_{field}_fts``, populates it from existing rows
+        (using ``json_extract`` for top-level fields or ``json_tree`` /
+        ``jsonb_tree`` for nested or array paths), records the key metadata,
+        and installs ``INSERT``, ``UPDATE``, and ``DELETE`` triggers.
 
         Args:
-            field (str): The field to create the FTS index on.
-            tokenizer (str, optional): Optional tokenizer to use for the FTS index.
+            field: Document field path to index with FTS5.
+            tokenizer: Optional FTS5 tokenizer specification (for example,
+                ``"icu"``).
         """
         # Create index name (replace dots with underscores for valid identifiers)
         index_name = field.replace(".", "_")
@@ -534,17 +625,23 @@ class IndexManager:
         self,
         indexes: list["IndexModel"],
     ) -> list[str]:
-        """
-        Create multiple indexes at once.
+        """Create multiple indexes at once from ``IndexModel`` definitions.
 
-        This method accepts a list of IndexModel objects, matching the
-        PyMongo API.
+        Accepts a list of ``IndexModel`` objects matching the PyMongo API,
+        translates each model's ``key`` and options, and delegates index
+        creation to :meth:`create_index`.
 
         Args:
-            indexes: A list of IndexModel objects.
+            indexes: List of ``IndexModel`` objects describing indexes to
+                create.
 
         Returns:
-            list[str]: A list of the names of the indexes that were created.
+            list[str]: Names of the created indexes prefixed with the
+                collection name.
+
+        Raises:
+            ValueError: If an ``IndexModel`` contains an unsupported ``key``
+                specification.
         """
         created_indexes = []
         for index_model in indexes:
@@ -577,6 +674,12 @@ class IndexManager:
             }
 
             def _make_opts() -> dict[str, Any]:
+                """Build keyword arguments for :meth:`create_index`.
+
+                Returns:
+                    dict[str, Any]: Index creation options assembled from the
+                        current ``IndexModel`` document.
+                """
                 opts: dict[str, Any] = {
                     "unique": unique,
                     "sparse": sparse,
@@ -630,39 +733,62 @@ class IndexManager:
         sparse: bool = False,
         documents: list[dict[str, Any]] | None = None,
     ):
-        """
-        Reindex the collection.
+        """Reindex the collection (no-op for native SQLite JSON indexes).
 
-        With native JSON indexing, reindexing is handled automatically by SQLite.
-        This method is kept for API compatibility but does nothing.
+        With native SQLite JSON indexing, indexes are maintained automatically
+        by SQLite. Kept for API compatibility.
 
         Args:
-            table (str): The table name (not used in this implementation).
-            sparse (bool): Whether the index should be sparse (not used in this implementation).
-            documents (list[dict[str, Any]]): List of documents to reindex (not used in this implementation).
+            table: Table name (unused in this implementation).
+            sparse: Whether the index is sparse (unused).
+            documents: Optional list of documents to reindex (unused).
         """
         # With native JSON indexing, reindexing is handled automatically by SQLite
         # This method is kept for API compatibility but does nothing
         pass
 
     @overload
-    def list_indexes(self, as_keys: Literal[True]) -> list[list[str]]: ...
+    def list_indexes(self, as_keys: Literal[True]) -> list[list[str]]:
+        """Retrieve stored key specifications for the collection's indexes.
+
+        Args:
+            as_keys: Must be ``True`` to return lists of field names.
+
+        Returns:
+            list[list[str]]: List of indexed field-name lists per index.
+        """
+        ...
+
     @overload
-    def list_indexes(self, as_keys: Literal[False] = False) -> list[str]: ...
+    def list_indexes(self, as_keys: Literal[False] = False) -> list[str]:
+        """Retrieve SQLite index names for the collection.
+
+        Args:
+            as_keys: ``False`` to return SQLite index names.
+
+        Returns:
+            list[str]: List of index names belonging to this collection.
+        """
+        ...
+
     def list_indexes(
         self,
         as_keys: bool = False,
     ) -> list[str] | list[list[str]]:
-        """
-        Retrieve indexes for the collection. Indexes are identified by names following a specific pattern.
+        """Retrieve indexes or indexed field keys for the collection.
+
+        Excludes the hidden automatic ``_id`` index. When ``as_keys`` is True,
+        uses stored key metadata when available and otherwise falls back to
+        converting underscores to dots in the index name suffix.
 
         Args:
-            as_keys (bool): If True, return the key names (converted from
-                            underscores to dots) instead of the full index names.
+            as_keys: If True, return lists of field key names instead of raw
+                SQLite index names.
 
         Returns:
-            list[str] or list[list[str]]: List of index names or keys, depending on the as_keys parameter.
-                If as_keys is True, each entry is a list containing a single string (the key name).
+            list[str] | list[list[str]]: List of SQLite index names when
+                ``as_keys`` is False, or list of field-name lists when
+                ``as_keys`` is True.
         """
         # Get indexes that match our naming convention and belong to this table
         cmd = "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ? AND name LIKE ? ESCAPE '\\'"
@@ -710,16 +836,15 @@ class IndexManager:
         return filtered_indexes
 
     def drop_index(self, index: str):
-        """
-        Drop an index from the collection.
+        """Drop an index from the collection and clean up its metadata.
 
-        Handles both single-key and compound indexes. For compound indexes, the
-        input should be a list of field names. The index name is generated by
-        joining the field names with underscores and replacing dots with underscores.
+        Resolves candidate SQLite index names from a full index name, field
+        name (with optional ``_1``/``_-1`` suffix), or compound field list,
+        drops the index if it exists, and deletes stored key and TTL metadata.
 
         Args:
-            index (str or list): The name of the index to drop. If a list is provided,
-                                 it represents a compound index.
+            index: Index name, field name, or sequence of compound field names
+                identifying the index to drop.
         """
         try:
             self.collection.__dict__["_ttl_specs_cache"] = None
@@ -772,11 +897,10 @@ class IndexManager:
         _delete_ttl_option(self.collection.db, full_name)
 
     def drop_indexes(self):
-        """
-        Drop all indexes associated with this collection.
+        """Drop all user-created indexes associated with this collection.
 
-        This method retrieves the list of indexes using the list_indexes method
-        and drops each one.
+        Clears the collection's cached TTL specs, drops each index returned by
+        :meth:`list_indexes`, and removes associated TTL metadata entries.
         """
         try:
             self.collection.__dict__["_ttl_specs_cache"] = None
@@ -789,16 +913,15 @@ class IndexManager:
             _delete_ttl_option(self.collection.db, index)
 
     def index_information(self) -> dict[str, Any]:
-        """
-        Retrieves information on this collection's indexes.
+        """Retrieve metadata describing this collection's indexes.
 
-        The function fetches all indexes associated with the collection and extracts
-        relevant details such as whether the index is unique and the keys used in
-        the index. It constructs a dictionary where the keys are the index names
-        and the values are dictionaries containing the index information.
+        Inspects ``sqlite_master`` for collection indexes (excluding the
+        automatic ``_id`` index) and extracts version, uniqueness, key mapping
+        from ``json_extract`` / ``jsonb_extract`` clauses, and any stored
+        ``expireAfterSeconds`` TTL option.
 
         Returns:
-            dict: A dictionary containing index information.
+            dict[str, Any]: Mapping from index name to its metadata dictionary.
         """
         info: dict[str, Any] = {}
 
@@ -864,12 +987,11 @@ class IndexManager:
         return info
 
     def get_ttl_specs(self) -> list[dict]:
-        """
-        List TTL index specs declared on this collection.
+        """List TTL index specifications declared on this collection.
 
         Returns:
-            list[dict]: Each dict has ``index_name``, ``collection_name``,
-                ``field`` and ``expireAfterSeconds`` keys.
+            list[dict]: Dictionaries with ``index_name``, ``collection_name``,
+                ``field``, and ``expireAfterSeconds`` keys.
         """
         return list_ttl_specs(self.collection.db, self.collection.name)
 
@@ -878,18 +1000,17 @@ class IndexManager:
         key: str,
         tokenizer: str | None = None,
     ):
-        """
-        Create a search index on the specified key for text search functionality.
+        """Create an FTS5 search index on ``key`` for full-text search.
 
-        This is a convenience method that creates an FTS5 index for efficient text search.
-        It is equivalent to calling create_index(key, fts=True, tokenizer=tokenizer).
+        Convenience wrapper equivalent to calling
+        ``create_index(key, fts=True, tokenizer=tokenizer)``.
 
         Args:
-            key: A string representing the field to index for text search.
-            tokenizer: Optional tokenizer to use for the FTS index (e.g., 'icu').
+            key: Document field path to index for text search.
+            tokenizer: Optional FTS5 tokenizer name (for example, ``"icu"``).
 
         Returns:
-            The result of the index creation operation.
+            str: Name of the created FTS virtual table.
         """
         return self.create_index(key, fts=True, tokenizer=tokenizer)
 
@@ -897,17 +1018,15 @@ class IndexManager:
         self,
         indexes: list[str],
     ) -> list[str]:
-        """
-        Create multiple search indexes at once for text search functionality.
+        """Create multiple FTS5 search indexes for text search.
 
-        This is a convenience method that creates multiple FTS5 indexes for efficient text search.
-        It is equivalent to calling create_index(key, fts=True) for each key.
+        Calls ``create_index(key, fts=True)`` for each field in ``indexes``.
 
         Args:
-            indexes: A list of strings representing the fields to index for text search.
+            indexes: List of field paths to index for full-text search.
 
         Returns:
-            list[str]: A list of the names of the search indexes that were created.
+            list[str]: Formatted names of the search indexes created.
         """
         created_indexes = []
         for key in indexes:
@@ -921,14 +1040,14 @@ class IndexManager:
         return created_indexes
 
     def list_search_indexes(self) -> list[str]:
-        """
-        List all search indexes for the collection.
+        """List all FTS5 search index field names for the collection.
 
-        This method returns a list of all FTS5 search indexes associated with the collection.
-        Note: This implementation scans for FTS virtual tables in the database schema.
+        Scans ``sqlite_master`` for ``{collection}_{field}_fts`` virtual tables
+        while filtering out tables belonging to other collections that share a
+        ``{collection}_`` name prefix.
 
         Returns:
-            list[str]: A list of search index names.
+            list[str]: Extracted field portion of each search index name.
         """
         # Get all FTS tables from sqlite_master
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
@@ -972,15 +1091,14 @@ class IndexManager:
         return search_indexes
 
     def update_search_index(self, key: str, tokenizer: str | None = None):
-        """
-        Update a search index by recreating it with potentially new options.
+        """Update a search index by dropping and recreating it.
 
-        This method drops and recreates a search index, allowing for updates to
-        tokenizer settings or other index options.
+        Allows changing the FTS5 tokenizer configuration or rebuilding the
+        virtual table and triggers for ``key``.
 
         Args:
-            key: The field name for which to update the search index.
-            tokenizer: Optional new tokenizer to use for the FTS index.
+            key: Field name whose FTS5 search index should be recreated.
+            tokenizer: Optional new FTS5 tokenizer name to apply.
         """
         # Drop the existing FTS index
         self.drop_search_index(key)
@@ -989,13 +1107,10 @@ class IndexManager:
         self.create_search_index(key, tokenizer=tokenizer)
 
     def drop_search_index(self, index: str):
-        """
-        Drop a search index from the collection.
-
-        This is a convenience method for dropping FTS5 search indexes.
+        """Drop an FTS5 search index and its synchronization triggers.
 
         Args:
-            index (str): The name of the search index to drop (field name).
+            index: Field name identifying the search index to drop.
         """
         # For FTS indexes, we need to drop the FTS virtual table and its triggers
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
@@ -1019,14 +1134,16 @@ class IndexManager:
         )
 
     def _create_datetime_index(self, key: str, unique: bool = False):
-        """Create a timezone normalized datetime index.
+        """Create a timezone-normalized UTC datetime index on ``key``.
 
-        This method creates a specialized datetime index with datetime() for timezone
-        normalization.
+        Indexes ``datetime(json_extract(...))`` or
+        ``datetime(jsonb_extract(...))`` under ``idx_{collection}_{key}_utc``.
 
         Args:
-            key: The field name to create the datetime index on (e.g., 'timestamp' or 'user.created_at')
-            unique: Whether the index should be unique
+            key: Field path to index (for example, ``"timestamp"`` or
+                ``"user.created_at"``).
+            unique: If True, enforce uniqueness on the normalized datetime
+                values.
         """
         # Generate the column name by replacing dots with underscores and appending '_utc'
         # This is just for naming consistency

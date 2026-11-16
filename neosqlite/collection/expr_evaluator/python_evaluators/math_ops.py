@@ -10,7 +10,15 @@ from .base import BasePythonMixin
 
 
 class MathPythonMixin(BasePythonMixin):
-    """Arithmetic, math, trig, and angle conversion operators."""
+    """Python-side evaluation mixin for arithmetic, math, trig, and angle ops.
+
+    Implements fallback Python evaluation for MongoDB arithmetic (``$add``,
+    ``$subtract``, ``$multiply``, ``$divide``, ``$mod``), scalar math
+    (``$abs``, ``$ceil``, ``$floor``, ``$round``, ``$trunc``, ``$ln``,
+    ``$log``, ``$log10``, ``$log2``, ``$exp``, ``$sigmoid``), power/root
+    (``$pow``, ``$sqrt``), trigonometric/hyperbolic, and angle conversion
+    aggregation operators.
+    """
 
     _log2_warned: bool
 
@@ -19,7 +27,23 @@ class MathPythonMixin(BasePythonMixin):
     ) -> float | None:
         """Evaluate arithmetic operators in Python.
 
-        Note: In MongoDB, arithmetic operations with null return null.
+        Evaluates ``$add``, ``$subtract``, ``$multiply``, ``$divide``, and
+        ``$mod`` against ``document``. Returns ``None`` if any operand
+        evaluates to ``None`` or on division/modulo by zero; ``$mod`` follows
+        MongoDB/C dividend-sign remainder semantics.
+
+        Args:
+            operator: Arithmetic operator name.
+            operands: Operand expressions to evaluate and combine.
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            float | None: Numeric result of the operation, or ``None`` if any
+            operand is ``None``, on division by zero, or for invalid ``$mod``
+            inputs.
+
+        Raises:
+            ValueError: If ``operator`` is not a known arithmetic operator.
         """
         values = [
             self._evaluate_operand_python(op, document) for op in operands
@@ -65,7 +89,25 @@ class MathPythonMixin(BasePythonMixin):
     def _evaluate_math_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
-        """Evaluate math operators in Python."""
+        """Evaluate scalar mathematical operators in Python.
+
+        Supports ``$abs``, ``$ceil``, ``$floor``, ``$round``, ``$trunc``,
+        ``$ln``, ``$log``, ``$log10``, ``$log2``, ``$exp``, and ``$sigmoid``
+        (including its ``{"input": ..., "onNull": ...}`` object form). Emits a
+        one-time ``UserWarning`` when ``$log2`` is used.
+
+        Args:
+            operator: Mathematical operator name.
+            operands: Operand list, single operand, or ``$sigmoid`` dict.
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            float | None: Computed numeric result, or ``None`` for null inputs
+            or out-of-domain logarithm inputs.
+
+        Raises:
+            ValueError: If operand count is invalid or ``operator`` is unknown.
+        """
         # Handle $log with custom base separately (requires 2 operands)
         if operator == "$log":
             if not isinstance(operands, list) or len(operands) != 2:
@@ -199,7 +241,19 @@ class MathPythonMixin(BasePythonMixin):
     def _evaluate_pow_python(
         self, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
-        """Evaluate $pow operator in Python."""
+        """Evaluate the ``$pow`` operator in Python.
+
+        Args:
+            operands: Two-element list ``[base, exponent]``.
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            float | None: Base raised to ``exponent``, or ``None`` if either
+            operand evaluates to ``None``.
+
+        Raises:
+            ValueError: If ``operands`` does not contain exactly two items.
+        """
         if len(operands) != 2:
             raise ValueError("$pow requires exactly 2 operands")
         base = self._evaluate_operand_python(operands[0], document)
@@ -211,7 +265,19 @@ class MathPythonMixin(BasePythonMixin):
     def _evaluate_sqrt_python(
         self, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
-        """Evaluate $sqrt operator in Python."""
+        """Evaluate the ``$sqrt`` operator in Python.
+
+        Args:
+            operands: Single operand or one-element list for the radicand.
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            float | None: Non-negative square root of the operand, or ``None``
+            if the operand is ``None`` or negative.
+
+        Raises:
+            ValueError: If ``operands`` does not resolve to a single operand.
+        """
         # Handle both list and single operand formats
         if not isinstance(operands, list):
             operands = [operands]
@@ -224,7 +290,25 @@ class MathPythonMixin(BasePythonMixin):
     def _evaluate_trig_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> float | None:
-        """Evaluate trigonometric operators in Python."""
+        """Evaluate trigonometric and hyperbolic operators in Python.
+
+        Supports ``$sin``, ``$cos``, ``$tan``, ``$asin``, ``$acos``,
+        ``$atan``, ``$atan2`` (two operands), ``$sinh``, ``$cosh``,
+        ``$tanh``, ``$asinh``, ``$acosh``, and ``$atanh``.
+
+        Args:
+            operator: Trigonometric or hyperbolic operator name.
+            operands: Single operand, one-element list, or ``[y, x]`` for
+                ``$atan2``.
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            float | None: Computed floating-point value, or ``None`` when any
+            operand is ``None`` or outside the function's real domain.
+
+        Raises:
+            ValueError: If operand count is invalid or ``operator`` is unknown.
+        """
 
         # Handle both list and single operand formats
         if not isinstance(operands, list):
@@ -281,7 +365,22 @@ class MathPythonMixin(BasePythonMixin):
     def _evaluate_angle_python(
         self, operator: str, operands: Any, document: dict[str, Any]
     ) -> float | None:
-        """Evaluate angle conversion operators in Python."""
+        """Evaluate angle conversion operators in Python.
+
+        Supports ``$degreesToRadians`` and ``$radiansToDegrees``.
+
+        Args:
+            operator: Angle conversion operator name.
+            operands: Single operand or one-element list containing the angle.
+            document: Document dictionary providing field and variable state.
+
+        Returns:
+            float | None: Converted angle in radians or degrees, or ``None`` if
+            the operand evaluates to ``None``.
+
+        Raises:
+            ValueError: If operand count is not 1 or ``operator`` is unknown.
+        """
 
         # Handle both list and single operand formats
         if not isinstance(operands, list):

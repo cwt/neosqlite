@@ -29,12 +29,41 @@ from .base import BasePythonMixin
 
 
 class TypePythonMixin(BasePythonMixin):
-    """Type inspection/conversion operators and thin converter wrappers."""
+    """Python evaluation mixin for type inspection and conversion operators.
+
+    Implements Python-tier evaluation for ``$type``, ``$isNumber``,
+    ``$convert``, and ``$to*`` conversion operators, along with thin helper
+    wrappers around ``collection.type_utils`` converters retained for tests.
+    """
 
     def _evaluate_type_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
-        """Evaluate type conversion operators in Python."""
+        """Evaluate type inspection and conversion operators in Python.
+
+        Supports ``$type``, ``$toString``, ``$toInt``, ``$toDouble``,
+        ``$toBool``, ``$toLong``, ``$toDecimal``, ``$toObjectId``,
+        ``$isNumber``, and ``$convert``. Single-value operands for operators
+        other than ``$convert`` are normalized to a one-element list.
+
+        Args:
+            operator: MongoDB type operator name (e.g., ``"$type"`` or
+                ``"$convert"``).
+            operands: Operator arguments as a list, single operand, or a
+                configuration dictionary for ``$convert``.
+            document: Document dictionary used when evaluating nested operands.
+
+        Returns:
+            Any: Converted value, BSON type name string, boolean result, or
+                ``None`` (or ``onError``/``onNull`` for ``$convert``) when
+                conversion fails or input is missing.
+
+        Raises:
+            ValueError: If an operator receives the wrong number or type of
+                operands.
+            NotImplementedError: If ``operator`` is not a supported type
+                operator.
+        """
         # Handle both list and single operand formats (but not for $convert which needs dict)
         if operator != "$convert" and not isinstance(operands, list):
             operands = [operands]
@@ -173,69 +202,181 @@ class TypePythonMixin(BasePythonMixin):
 
     # Type converter wrapper methods for backward compatibility (used by tests)
     def _convert_to_int(value: Any) -> Any:
-        """Convert value to int."""
+        """Convert a value to a Python ``int``.
+
+        Args:
+            value: Input value to coerce with ``int()``.
+
+        Returns:
+            Any: Resulting ``int`` value.
+        """
         return _convert_to_int(value)
 
     @staticmethod
     def _convert_to_long(value: Any) -> Any:
-        """Convert value to long (64-bit int)."""
+        """Convert a value to a 64-bit integer representation.
+
+        Args:
+            value: Input value to coerce with ``int()``.
+
+        Returns:
+            Any: Resulting ``int`` value.
+        """
         return _convert_to_long(value)
 
     @staticmethod
     def _convert_to_double(value: Any) -> Any:
-        """Convert value to double (float)."""
+        """Convert a value to a Python ``float``.
+
+        Args:
+            value: Input value to coerce with ``float()``.
+
+        Returns:
+            Any: Resulting ``float`` value.
+        """
         return _convert_to_double(value)
 
     @staticmethod
     def _convert_to_decimal(value: Any) -> Any:
-        """Convert value to decimal (float, as SQLite lacks Decimal128)."""
+        """Convert a value to ``float`` as a Decimal128 approximation.
+
+        SQLite lacks native Decimal128 support, so this delegates to
+        ``float()``.
+
+        Args:
+            value: Input value to coerce with ``float()``.
+
+        Returns:
+            Any: Resulting ``float`` value.
+        """
         return _convert_to_decimal(value)
 
     @staticmethod
     def _convert_to_string(value: Any) -> Any:
-        """Convert value to string."""
+        """Convert a value to a Python ``str``.
+
+        Args:
+            value: Input value to coerce with ``str()``.
+
+        Returns:
+            Any: String representation of ``value``.
+        """
         return _convert_to_string(value)
 
     @staticmethod
     def _convert_to_bool(value: Any) -> Any:
-        """Convert value to bool."""
+        """Convert a value to a Python ``bool``.
+
+        Args:
+            value: Input value to evaluate for truthiness.
+
+        Returns:
+            Any: Boolean ``True`` or ``False``.
+        """
         return _convert_to_bool(value)
 
     @staticmethod
     def _convert_to_objectid(value: Any) -> Any:
-        """Convert value to ObjectId."""
+        """Convert a truthy value to an ``ObjectId`` instance.
+
+        Args:
+            value: Input value whose string representation forms an
+                ``ObjectId``, or a falsy value.
+
+        Returns:
+            Any: Constructed ``ObjectId`` when ``value`` is truthy, else
+                ``None``.
+        """
         return _convert_to_objectid(value)
 
     @staticmethod
     def _convert_to_bindata(value: Any) -> Any:
-        """Convert value to Binary (binData)."""
+        """Convert a value to a ``Binary`` (``binData``) instance.
+
+        Strings are UTF-8 encoded before wrapping in ``Binary``.
+
+        Args:
+            value: Bytes-like value, string, or ``None``.
+
+        Returns:
+            Any: Wrapped ``Binary`` object, or ``None`` when input is
+                ``None``.
+        """
         return _convert_to_bindata(value)
 
     @staticmethod
     def _convert_to_bsonbindata(value: Any) -> Any:
-        """Convert value to Binary (bsonBinData)."""
+        """Convert a value to a ``Binary`` (``bsonBinData``) instance.
+
+        Strings are UTF-8 encoded before wrapping in ``Binary``.
+
+        Args:
+            value: Bytes-like value, string, or ``None``.
+
+        Returns:
+            Any: Wrapped ``Binary`` object, or ``None`` when input is
+                ``None``.
+        """
         return _convert_to_bsonbindata(value)
 
     @staticmethod
     def _convert_to_regex(value: Any) -> Any:
-        """Convert value to regex pattern."""
+        """Compile a truthy value into a regular expression pattern.
+
+        Args:
+            value: Pattern source converted with ``str()``, or a falsy value.
+
+        Returns:
+            Any: Compiled ``re.Pattern`` when ``value`` is truthy, else
+                ``None``.
+        """
         return _convert_to_regex(value)
 
     @staticmethod
     def _convert_to_bsonregex(value: Any) -> Any:
-        """Convert value to regex pattern (bsonRegex)."""
+        """Compile a truthy value into a BSON regex pattern.
+
+        Args:
+            value: Pattern source converted with ``str()``, or a falsy value.
+
+        Returns:
+            Any: Compiled ``re.Pattern`` when ``value`` is truthy, else
+                ``None``.
+        """
         return _convert_to_bsonregex(value)
 
     @staticmethod
     def _convert_to_date(value: Any) -> Any:
-        """Convert value to date."""
+        """Return a date value unchanged as a lightweight placeholder.
+
+        Full date conversion requires string or timestamp parsing elsewhere.
+
+        Args:
+            value: Input date value.
+
+        Returns:
+            Any: The input ``value`` unchanged.
+        """
         return _convert_to_date(value)
 
     @staticmethod
     def _convert_to_null(value: Any) -> None:
-        """Convert any value to None."""
+        """Convert any input value to BSON null (``None``).
+
+        Args:
+            value: Input value (ignored; always yields ``None``).
+        """
         return _convert_to_null(value)
 
     def _get_bson_type(self, value: Any) -> str:
-        """Get BSON type name for a value."""
+        """Return the MongoDB BSON type name for a Python value.
+
+        Args:
+            value: Python value to inspect.
+
+        Returns:
+            str: BSON type string (``"null"``, ``"bool"``, ``"int"``,
+                ``"double"``, ``"string"``, ``"array"``, ``"object"``, or
+                ``"unknown"``).
+        """
         return get_bson_type(value)

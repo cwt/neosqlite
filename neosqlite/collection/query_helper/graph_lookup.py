@@ -1,6 +1,4 @@
-"""
-Python implementation of MongoDB $graphLookup aggregation stage.
-"""
+"""Python implementation of MongoDB $graphLookup aggregation stage."""
 
 from copy import deepcopy
 from typing import Any
@@ -12,17 +10,28 @@ def process_graph_lookup(
     collection: Any,
     evaluator: Any,
 ) -> list[dict[str, Any]]:
-    """
-    Python fallback implementation of $graphLookup.
+    """Perform a Python-tier ``$graphLookup`` breadth-first traversal.
+
+    Resolves ``startWith`` against each input document and performs a
+    breadth-first search across ``spec["from"]``, matching
+    ``connectToField`` values against ``connectFromField`` values while
+    tracking visited ``_id`` values to avoid cycles. Supports optional
+    ``maxDepth``, ``depthField``, and ``restrictSearchWithMatch`` filters,
+    returning ``docs_with_context`` unchanged if any required stage key is
+    missing or falsy.
 
     Args:
-        docs_with_context: List of documents with context (__doc__, __root__)
-        spec: $graphLookup specification
-        collection: Current collection instance
-        evaluator: ExprEvaluator for expression evaluation
+        docs_with_context: List of pipeline wrapper dicts containing
+            ``__doc__`` and ``__root__`` keys; modified in place.
+        spec: MongoDB ``$graphLookup`` stage specification dictionary.
+        collection: Source collection providing database access and field
+            getters/setters.
+        evaluator: Expression evaluator used to compute ``startWith`` per
+            document.
 
     Returns:
-        Updated docs_with_context
+        list[dict[str, Any]]: The updated ``docs_with_context`` list with the
+            collected match array written to ``spec["as"]``.
     """
     from_collection_name = spec.get("from")
     start_with_expr = spec.get("startWith")

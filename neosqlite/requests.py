@@ -2,23 +2,26 @@ from typing import Any
 
 
 class InsertOne:
-    """
-    Represents an insert operation for a single document.
+    """Represents an insert operation for a single document.
+
+    Used with ``bulk_write()`` to enqueue inserting ``self.document`` into
+    a collection.
     """
 
     def __init__(self, document: dict[str, Any]):
-        """
-        Initialize an InsertOne object.
+        """Initialize an InsertOne request.
 
         Args:
-            document (dict[str, Any]): The document to be inserted.
+            document: The document dictionary to insert.
         """
         self.document = document
 
 
 class UpdateOne:
-    """
-    Represents an update operation for a single document.
+    """Represents an update operation for a single document.
+
+    Used with ``bulk_write()`` to update at most one document matching
+    ``self.filter`` with ``self.update``, optionally upserting.
     """
 
     def __init__(
@@ -27,13 +30,13 @@ class UpdateOne:
         update: dict[str, Any],
         upsert: bool = False,
     ):
-        """
-        Initialize an UpdateOne object.
+        """Initialize an UpdateOne request.
 
         Args:
-            filter (dict[str, Any]): The filter criteria for selecting the document to update.
-            update (dict[str, Any]): The update operations to apply to the selected document.
-            upsert (bool, optional): If True, insert the document if no document matches the filter criteria. Defaults to False.
+            filter: Query filter selecting the document to update.
+            update: Update operations to apply to the matched document.
+            upsert: If True, insert a new document when no document matches
+                ``filter``. Defaults to False.
         """
         self.filter = filter
         self.update = update
@@ -41,23 +44,27 @@ class UpdateOne:
 
 
 class DeleteOne:
-    """
-    Represents a delete operation for a single document.
+    """Represents a delete operation for a single document.
+
+    Used with ``bulk_write()`` to delete at most one document matching
+    ``self.filter``.
     """
 
     def __init__(self, filter: dict[str, Any]):
-        """
-        Initialize a DeleteOne object.
+        """Initialize a DeleteOne request.
 
         Args:
-            filter (dict[str, Any]): The filter criteria for selecting the document to delete.
+            filter: Query filter selecting the document to delete.
         """
         self.filter = filter
 
 
 class UpdateMany:
-    """
-    Represents an update operation for multiple documents.
+    """Represents an update operation for multiple documents.
+
+    Used with ``bulk_write()`` to update all documents matching
+    ``self.filter`` with ``self.update``, optionally supporting upserts
+    and ``array_filters``.
     """
 
     def __init__(
@@ -67,14 +74,15 @@ class UpdateMany:
         upsert: bool = False,
         array_filters: list[dict[str, Any]] | None = None,
     ):
-        """
-        Initialize an UpdateMany object.
+        """Initialize an UpdateMany request.
 
         Args:
-            filter (dict[str, Any]): The filter criteria for selecting documents to update.
-            update (dict[str, Any]): The update operations to apply to selected documents.
-            upsert (bool, optional): If True, insert a document if none matches. Defaults to False.
-            array_filters (list[dict[str, Any]], optional): Filter documents for array positional operators.
+            filter: Query filter selecting documents to update.
+            update: Update operations to apply to matched documents.
+            upsert: If True, insert a new document when no documents match
+                ``filter``. Defaults to False.
+            array_filters: Optional list of filter dictionaries for positional
+                filtered array updates. Defaults to None.
         """
         self.filter = filter
         self.update = update
@@ -83,8 +91,10 @@ class UpdateMany:
 
 
 class ReplaceOne:
-    """
-    Represents a replace operation for a single document.
+    """Represents a replace operation for a single document.
+
+    Used with ``bulk_write()`` to replace at most one document matching
+    ``self.filter`` with ``self.replacement``, optionally upserting.
     """
 
     def __init__(
@@ -93,13 +103,13 @@ class ReplaceOne:
         replacement: dict[str, Any],
         upsert: bool = False,
     ):
-        """
-        Initialize a ReplaceOne object.
+        """Initialize a ReplaceOne request.
 
         Args:
-            filter (dict[str, Any]): The filter criteria for selecting the document to replace.
-            replacement (dict[str, Any]): The replacement document.
-            upsert (bool, optional): If True, insert a document if none matches. Defaults to False.
+            filter: Query filter selecting the document to replace.
+            replacement: The replacement document dictionary.
+            upsert: If True, insert the replacement when no document matches
+                ``filter``. Defaults to False.
         """
         self.filter = filter
         self.replacement = replacement
@@ -107,25 +117,39 @@ class ReplaceOne:
 
 
 class DeleteMany:
-    """
-    Represents a delete operation for multiple documents.
+    """Represents a delete operation for multiple documents.
+
+    Used with ``bulk_write()`` to delete all documents matching
+    ``self.filter``.
     """
 
     def __init__(self, filter: dict[str, Any]):
-        """
-        Initialize a DeleteMany object.
+        """Initialize a DeleteMany request.
 
         Args:
-            filter (dict[str, Any]): The filter criteria for selecting documents to delete.
+            filter: Query filter selecting documents to delete.
         """
         self.filter = filter
 
 
 def _parse_bulk_request(req: Any) -> tuple[str, dict[str, Any]]:
-    """
-    Parse a bulk write request into operation type and kwargs.
+    """Parse a bulk write request into an operation name and keyword args.
 
-    Supports neosqlite.requests, pymongo.operations, and duck-typed objects.
+    Supports ``neosqlite.requests`` classes, ``pymongo.operations`` objects
+    (via ``_doc``, ``_filter``, ``_upsert``, ``_array_filters``), and
+    duck-typed objects with ``filter``, ``update``, or ``multi`` attributes.
+
+    Args:
+        req: Bulk write request object to inspect.
+
+    Returns:
+        tuple[str, dict[str, Any]]: Pair of ``(operation_name, kwargs)``
+            where ``operation_name`` is one of ``"insert_one"``,
+            ``"replace_one"``, ``"update_one"``, ``"update_many"``,
+            ``"delete_one"``, or ``"delete_many"``.
+
+    Raises:
+        ValueError: If ``req`` does not match any supported bulk operation.
     """
     cls_name = type(req).__name__
     if cls_name == "InsertOne" or (

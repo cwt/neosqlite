@@ -24,7 +24,14 @@ logger = logging.getLogger(__name__)
 class SqlAggregationMixin:
     """Mixin providing SQL-based aggregation pipeline methods.
 
-    Designed to be composed into AggregationMixin.
+    Designed to be composed into ``AggregationMixin``. Generates single-query
+    SQL for supported ``$match``, ``$sort``, ``$skip``, ``$limit``,
+    ``$group``, and ``$unwind`` + ``$group`` pipelines, returning ``None``
+    when higher-tier or Python fallback is required.
+
+    Attributes:
+        collection: Host ``Collection`` with ``db`` and ``name``.
+        jsonb: ``JSONBContext`` describing JSON/JSONB capabilities.
     """
 
     collection: Collection
@@ -40,22 +47,27 @@ class SqlAggregationMixin:
         self,
         pipeline: list[dict[str, Any]],
     ) -> tuple[str, list[Any], list[str] | None] | None:
-        """
-        Builds a SQL query for the given MongoDB-like aggregation pipeline.
+        """Build a SQL query for a MongoDB-style aggregation pipeline.
 
-        This method constructs a SQL query based on the stages provided in the
-        aggregation pipeline. It currently handles $match, $sort, $skip,
-        and $limit stages, while $group stages are handled in Python. The method
-        returns a tuple containing the SQL command and a list of parameters.
+        Returns ``None`` immediately if forced fallback is enabled. Otherwise
+        compares index-reordered and original pipeline costs, pushes down
+        ``$match`` filters when possible, and translates ``$match``,
+        ``$sort``, ``$skip``, ``$limit``, ``$group``, and single
+        ``$unwind`` + ``$group`` stages into a single SQL SELECT statement.
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages.
+            pipeline: Aggregation pipeline stages to compile into SQL.
 
         Returns:
-            tuple[str, list[Any]] | None: A tuple containing the SQL command and
-                                          a list of parameters, or None if the
-                                          pipeline contains unsupported stages
-                                          or complex queries.
+            tuple[str, list[Any], list[str] | None] | None: Tuple of
+                ``(sql, params, output_fields)`` where ``output_fields`` is
+                a list of projected column names for ``$group`` queries or
+                ``None`` for raw document queries, or ``None`` when fallback
+                to temporary-table or Python execution is required.
+
+        Raises:
+            ValueError: If a ``$limit`` stage value is not a non-negative
+                integer.
         """
         # Check if we should force fallback for benchmarking/debugging
         if get_force_fallback():
@@ -277,21 +289,22 @@ class SqlAggregationMixin:
     def _optimize_unwind_group_pattern(
         self, group_stage_index: int, pipeline: list[dict[str, Any]]
     ) -> tuple[str, list[Any], list[str]] | None:
-        """
-        Optimize $unwind + $group pattern with SQL-based processing.
+        """Optimize a ``$unwind`` + ``$group`` pattern into SQL.
 
-        This method handles the specific optimization pattern where a $unwind stage
-        is immediately followed by a $group stage. It supports all accumulator
-        operations by leveraging the general _build_group_query method while
-        handling the $unwind optimization.
+        Handles pipelines where stage 0 is a simple string ``$unwind``
+        (``"$field"``) and stage 1 is a ``$group`` with a simple string
+        ``_id`` (``"$field"``). Rewrites SQL expressions produced by
+        ``_build_group_query`` to read unwound elements from
+        ``json_each``/``jsonb_each`` aliased as ``je``.
 
         Args:
-            group_stage_index: Index of the $group stage in the pipeline
-            pipeline: The complete aggregation pipeline
+            group_stage_index: Index of the ``$group`` stage in the pipeline.
+            pipeline: Complete aggregation pipeline being compiled.
 
         Returns:
-            tuple[str, list[Any], list[str]] | None: SQL command, params, and output fields
-            if optimization is possible, None otherwise
+            tuple[str, list[Any], list[str]] | None: Tuple of
+                ``(sql, params, output_fields)`` with an empty parameter list
+                if optimization applies, or ``None`` otherwise.
         """
         # Check if this is a $unwind + $group pattern we can optimize
         if group_stage_index == 1 and "$unwind" in pipeline[0]:
@@ -365,27 +378,21 @@ class SqlAggregationMixin:
     def _build_group_query(
         self, group_spec: dict[str, Any]
     ) -> tuple[str, str, list[str]] | None:
-        """
-        Builds the SELECT and GROUP BY clauses for a $group stage.
+        """Build SELECT and GROUP BY clauses for a ``$group`` stage.
 
-        This method constructs SQL SELECT and GROUP BY clauses for MongoDB-like
-        $group aggregation stages that can be handled directly with SQL. It supports
-        grouping by a single field and various accumulator operations like $sum,
-        $avg, $min, $max, $count, $push, and $addToSet.
+        Supports ``_id: None`` or single-field ``"$field"`` grouping along
+        with ``$count``, ``$sum`` (field or literal ``1``), ``$avg``,
+        ``$min``, ``$max``, ``$push``, and ``$addToSet`` accumulators on
+        simple ``"$field"`` expressions.
 
         Args:
-            group_spec (dict[str, Any]): A dictionary representing the $group stage
-                                         specification. It should contain an "_id"
-                                         field for grouping and accumulator operations
-                                         for other fields.
+            group_spec: Dictionary representing the ``$group`` stage
+                specification containing ``_id`` and accumulator fields.
 
         Returns:
-            tuple[str, str, list[str]] | None: A tuple containing:
-                - The SELECT clause string with all required expressions
-                - The GROUP BY clause string
-                - A list of output field names
-            Returns None if the group specification contains unsupported operations
-            that require Python-based processing.
+            tuple[str, str, list[str]] | None: Tuple of
+                ``(select_clause, group_by_clause, output_fields)``, or
+                ``None`` if unsupported expressions require Python fallback.
         """
         group_id_expr = group_spec.get("_id")
         if group_id_expr is None:

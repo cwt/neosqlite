@@ -30,14 +30,17 @@ _SQLITE_FEATURES: dict[str, bool | None] = {
 
 
 def _check_sqlite_version(min_version: str) -> bool:
-    """
-    Check if the current SQLite version meets the minimum requirement.
+    """Check if the current SQLite version meets the minimum requirement.
+
+    Parses dot-separated version strings, pads both to at least three
+    components, and compares them lexicographically as integer tuples.
 
     Args:
-        min_version (str): Minimum version string (e.g., "3.42.0")
+        min_version: Minimum required version string (e.g., ``"3.42.0"``).
 
     Returns:
-        bool: True if requirements met, False otherwise
+        bool: True if the current SQLite version is greater than or equal to
+        ``min_version``, False otherwise.
     """
     current = [int(x) for x in sqlite3.sqlite_version.split(".")]
     required = [int(x) for x in min_version.split(".")]
@@ -52,12 +55,13 @@ def _check_sqlite_version(min_version: str) -> bool:
 
 
 def _supports_relative_json_indexing() -> bool:
-    """
-    Check if current SQLite version supports [#-N] relative indexing in JSON paths.
-    Supported in SQLite 3.42.0 (2023-05-16) and later.
+    """Check if SQLite supports ``[#-N]`` relative indexing in JSON paths.
+
+    Relative JSON array indexing was added in SQLite 3.42.0 (2023-05-16).
+    The result is cached in ``_SQLITE_FEATURES``.
 
     Returns:
-        bool: True if supported, False otherwise
+        bool: True if relative JSON indexing is supported, False otherwise.
     """
     val = _SQLITE_FEATURES["relative_indexing"]
     if val is None:
@@ -67,16 +71,15 @@ def _supports_relative_json_indexing() -> bool:
 
 
 def _supports_returning_clause() -> bool:
-    """
-    Check if current SQLite supports RETURNING clause in DELETE/UPDATE statements.
+    """Check if SQLite supports the ``RETURNING`` clause in DML statements.
 
-    This tests the feature at runtime rather than relying on version checks,
-    as some SQLite builds may have features disabled at compile time.
-
-    RETURNING clause is supported in SQLite 3.35.0 (2021-03-12) and later.
+    Tests ``DELETE ... RETURNING`` at runtime against an in-memory database
+    rather than relying solely on version checks, since some SQLite builds may
+    disable ``RETURNING`` (introduced in SQLite 3.35.0). Results are cached
+    in ``_SQLITE_FEATURES``.
 
     Returns:
-        bool: True if supported, False otherwise
+        bool: True if ``RETURNING`` is supported, False otherwise.
     """
     val = _SQLITE_FEATURES["returning_clause"]
     if val is None:
@@ -106,15 +109,14 @@ def _supports_returning_clause() -> bool:
 
 
 def _get_json_function(name: str, jsonb_supported: bool) -> str:
-    """
-    Get the appropriate JSON function name based on JSONB support.
+    """Get the appropriate JSON function name based on JSONB support.
 
     Args:
-        name: The base function name (without json/jsonb prefix)
-        jsonb_supported: Whether JSONB functions are supported
+        name: Base function name without the ``json_`` or ``jsonb_`` prefix.
+        jsonb_supported: Whether JSONB functions are supported.
 
     Returns:
-        str: The full function name with appropriate prefix
+        str: Full SQLite function name with the appropriate prefix.
     """
     return _json_function(name, jsonb_supported)
 
@@ -126,18 +128,17 @@ _FORCE_FALLBACK = os.environ.get(
 
 
 def _convert_bytes_to_binary(obj: Any) -> Any:
-    """
-    Recursively convert bytes objects to Binary objects in a document.
+    """Recursively convert ``bytes`` objects to ``Binary`` in a document.
 
-    This function traverses a document structure (dict, list, etc.) and converts
-    any bytes objects to Binary objects, which can be properly serialized to JSON.
-    Existing Binary objects are left unchanged to preserve their subtype information.
+    Traverses dictionaries and lists and converts raw ``bytes`` instances to
+    ``Binary`` objects so they can be serialized to JSON. Existing ``Binary``
+    instances are returned unchanged to preserve their subtype information.
 
     Args:
-        obj: The object to process (can be dict, list, bytes, Binary, or other types)
+        obj: Object to process (dict, list, bytes, Binary, or any scalar).
 
     Returns:
-        The processed object with bytes converted to Binary objects
+        Any: Processed object with all raw ``bytes`` converted to ``Binary``.
     """
     match obj:
         case Binary():
@@ -156,14 +157,14 @@ def _convert_bytes_to_binary(obj: Any) -> Any:
 
 
 def set_force_fallback(force: bool = True) -> None:
-    """Set global flag to force all aggregation queries to use Python fallback.
+    """Set global flag to force aggregation queries to use Python fallback.
 
-    This function is useful for benchmarking and debugging to compare performance
-    between the optimized SQL path and the Python fallback path.
+    Useful for benchmarking and debugging to compare behavior and performance
+    between the SQL optimization tiers and Python fallback.
 
     Args:
-        force (bool): If True, forces all aggregation queries to use Python fallback.
-                     If False, allows normal optimization behavior.
+        force: If True, forces aggregation queries to use Python fallback.
+            If False, allows normal SQL optimization. Defaults to True.
     """
     global _FORCE_FALLBACK
     _FORCE_FALLBACK = force
@@ -186,16 +187,20 @@ def get_force_fallback() -> bool:
 def _validate_inc_mul_field_value(
     field_name: str, field_value: Any, operation: str
 ) -> None:
-    """
-    Validate that a field value is appropriate for $inc or $mul operations.
+    """Validate that a field value is valid for ``$inc`` or ``$mul``.
+
+    ``None`` values are accepted because missing fields are treated as ``0``
+    during update operations. Non-numeric values raise
+    ``MalformedQueryException``.
 
     Args:
-        field_name: The name of the field being validated
-        field_value: The current value of the field
-        operation: The operation being performed ("$inc" or "$mul")
+        field_name: Name of the field being validated.
+        field_value: Current value of the field.
+        operation: Update operator being applied (``"$inc"`` or ``"$mul"``).
 
     Raises:
-        MalformedQueryException: If the field value is not appropriate for the operation
+        MalformedQueryException: If ``field_value`` is non-None and not
+            numeric.
     """
     # If the field doesn't exist, it's acceptable as it will be treated as 0
     if field_value is None:
@@ -213,19 +218,26 @@ def _validate_inc_mul_field_value(
 def build_upsert_base_document(filter_doc: dict[str, Any]) -> dict[str, Any]:
     """Extract equality predicates from a query filter for upserts (#101).
 
-    MongoDB builds the inserted document from the query's EQUALITY
-    conditions only. Copying the filter verbatim stored operator dicts
-    ({"age": {"$gte": 18}}) as literal data. Supported forms:
-    - scalar / None equality ("name": "x")
-    - explicit $eq ("age": {"$eq": 25})
-    - dotted keys, nested into proper sub-documents ("a.b": 1)
-    - top-level $and lists of the above
-    Everything else ($gt, $in, regex, ...) is ignored, as in MongoDB's
-    lenient handling.
+    MongoDB builds an upserted document from equality conditions only,
+    ignoring range or pattern operators. Supported forms are scalar or
+    ``None`` equality, explicit ``$eq`` predicates, dotted field paths
+    expanded into nested dicts, and top-level ``$and`` lists of those.
+
+    Args:
+        filter_doc: Query filter dictionary supplied to an upsert.
+
+    Returns:
+        dict[str, Any]: Base document constructed from equality predicates.
     """
     base: dict[str, Any] = {}
 
     def set_path(path: str, val: Any) -> None:
+        """Assign a value into ``base`` at a dot-separated field path.
+
+        Args:
+            path: Dot-separated field path inside the base document.
+            val: Value to assign at the resolved leaf key.
+        """
         cur = base
         parts = path.split(".")
         for part in parts[:-1]:
@@ -233,6 +245,15 @@ def build_upsert_base_document(filter_doc: dict[str, Any]) -> dict[str, Any]:
         cur[parts[-1]] = val
 
     def add(key: str, val: Any) -> None:
+        """Add a single filter predicate to ``base`` if it is an equality.
+
+        Skips operator keys starting with ``$``, unwraps single-key ``$eq``
+        dicts, and ignores remaining dict or regex predicates.
+
+        Args:
+            key: Field name or operator key from the filter.
+            val: Predicate value or operator dict associated with ``key``.
+        """
         if key.startswith("$"):
             return
         if isinstance(val, dict) and len(val) == 1 and "$eq" in val:
@@ -253,14 +274,19 @@ def build_upsert_base_document(filter_doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def sanitize_fts_query(search_term: str) -> str:
-    """Sanitize and format a MongoDB $text search string for SQLite FTS5.
+    """Sanitize a MongoDB ``$text`` search string for SQLite FTS5.
 
-    SQLite FTS5 treats special characters like quotes, colons, hyphens, and leading
-    boolean operators (NOT, AND, OR) as query syntax. If unescaped, malformed queries
-    cause OperationalError (syntax error or 'no such column').
+    SQLite FTS5 treats characters such as quotes, colons, hyphens, and
+    boolean keywords (``NOT``, ``AND``, ``OR``) as query syntax. This
+    function extracts quoted phrases and bare words, strips or escapes double
+    quotes, and quotes each term so FTS5 evaluates them as literals.
 
-    This function extracts quoted phrases and bare words, quoting individual terms safely
-    so they are evaluated as literals by SQLite FTS5.
+    Args:
+        search_term: Raw search string from a ``$text.$search`` query.
+
+    Returns:
+        str: Space-separated quoted FTS5 term string, or ``""`` when
+        ``search_term`` is not a non-empty string.
     """
     if not isinstance(search_term, str) or not search_term.strip():
         return ""

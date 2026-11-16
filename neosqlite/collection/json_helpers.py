@@ -15,20 +15,27 @@ ISO_DATE_PATTERN = re.compile(
 
 
 class NeoSQLiteJSONEncoder(json.JSONEncoder):
-    """
-    Custom JSON encoder for NeoSQLite that handles Binary, ObjectId, and datetime objects.
+    """Custom JSON encoder for NeoSQLite document serialization.
+
+    Extends ``json.JSONEncoder`` to serialize ``Binary``, ``ObjectId``,
+    ``datetime``, and ``date`` instances into formats compatible with
+    NeoSQLite storage and BSON extended JSON conventions.
     """
 
     @override
     def default(self, obj):
-        """
-        Encodes Binary, ObjectId, and datetime objects for JSON serialization.
+        """Encode NeoSQLite custom types for JSON serialization.
+
+        Handles ``Binary`` and ``ObjectId`` via ``encode_for_storage()``,
+        encodes ``datetime`` as ``{"$date": ...}`` ISO strings, and encodes
+        plain ``date`` values as ISO-8601 strings before falling back to the
+        base encoder.
 
         Args:
             obj: The object to encode.
 
         Returns:
-            The encoded object suitable for JSON serialization.
+            Any: JSON-serializable representation of ``obj``.
         """
         if isinstance(obj, Binary):
             return obj.encode_for_storage()
@@ -54,30 +61,31 @@ class NeoSQLiteJSONEncoder(json.JSONEncoder):
 
 
 def neosqlite_json_dumps(obj: Any, **kwargs) -> str:
-    """
-    Custom JSON dumps function that handles Binary objects.
+    """Serialize an object to a JSON string using ``NeoSQLiteJSONEncoder``.
 
     Args:
-        obj: Object to serialize
-        **kwargs: Additional arguments to pass to json.dumps
+        obj: Object to serialize.
+        **kwargs: Additional keyword arguments passed to ``json.dumps``.
 
     Returns:
-        JSON string representation
+        str: JSON string representation of ``obj``.
     """
     return json.dumps(obj, cls=NeoSQLiteJSONEncoder, **kwargs)
 
 
 def neosqlite_json_dumps_for_sql(obj: Any, **kwargs) -> str:
-    """
-    Custom JSON dumps function for SQL query parameters that handles Binary objects
-    using compact formatting to match SQLite's json_extract behavior.
+    """Serialize an object to compact JSON for SQL query parameters.
+
+    Defaults ``separators`` to ``(",", ":")`` to match SQLite's
+    ``json_extract`` output formatting while encoding NeoSQLite types via
+    ``NeoSQLiteJSONEncoder``.
 
     Args:
-        obj: Object to serialize
-        **kwargs: Additional arguments to pass to json.dumps
+        obj: Object to serialize.
+        **kwargs: Additional keyword arguments passed to ``json.dumps``.
 
     Returns:
-        JSON string representation in compact format
+        str: Compact JSON string representation of ``obj``.
     """
     # Use compact JSON formatting to match SQLite's json_extract behavior
     kwargs.setdefault("separators", (",", ":"))
@@ -85,26 +93,29 @@ def neosqlite_json_dumps_for_sql(obj: Any, **kwargs) -> str:
 
 
 def neosqlite_json_loads(s: str, **kwargs) -> Any:
-    """
-    Custom JSON loads function that handles Binary objects, ObjectId, and $date objects.
+    """Deserialize a JSON string into Python and NeoSQLite objects.
+
+    Installs an ``object_hook`` on ``kwargs`` that restores ``Binary``,
+    ``ObjectId``, and ``$date`` extended-JSON objects back into their
+    corresponding Python instances.
 
     Args:
-        s: JSON string to deserialize
-        **kwargs: Additional arguments to pass to json.loads
+        s: JSON string to deserialize.
+        **kwargs: Additional keyword arguments passed to ``json.loads``.
 
     Returns:
-        Deserialized object
+        Any: Deserialized Python object graph.
     """
 
     def object_hook(dct: dict[str, Any]) -> Any:
-        """
-        Decodes Binary objects, ObjectId objects, and $date objects from JSON deserialization.
+        """Decode Binary, ObjectId, and ``$date`` dictionaries from JSON.
 
         Args:
-            dct: The dictionary to decode.
+            dct: Dictionary parsed from a JSON object.
 
         Returns:
-            The decoded object or the original dictionary.
+            Any: Decoded ``Binary``, ``ObjectId``, or ``datetime`` instance,
+                or the original dictionary if unrecognized or invalid.
         """
         if isinstance(dct, dict):
             if "__neosqlite_binary__" in dct:

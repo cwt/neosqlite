@@ -1,4 +1,9 @@
-"""SQL converters for array operators."""
+"""SQL converters for MongoDB array and set expression operators.
+
+Translates array inspection, indexing, slicing, sorting, aggregation, set, and
+higher-order transformation operators (``$filter``, ``$map``, ``$reduce``) into
+SQLite SQL expressions and CTEs.
+"""
 
 from __future__ import annotations
 
@@ -11,12 +16,37 @@ from .base import BaseSqlMixin
 
 
 class ArrayMixin(BaseSqlMixin):
-    """$size / $in / $isArray / $slice / $indexOfArray / $sum / $avg → SQL."""
+    """SQL converter mixin for array and array-transformation operators.
+
+    Implements ``_convert_array_operator`` and
+    ``_convert_array_transform_operator`` for ``ExprEvaluator``, translating
+    array length, membership, type checks, slicing, element lookup, sorting,
+    extremes, ``$filter``, ``$map``, ``$reduce``, and delegating set operators
+    to ``_convert_set_operator``. Expects ``BaseSqlMixin`` attributes and
+    SQLite JSON helpers from the host evaluator.
+    """
 
     def _convert_array_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert array operators to SQL."""
+        """Convert MongoDB array expression operators to SQL.
+
+        Handles ``$size``, ``$in``, ``$isArray``, ``$sum``, ``$avg``,
+        ``$min``, ``$max``, ``$slice``, ``$indexOfArray``, ``$arrayElemAt``,
+        ``$first``, ``$last``, ``$firstN``, ``$lastN``, ``$sortArray``,
+        ``$maxN``, and ``$minN``, and delegates set operators to
+        ``_convert_set_operator``. Normalizes single non-list operands for
+        unary operators and raises ``ValueError`` or ``NotImplementedError``
+        for invalid operands or unsupported SQLite versions/operators.
+
+        Args:
+            operator: MongoDB array or set operator name starting with ``"$"``.
+            operands: Operator argument or list/dict of arguments.
+
+        Returns:
+            tuple[str, list[Any]]: Compiled SQL expression and bound parameter
+                list in placeholder evaluation order.
+        """
         # Get the appropriate function names based on SQLite version
         json_each = self.json_each_function
         json_group_array = self.json_group_array_function
@@ -428,11 +458,24 @@ class ArrayMixin(BaseSqlMixin):
     def _convert_array_transform_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert $filter / $map / $reduce to SQL.
+        """Convert ``$filter``, ``$map``, and ``$reduce`` operators to SQL.
 
-        Uses json_each to iterate array elements and the AggregationContext
-        variable mechanism to substitute $$var references with the current
-        element column (\"value\") in the SQL expression.
+        Requires SQLite 3.44+ aggregate ``ORDER BY`` support. Uses
+        ``json_each`` (or ``jsonb_each``) to iterate array elements and a
+        cloned ``AggregationContext`` to substitute ``$$var`` references (plus
+        ``$$value``, ``$$index``, and ``$$this`` for ``$reduce`` recursive CTE
+        iterations), always restoring the prior context afterward.
+
+        Args:
+            operator: Transform operator name (``"$filter"``, ``"$map"``, or
+                ``"$reduce"``).
+            operands: Dictionary containing ``"input"``, optional ``"as"``, and
+                operator-specific keys (``"cond"``, ``"in"``,
+                ``"initialValue"``).
+
+        Returns:
+            tuple[str, list[Any]]: Compiled SQL expression and bound parameter
+                list.
         """
         if not supports_aggregate_order_by():
             raise NotImplementedError(
@@ -569,7 +612,23 @@ class ArrayMixin(BaseSqlMixin):
             self._current_context = old_ctx
 
     def _array_type_check_sql(self, operand: Any, col_ref: str) -> str:
-        """Return a safe SQL predicate checking whether operand evaluates to a JSON array."""
+        """Build a SQL predicate checking whether an operand is a JSON array.
+
+        Checks ``json_type(self.data_column, path) = 'array'`` for document
+        field references, returns ``"1"`` for Python ``list`` literals,
+        inspects ``col_ref`` validity and JSON type (handling both JSONB blobs
+        and JSON text when JSONB is supported) for expression dicts or ``$$``
+        variables, and returns ``"0"`` otherwise.
+
+        Args:
+            operand: Original MongoDB operand expression or literal.
+            col_ref: SQL column or alias holding the evaluated value when
+                runtime inspection is needed.
+
+        Returns:
+            str: SQL boolean expression evaluating to truthy iff the operand
+                is a JSON array.
+        """
         if (
             isinstance(operand, str)
             and operand.startswith("$")
@@ -598,7 +657,19 @@ class ArrayMixin(BaseSqlMixin):
         return "0"
 
     def _is_json_container_expr(self, expr: Any) -> bool:
-        """Return True if expr is statically known to evaluate to an array or object."""
+        """Check whether an expression statically produces an array or object.
+
+        Returns ``True`` for Python ``list`` values, non-operator ``dict``
+        literals, or single-key ``$`` operator dicts whose
+        ``_get_operator_return_type`` is ``"array"`` or ``"object"``.
+
+        Args:
+            expr: MongoDB expression or literal value to classify.
+
+        Returns:
+            bool: ``True`` if ``expr`` evaluates to a JSON array or object,
+                ``False`` otherwise.
+        """
         if isinstance(expr, list):
             return True
         if isinstance(expr, dict):
@@ -615,7 +686,23 @@ class ArrayMixin(BaseSqlMixin):
     def _neg_index_elem_sql(
         self, array_operand: Any, array_sql: str, offset: int
     ) -> str:
-        """Build SQL for negative literal array indexing on SQLite < 3.42."""
+        """Build SQL for negative literal array indexing on SQLite < 3.42.
+
+        Guards non-array inputs by substituting an empty JSON array and selects
+        the element at ``json_array_length - (offset + 1)``, re-wrapping nested
+        ``object`` or ``array`` values via ``json``/``jsonb``.
+
+        Args:
+            array_operand: Original MongoDB array operand (used for static type
+                guarding).
+            array_sql: Compiled SQL expression producing the array value.
+            offset: Zero-based reverse index from the end (``0`` for the last
+                element, ``1`` for second-to-last, etc.).
+
+        Returns:
+            str: Scalar SQL subquery extracting the requested element or
+                ``NULL``.
+        """
         is_arr_sql = self._array_type_check_sql(array_operand, "raw_arr")
         empty_lit = json_literal("[]", self.jsonb.jsonb_supported)
         safe_arr = f"(CASE WHEN {is_arr_sql} THEN raw_arr ELSE {empty_lit} END)"
@@ -635,7 +722,23 @@ class ArrayMixin(BaseSqlMixin):
     def _convert_extreme_n(
         self, operands: Any, direction: str
     ) -> tuple[str, list[Any]]:
-        """Convert $maxN / $minN to SQL (shared implementation)."""
+        """Convert ``$maxN`` or ``$minN`` expressions to SQL.
+
+        Shared helper requiring SQLite 3.44+ aggregate ``ORDER BY`` support.
+        Accepts either ``{"input": <array>, "n": <count>}`` or positional
+        ``[<array>, <count>]`` arguments and selects the top ``n`` elements
+        ordered by ``value`` in the given sort direction.
+
+        Args:
+            operands: Dictionary with ``"input"`` and ``"n"`` keys, or a
+                two-element list ``[input, n]``.
+            direction: SQL sort direction (``"DESC"`` for ``$maxN`` or
+                ``"ASC"`` for ``$minN``).
+
+        Returns:
+            tuple[str, list[Any]]: Compiled SQL expression and bound parameter
+                list.
+        """
         if not supports_aggregate_order_by():
             raise NotImplementedError(
                 "JSON aggregate ORDER BY requires SQLite 3.44+; "

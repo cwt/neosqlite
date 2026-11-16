@@ -9,10 +9,28 @@ from neosqlite.objectid import ObjectId as NeoObjectId
 
 
 def convert_neo_to_bson_objectids(doc: Any) -> Any:
-    """Convert NeoSQLite ObjectIds to BSON ObjectIds, and Decimal to
-    BSON Decimal128 (preserving precision instead of float)."""
+    """Convert NeoSQLite types to BSON-compatible types recursively.
+
+    Converts ``NeoObjectId`` instances to ``bson.ObjectId``, ``Decimal``
+    values to ``bson.Decimal128`` (preserving precision), and dict
+    ``"id": 0`` entries to ``bson.int64.Int64(0)``.
+
+    Args:
+        doc: Document, list, or scalar value to convert.
+
+    Returns:
+        Any: Converted structure with BSON-compatible types.
+    """
 
     def _convert_value(value: Any) -> Any:
+        """Recursively convert a nested field value to BSON types.
+
+        Args:
+            value: Field or list element value to convert.
+
+        Returns:
+            Any: BSON-compatible representation of ``value``.
+        """
         if isinstance(value, NeoObjectId):
             return BsonObjectId(value.binary)
         elif isinstance(value, PyDecimal):
@@ -41,7 +59,15 @@ def convert_neo_to_bson_objectids(doc: Any) -> Any:
 
 
 def convert_bson_to_neo_objectids(doc: Any) -> Any:
-    """Convert PyMongo/BSON ObjectIds to NeoSQLite ObjectIds recursively."""
+    """Convert BSON ObjectIds to NeoSQLite ObjectIds recursively.
+
+    Args:
+        doc: Document, list, or scalar value to convert.
+
+    Returns:
+        Any: Copy of ``doc`` with ``bson.ObjectId`` values replaced by
+            ``neosqlite.objectid.ObjectId`` instances.
+    """
     if isinstance(doc, BsonObjectId):
         return NeoObjectId(doc.binary)
     elif isinstance(doc, list):
@@ -52,7 +78,18 @@ def convert_bson_to_neo_objectids(doc: Any) -> Any:
 
 
 def convert_json_to_neo_objectids(doc: Any) -> Any:
-    """Recursively convert JSON-like $oid dicts to NeoSQLite ObjectIds."""
+    """Recursively convert extended-JSON ``$oid`` dicts to NeoObjectIds.
+
+    Replaces single-key ``{"$oid": ...}`` dictionaries whose value is a
+    ``str`` or ``bytes`` with ``neosqlite.objectid.ObjectId`` instances.
+
+    Args:
+        doc: Parsed JSON document, list, or scalar value.
+
+    Returns:
+        Any: Converted structure with ``$oid`` wrappers replaced by
+            ``ObjectId`` instances.
+    """
     if isinstance(doc, dict):
         if len(doc) == 1 and "$oid" in doc:
             val = doc["$oid"]

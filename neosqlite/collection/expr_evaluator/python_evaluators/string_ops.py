@@ -9,20 +9,47 @@ from .base import BasePythonMixin
 
 
 class StringPythonMixin(BasePythonMixin):
-    """String and regex operators."""
+    """Python evaluators for MongoDB string and regular-expression operators.
+
+    Implements Python-tier evaluation for string transformation, length,
+    substring, trimming, comparison, splitting, replacement, and regex
+    matching/extraction operators (``$concat``, ``$toLower``, ``$toUpper``,
+    ``$strLenBytes``, ``$strLenCP``, ``$substr``, ``$substrBytes``,
+    ``$substrCP``, ``$trim``, ``$ltrim``, ``$rtrim``, ``$indexOfBytes``,
+    ``$indexOfCP``, ``$strcasecmp``, ``$split``, ``$replaceAll``,
+    ``$replaceOne``, ``$regexMatch``, ``$regexFind``, and
+    ``$regexFindAll``). Operand evaluation is delegated to
+    ``BasePythonMixin._evaluate_operand_python``.
+    """
 
     def _evaluate_string_python(
         self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
-        """Evaluate string operators in Python.
+        """Evaluate a string or regular-expression aggregation operator.
+
+        Normalizes single-value operands to one-element lists for array-style
+        operators while preserving dictionary operands for ``$trim``,
+        ``$ltrim``, ``$rtrim``, ``$regexMatch``, ``$regexFind``,
+        ``$regexFindAll``, ``$replaceAll``, and ``$replaceOne``.
 
         Args:
-            operator: The string operator ($toUpper, $toLower, etc.)
-            operands: The operand(s). Can be:
-                      - A single value for simple cases like {"$toUpper": "$field"}
-                      - A list of values for array format
-                      - A dict for operators like $trim, $regexMatch
-            document: The document to evaluate against
+            operator: MongoDB string or regex operator name (e.g.,
+                ``"$toUpper"``, ``"$trim"``, ``"$regexMatch"``).
+            operands: Operator argument(s) as a single expression, a list of
+                expressions, or an operator-specific configuration dict.
+            document: Current document dictionary used when evaluating nested
+                operands.
+
+        Returns:
+            Any: Evaluated Python result (string, integer index/length/order,
+                boolean match, list of strings or match dicts, single match
+                dict, or ``None`` on null inputs).
+
+        Raises:
+            ValueError: If operand arity is wrong or a dict-form operator
+                lacks required fields such as ``"input"``.
+            NotImplementedError: If ``operator`` is not supported in Python
+                evaluation.
         """
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$toUpper: "$field"} and {$toUpper: ["$field"]}

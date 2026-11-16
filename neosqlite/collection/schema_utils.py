@@ -1,5 +1,4 @@
-"""
-Schema inspection and modification utilities for NeoSQLite.
+"""Schema inspection and modification utilities for NeoSQLite.
 
 This module provides common functionality for inspecting and modifying
 database schemas, avoiding code duplication across multiple modules.
@@ -12,15 +11,17 @@ logger = logging.getLogger(__name__)
 
 
 def get_table_columns(db_connection: Any, table_name: str) -> set[str]:
-    """
-    Get set of column names for a table.
+    """Return the set of column names for a SQLite table.
+
+    Queries ``PRAGMA table_info`` using a quoted table identifier and collects
+    the column name field from each returned row.
 
     Args:
-        db_connection: SQLite database connection
-        table_name: Name of the table to inspect
+        db_connection: SQLite database connection.
+        table_name: Name of the table to inspect.
 
     Returns:
-        Set of column names
+        set[str]: Set of column names defined on ``table_name``.
     """
     from ..sql_utils import quote_table_name
 
@@ -34,11 +35,19 @@ _table_columns_cache: dict[tuple[int, str], frozenset[str]] = {}
 
 
 def get_table_columns_cached(db_connection: Any, table_name: str) -> set[str]:
-    """get_table_columns with a small per-connection cache (#152).
+    """Return cached ``get_table_columns`` results per connection (#152).
 
-    GridFS constructs many GridOut objects; PRAGMA table_info per object
-    dominated read paths. Cache keyed by id(db)+table, cleared at 128
-    entries (schema changes are rare; the connection pins the id).
+    GridFS constructs many ``GridOut`` objects, where repeated ``PRAGMA
+    table_info`` calls dominated read paths. Results are cached as
+    ``frozenset`` objects keyed by ``(id(db_connection), table_name)`` and the
+    cache clears once it reaches 128 entries.
+
+    Args:
+        db_connection: SQLite database connection.
+        table_name: Name of the table to inspect.
+
+    Returns:
+        set[str]: Copy of the cached set of column names for ``table_name``.
     """
     key = (id(db_connection), table_name)
     cols = _table_columns_cache.get(key)
@@ -55,16 +64,19 @@ def column_exists(
     table_name: str,
     column_name: str,
 ) -> bool:
-    """
-    Check if column exists in table.
+    """Check whether a column exists in a SQLite table.
+
+    Uses ``get_table_columns_cached`` to avoid repeated ``PRAGMA table_info``
+    lookups on hot paths.
 
     Args:
-        db_connection: SQLite database connection
-        table_name: Name of the table
-        column_name: Name of the column to check
+        db_connection: SQLite database connection.
+        table_name: Name of the table to inspect.
+        column_name: Name of the column to check for.
 
     Returns:
-        True if column exists, False otherwise
+        bool: ``True`` if ``column_name`` exists on ``table_name``, else
+        ``False``.
     """
     columns = get_table_columns_cached(db_connection, table_name)
     return column_name in columns
@@ -74,15 +86,17 @@ def create_unique_index_on_id(
     db_connection: Any,
     table_name: str,
 ) -> bool:
-    """
-    Create a unique index on the _id column if it doesn't exist.
+    """Create a unique index on the ``_id`` column if it does not exist.
+
+    Logs a debug message and returns ``False`` if index creation fails (for
+    example, when duplicate ``_id`` values exist).
 
     Args:
-        db_connection: SQLite database connection
-        table_name: Name of the table
+        db_connection: SQLite database connection.
+        table_name: Name of the table on which to create the index.
 
     Returns:
-        True if index was created successfully, False otherwise
+        bool: ``True`` if the statement succeeded, ``False`` on error.
     """
     from ..sql_utils import quote_identifier, quote_table_name
 
@@ -103,15 +117,19 @@ def create_unique_index_on_id(
 
 
 def get_table_info(db_connection: Any, table_name: str) -> dict[str, Any]:
-    """
-    Get detailed information about a table.
+    """Return column and index metadata for a SQLite table.
+
+    Inspects ``PRAGMA table_info`` for column definitions (``name``, ``type``,
+    ``notnull``, ``default``, ``pk``) and ``sqlite_master`` for associated
+    indexes (``name``, ``definition``).
 
     Args:
-        db_connection: SQLite database connection
-        table_name: Name of the table to inspect
+        db_connection: SQLite database connection.
+        table_name: Name of the table to inspect.
 
     Returns:
-        Dictionary with table information including columns and indexes
+        dict[str, Any]: Dictionary containing ``"columns"`` and ``"indexes"``
+        metadata lists.
     """
     from ..sql_utils import quote_table_name
 

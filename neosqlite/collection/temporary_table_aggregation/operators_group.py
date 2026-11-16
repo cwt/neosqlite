@@ -15,33 +15,46 @@ logger = logging.getLogger(__name__)
 
 
 class OperatorsGroupMixin(OperatorsBaseMixin):
+    """Mixin providing temporary-table processors for grouping stages.
+
+    Implements SQL temporary-table evaluation for ``$group``, ``$bucket``,
+    and ``$bucketAuto`` aggregation pipeline stages, along with ranked
+    ``$first``/``$last`` CTE builders and typed result extraction.
+    """
+
     def _process_group_stage(
         self,
         create_temp: Callable,
         current_table: str,
         group_spec: dict[str, Any],
     ) -> str:
-        """
-        Process a $group stage using temporary tables.
+        """Process a ``$group`` stage using temporary tables.
 
-        This method implements the $group aggregation stage which groups documents
-        by a specified key and performs accumulator operations.
+        Groups input documents from ``current_table`` by the ``_id`` key
+        expression and evaluates accumulator fields into a new temporary
+        table.
 
-        Supports these accumulators in SQL tier:
-        - $sum, $avg, $min, $max: Standard SQL aggregators
-        - $count: COUNT(*)
-        - $first, $last: Using window functions over input stream rowid order
-        - $addToSet: Using json_group_array(DISTINCT ...)
-        - $push: Using json_group_array(...)
-        - Expression keys: Using ExprEvaluator for expression evaluation
+        Supported accumulators in the SQL tier:
+        - ``$sum``, ``$avg``, ``$min``, ``$max``: Standard SQL aggregates.
+        - ``$count``: ``COUNT(*)``.
+        - ``$first``, ``$last``: Ranked window CTE preserving input row order.
+        - ``$addToSet``: ``json_group_array(DISTINCT ...)`` or JSONB variant.
+        - ``$push``: ``json_group_array(...)`` or JSONB equivalent.
+        - Expression keys: Evaluated via ``self.expr_evaluator``.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing input data
-            group_spec (dict[str, Any]): The $group stage specification
+            create_temp: Callback used to materialize the stage's SQL query
+                into a temporary table.
+            current_table: Name of the current temporary table holding input
+                documents.
+            group_spec: The ``$group`` stage specification dictionary.
 
         Returns:
-            str: Name of the newly created temporary table with grouped results
+            str: Name of the newly created temporary table with grouped rows.
+
+        Raises:
+            NotImplementedError: If force fallback is active or an unsupported
+                group key, accumulator, or expression is encountered.
         """
         # Check kill switch FIRST (Bug 010 fix)
         from ..query_helper import get_force_fallback
@@ -128,6 +141,18 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         self._first_last_fields: list[tuple[str, bool, str, bool]] = []
 
         def _format_literal_sql(val: Any) -> str:
+            """Format a Python literal value as an inline SQL expression.
+
+            Converts ``None``, booleans, numbers, single-quote-escaped strings,
+            and JSON containers into SQL literal expressions suitable for
+            ``CREATE TABLE ... AS SELECT``.
+
+            Args:
+                val: Python literal value to convert.
+
+            Returns:
+                str: Inline SQL literal representation of ``val``.
+            """
             if val is None:
                 return "NULL"
             if isinstance(val, bool):
@@ -545,11 +570,19 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
     @staticmethod
     def _select_aliases(select_parts: list[str]) -> list[str]:
-        """Extract output aliases from 'expression AS alias' fragments.
+        """Extract output aliases from ``expression AS alias`` fragments.
 
-        The grouped SELECT is wrapped in an outer projection (#104), so
-        json_object must reference the inner ALIASES, not re-evaluate the
-        aggregate expressions (which would need the source `data` column).
+        The grouped ``SELECT`` is wrapped in an outer projection (#104), so
+        ``json_object`` must reference the inner aliases instead of
+        re-evaluating aggregate expressions against the source ``data`` column.
+
+        Args:
+            select_parts: List of SQL projection fragments, typically of the
+                form ``"<expr> AS <alias>"``.
+
+        Returns:
+            list[str]: Extracted alias names (defaulting to ``"column"`` when
+                ``" AS "`` is absent).
         """
         aliases = []
         for part in select_parts:
@@ -569,12 +602,27 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         json_output_func: str,
         has_underscore_id: bool = True,
     ) -> tuple[str, list]:
-        """Build the $group query when $first/$last are present (#105).
+        """Build the ``$group`` query when ``$first`` or ``$last`` are present.
 
-        A ranked CTE assigns per-group row numbers by input stream rowid order
-        (preserving any preceding $sort or $unwind ordering), partitioned on
-        the group key; $first/$last become MAX(CASE WHEN rn/rd = 1 ...)
-        aggregates over that ranking.
+        Uses a ranked CTE (#105) to assign per-group row numbers by input
+        stream ``rowid`` order (preserving preceding ``$sort`` or ``$unwind``
+        ordering), partitioned by the group key, and converts ``$first`` and
+        ``$last`` into ``MAX(CASE WHEN rn/rd = 1 ...)`` aggregates.
+
+        Args:
+            current_table: Name of the temporary table containing input rows.
+            select_parts: Non-``$first``/``$last`` SQL projection expressions.
+            group_by_parts: SQL expressions used for ``GROUP BY`` partitioning.
+            json_args: Prebuilt ``json_object`` argument string (unused here
+                because ``local_json_args`` is built with JSONB blob guards).
+            json_output_func: Prefix opening the outer JSON output wrapper
+                (for example ``"json(json_object"``).
+            has_underscore_id: Whether ``current_table`` includes an ``_id``
+                column. Defaults to True.
+
+        Returns:
+            tuple[str, list]: Pair of ``(sql_query, extra_params)`` where
+                ``extra_params`` is currently empty.
         """
         # Text extraction prevents SQLite from returning a raw JSONB blob when
         # aggregate MAX() discards the subtype on $first/$last fields.
@@ -661,12 +709,20 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
     def _grouped_source_sql(
         current_table: str, select_parts: list[str], group_by_clause: str
     ) -> str:
-        """FROM clause for the grouped output (#104).
+        """Build the ``FROM`` subquery for grouped output (#104).
 
-        With a GROUP BY, empty input naturally yields zero groups. A
-        constant-key group (no GROUP BY) is a bare aggregate that always
-        emits one row in SQLite — even over zero rows — so it computes
-        COUNT(*) alongside and filters it out.
+        With a ``GROUP BY`` clause, empty input naturally yields zero rows. A
+        constant-key aggregate (empty ``group_by_clause``) always emits one row
+        in SQLite even over zero input rows, so this adds ``COUNT(*) AS __cnt``
+        and filters ``WHERE __cnt > 0``.
+
+        Args:
+            current_table: Source table or CTE name to select from.
+            select_parts: List of SQL aggregate/key projection expressions.
+            group_by_clause: ``GROUP BY ...`` clause or empty string.
+
+        Returns:
+            str: SQL ``FROM (...)`` clause for the outer projection query.
         """
         if group_by_clause:
             return (
@@ -679,14 +735,17 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         )
 
     def _id_to_json_object_args(self, select_parts: list[str]) -> str:
-        """
-        Convert SELECT parts to json_object arguments.
+        """Convert ``SELECT`` fragments to ``json_object`` arguments.
+
+        Parses ``"expr AS alias"`` fragments into ``"'alias', expr"`` pairs,
+        defaulting the key to ``'column'`` if ``" AS "`` is absent.
 
         Args:
-            select_parts: List of SELECT column expressions (e.g., ["expr1 AS field1", "expr2 AS field2"])
+            select_parts: List of ``SELECT`` column expressions such as
+                ``["expr1 AS field1", "expr2 AS field2"]``.
 
         Returns:
-            Comma-separated list of 'key', value pairs for json_object
+            str: Comma-separated ``'key', expr`` pairs for ``json_object``.
         """
         args = []
         for part in select_parts:
@@ -708,24 +767,26 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         count_field: str | None = None,
         batch_size: int = 101,
     ) -> list[dict[str, Any]]:
-        """
-        Get results from a temporary table.
+        """Retrieve documents from a temporary aggregation table.
 
-        This method retrieves all documents from a temporary table and converts
-        them back into their Python dictionary representation using the collection's
-        document loading mechanism.
-
-        For $count optimization, if is_count is True, it returns a single document
-        with the count from the table using SQL COUNT(*) instead of loading all documents.
+        Reads rows in batches using ``fetchmany(batch_size)`` and decodes JSON
+        ``data`` columns (wrapping with ``json(data)`` when JSONB is enabled)
+        into Python dictionaries. When ``is_count`` and ``count_field`` are
+        given, runs ``SELECT COUNT(*)`` instead of loading rows. Also parses
+        stringified JSON arrays and objects recorded in ``_array_fields_map``
+        and ``_object_fields_map``.
 
         Args:
-            table_name (str): Name of the temporary table to retrieve results from
-            is_count (bool): If True, return count document instead of all documents
-            count_field (str | None): The field name for the count if is_count is True
+            table_name: Name of the temporary table to read from.
+            is_count: If True and ``count_field`` is provided, return a single
+                document containing the SQL row count. Defaults to False.
+            count_field: Output field name for the count document when
+                ``is_count`` is True. Defaults to None.
+            batch_size: Maximum number of rows fetched per ``fetchmany()``
+                call. Defaults to 101.
 
         Returns:
-            list[dict[str, Any]]: List of documents retrieved from the temporary table,
-                                  with each document represented as a dictionary
+            list[dict[str, Any]]: List of result documents as Python dicts.
         """
         if is_count and count_field:
             # Optimized path for $count: use SQL COUNT instead of loading all documents
@@ -893,18 +954,24 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         return results
 
     def _process_bucket_stage(self, create_temp, current_table, bucket_spec):
-        """
-        Process $bucket stage - groups documents by boundaries.
+        """Process a ``$bucket`` stage grouping documents by boundary ranges.
 
-        MongoDB syntax:
-        {
-          $bucket: {
-            groupBy: <expression>,
-            boundaries: [<lowerbound1>, <lowerbound2>, ...],
-            default: <literal>,  // optional
-            output: { <output1>: { <$accumulator expression> }, ... }
-          }
-        }
+        Sorts ``boundaries``, builds a SQL ``CASE`` expression mapping values
+        into ``[lower, upper)`` intervals (or the ``default`` label, which
+        defaults to ``"Other"``), and aggregates ``output`` fields (defaulting
+        to ``{"count": {"$sum": 1}}``) ordered by ``_id``.
+
+        Args:
+            create_temp: Callback used to create the stage's temporary table.
+            current_table: Name of the current temporary table containing input
+                documents.
+            bucket_spec: Dictionary specifying ``groupBy``, ``boundaries``,
+                optional ``default``, and optional ``output``.
+
+        Returns:
+            str: Name of the newly created temporary table, or
+                ``current_table`` unchanged if ``groupBy`` or ``boundaries``
+                is empty.
         """
         group_by = bucket_spec.get("groupBy")
         boundaries = bucket_spec.get("boundaries", [])
@@ -977,7 +1044,19 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         return new_table
 
     def _build_group_by_expr(self, group_by):
-        """Build SQL expression for groupBy field."""
+        """Build a numeric SQL expression for a ``$bucket`` ``groupBy`` spec.
+
+        Extracts a ``$``-prefixed field path via ``json_extract``/
+        ``jsonb_extract`` and casts it to ``REAL``; returns ``"1"`` when
+        ``group_by`` is not a ``$`` field string.
+
+        Args:
+            group_by: Field reference string (such as ``"$price"``) or other
+                value.
+
+        Returns:
+            str: SQL expression evaluating to a numeric bucket value.
+        """
         if isinstance(group_by, str) and group_by.startswith("$"):
             field = group_by[1:]
             json_path = parse_json_path(field)
@@ -988,18 +1067,24 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
     def _process_bucket_auto_stage(
         self, create_temp, current_table, bucket_auto_spec
     ):
-        """
-        Process $bucketAuto stage - auto-sized buckets.
+        """Process a ``$bucketAuto`` stage into auto-sized buckets.
 
-        MongoDB syntax:
-        {
-          $bucketAuto: {
-            groupBy: <expression>,
-            buckets: <number>,
-            output: { <output1>: { <$accumulator expression> }, ... },
-            granularity: <string>  // optional
-          }
-        }
+        Uses the SQL ``NTILE`` window function to partition rows into
+        ``buckets`` groups ordered by the ``groupBy`` field, then emits
+        ``{"min": ..., "max": ...}`` as ``_id`` along with the configured
+        ``output`` accumulators.
+
+        Args:
+            create_temp: Callback used to create the stage's temporary table.
+            current_table: Name of the current temporary table containing input
+                documents.
+            bucket_auto_spec: Dictionary specifying ``groupBy``, optional
+                ``buckets`` (default 10), and optional ``output``.
+
+        Returns:
+            str: Name of the newly created temporary table, or
+                ``current_table`` unchanged if ``groupBy`` is missing or
+                ``buckets <= 0``.
         """
         group_by = bucket_auto_spec.get("groupBy")
         num_buckets = bucket_auto_spec.get("buckets", 10)

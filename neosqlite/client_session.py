@@ -14,12 +14,27 @@ logger = logging.getLogger(__name__)
 
 
 class _TransactionContext:
-    """Context manager returned by ClientSession.start_transaction()."""
+    """Context manager returned by ``ClientSession.start_transaction()``.
+
+    Exposes the underlying ``ClientSession`` inside a ``with`` block and
+    automatically commits on normal exit or aborts on exception when a
+    transaction is still active.
+    """
 
     def __init__(self, session: ClientSession) -> None:
+        """Initialize the transaction context manager.
+
+        Args:
+            session: Active ``ClientSession`` bound to this transaction.
+        """
         self._session = session
 
     def __enter__(self) -> ClientSession:
+        """Enter the transaction context and return the bound session.
+
+        Returns:
+            ClientSession: The session associated with this transaction.
+        """
         return self._session
 
     def __exit__(
@@ -28,6 +43,17 @@ class _TransactionContext:
         exc_val: BaseException | None,
         exc_tb: Any,
     ) -> None:
+        """Commit or abort the active transaction when exiting the context.
+
+        Aborts the transaction if an exception was raised and the session is
+        still in a transaction; otherwise commits if still in a transaction.
+
+        Args:
+            exc_type: Exception class if an exception occurred, else ``None``.
+            exc_val: Exception instance if an exception occurred, else
+                ``None``.
+            exc_tb: Traceback object if an exception occurred, else ``None``.
+        """
         if exc_type is not None:
             if self._session.in_transaction:
                 self._session.abort_transaction()
@@ -37,22 +63,21 @@ class _TransactionContext:
 
 
 class ClientSession:
-    """
-    Represents a client session for transactions in NeoSQLite.
+    """Represents a client session for transactions in NeoSQLite.
 
-    This class provides PyMongo-compatible session and transaction management
-    by wrapping SQLite's native ACID transactions.
+    Provides PyMongo-compatible session and transaction management by wrapping
+    SQLite's native ACID transactions and savepoints.
     """
 
     def __init__(
         self, client: Connection, options: dict[str, Any] | None = None
     ):
-        """
-        Initialize a new ClientSession.
+        """Initialize a new ClientSession.
 
         Args:
-            client (Connection): The connection instance that created this session.
-            options (dict, optional): Session options.
+            client: Connection instance that owns this session.
+            options: Optional session configuration dictionary. Defaults to
+                an empty dictionary when ``None``.
         """
         self.client = client
         self.options = options or {}
@@ -60,26 +85,33 @@ class ClientSession:
 
     @property
     def in_transaction(self) -> bool:
-        """
-        Check if the session is currently in a transaction.
+        """Check whether the session currently has an active transaction.
 
         Returns:
-            bool: True if in a transaction, False otherwise.
+            bool: ``True`` if a transaction is in progress, ``False``
+                otherwise.
         """
         return self._in_transaction
 
     def start_transaction(
         self, write_concern: dict[str, Any] | None = None
     ) -> _TransactionContext:
-        """
-        Start a new transaction.
+        """Start a new transaction on the underlying SQLite connection.
+
+        Uses a unique SQLite ``SAVEPOINT`` if the underlying connection is
+        already in a transaction; otherwise issues ``BEGIN IMMEDIATE``.
 
         Args:
-            write_concern (dict, optional): Write concern for the transaction.
+            write_concern: Optional write concern dictionary accepted for
+                PyMongo API compatibility (unused).
 
         Returns:
-            _TransactionContext: Context manager that commits on exit
+            _TransactionContext: Context manager that commits on normal exit
                 and aborts on exception.
+
+        Raises:
+            InvalidOperation: If a transaction is already in progress on this
+                session.
         """
         if self._in_transaction:
             raise InvalidOperation("Transaction already in progress")
@@ -99,8 +131,10 @@ class ClientSession:
         return _TransactionContext(self)
 
     def commit_transaction(self):
-        """
-        Commit the current transaction.
+        """Commit the current transaction or release its savepoint.
+
+        Raises:
+            InvalidOperation: If no transaction is currently in progress.
         """
         if not self._in_transaction:
             raise InvalidOperation("No transaction in progress")
@@ -113,8 +147,10 @@ class ClientSession:
         self._in_transaction = False
 
     def abort_transaction(self):
-        """
-        Abort (rollback) the current transaction.
+        """Abort and roll back the current transaction or savepoint.
+
+        Raises:
+            InvalidOperation: If no transaction is currently in progress.
         """
         if not self._in_transaction:
             raise InvalidOperation("No transaction in progress")
@@ -130,9 +166,7 @@ class ClientSession:
         self._in_transaction = False
 
     def end_session(self):
-        """
-        End the session. If in a transaction, it will be aborted.
-        """
+        """End the session, aborting any active transaction if present."""
         if self._in_transaction:
             try:
                 self.abort_transaction()
@@ -150,22 +184,23 @@ class ClientSession:
         read_preference: Any | None = None,
         max_commit_time_ms: int | None = None,
     ) -> Any:
-        """
-        Execute a callback in a transaction.
+        """Execute a callback inside a transaction.
 
-        This method automatically starts a transaction, executes the callback,
-        and commits the transaction if the callback succeeds. If the callback
-        raises an exception, the transaction is aborted.
+        Starts a transaction, runs ``callback(self)``, and commits if it
+        returns normally. If ``callback`` raises an exception, aborts any
+        active transaction and re-raises.
 
         Args:
-            callback: A function that takes a ClientSession as its only argument.
-            read_concern (optional): Unused in NeoSQLite.
-            write_concern (optional): Unused in NeoSQLite.
-            read_preference (optional): Unused in NeoSQLite.
-            max_commit_time_ms (optional): Unused in NeoSQLite.
+            callback: Callable receiving this ``ClientSession`` as its single
+                argument.
+            read_concern: Accepted for PyMongo API compatibility (unused).
+            write_concern: Accepted for PyMongo API compatibility (unused).
+            read_preference: Accepted for PyMongo API compatibility (unused).
+            max_commit_time_ms: Accepted for PyMongo API compatibility
+                (unused).
 
         Returns:
-            The return value of the callback.
+            Any: The value returned by ``callback``.
         """
         self.start_transaction()
         try:
@@ -179,9 +214,25 @@ class ClientSession:
             raise
 
     def __enter__(self) -> Self:
+        """Enter the session context manager.
+
+        Returns:
+            Self: This ``ClientSession`` instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the session context manager and clean up session state.
+
+        Aborts any active transaction when exiting due to an exception, then
+        calls ``end_session()``.
+
+        Args:
+            exc_type: Exception class if an exception occurred, else ``None``.
+            exc_val: Exception instance if an exception occurred, else
+                ``None``.
+            exc_tb: Traceback object if an exception occurred, else ``None``.
+        """
         if exc_type is not None and self._in_transaction:
             self.abort_transaction()
         self.end_session()

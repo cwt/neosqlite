@@ -36,7 +36,19 @@ async def handle_client(
     writer: asyncio.StreamWriter,
     handler: NeoSQLiteHandler,
 ):
-    """Handle a single client connection."""
+    """Handle a single asynchronous MongoDB wire protocol client connection.
+
+    Reads 16-byte wire headers and message payloads from ``reader``, validates
+    message lengths against ``MESSAGE_HEADER_SIZE`` and
+    ``MAX_MESSAGE_SIZE_BYTES``, dispatches ``OP_MSG`` (inserts and commands)
+    and ``OP_QUERY`` requests via ``asyncio.to_thread``, writes replies to
+    ``writer``, and cleans up connection tracking on disconnect.
+
+    Args:
+        reader: Async stream reader for incoming client wire messages.
+        writer: Async stream writer for outgoing server replies.
+        handler: ``NeoSQLiteHandler`` instance processing client requests.
+    """
     handler.increment_connections()
     conn_id = str(uuid.uuid4())
     try:
@@ -174,7 +186,17 @@ def handle_client_threaded(
     client_socket: socket.socket,
     handler: NeoSQLiteHandler,
 ):
-    """Handle a single client connection (threaded version)."""
+    """Handle a single client connection on a dedicated OS thread.
+
+    Reads wire protocol frames synchronously from ``client_socket``, validates
+    message sizes, dispatches ``OP_MSG`` and ``OP_QUERY`` requests on
+    ``handler``, sends replies via ``sendall``, and decrements connection
+    tracking and closes open cursors/streams when the client disconnects.
+
+    Args:
+        client_socket: Connected client TCP socket.
+        handler: ``NeoSQLiteHandler`` instance processing client requests.
+    """
     handler.increment_connections()
     conn_id = str(uuid.uuid4())
     try:
@@ -298,7 +320,21 @@ def run_server_threaded(
     handler: NeoSQLiteHandler,
     use_threading: bool = True,
 ):
-    """Run the MongoDB wire protocol server (threaded or async)."""
+    """Run the MongoDB wire protocol server in threaded or async mode.
+
+    When ``use_threading`` is False, starts ``run_server`` under
+    ``asyncio.run`` (using ``uvloop.new_event_loop`` when available).
+    Otherwise binds a reusable IPv4 TCP socket on ``(host, port)`` and spawns
+    daemon threads running ``handle_client_threaded`` per accepted client
+    until interrupted by ``KeyboardInterrupt``.
+
+    Args:
+        host: Hostname or IPv4 address to bind the listening socket to.
+        port: TCP port number to listen on.
+        handler: ``NeoSQLiteHandler`` instance serving incoming connections.
+        use_threading: If True, run the multi-threaded socket loop; if False,
+            delegate to the async ``asyncio`` server.
+    """
     if not use_threading:
         asyncio.run(
             run_server(host, port, handler),
@@ -342,11 +378,26 @@ def run_server_threaded(
 
 
 async def run_server(host: str, port: int, handler: NeoSQLiteHandler):
-    """Run the MongoDB wire protocol server."""
+    """Run the asynchronous MongoDB wire protocol server.
+
+    Starts an ``asyncio`` TCP server on ``(host, port)`` that delegates each
+    accepted connection to ``handle_client`` and runs until stopped.
+
+    Args:
+        host: Hostname or IP address to bind the server to.
+        port: TCP port number to listen on.
+        handler: ``NeoSQLiteHandler`` instance serving incoming connections.
+    """
 
     async def handle_client_closure(
         reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        """Forward an accepted client stream pair to ``handle_client``.
+
+        Args:
+            reader: Async stream reader for the accepted connection.
+            writer: Async stream writer for the accepted connection.
+        """
         await handle_client(reader, writer, handler)
 
     server = await asyncio.start_server(

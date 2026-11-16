@@ -1,5 +1,4 @@
-"""
-Query optimization utilities for NeoSQLite collections.
+"""Query optimization utilities for NeoSQLite collections.
 
 This module provides a mixin class with methods for query cost estimation,
 index analysis, and pipeline optimization.
@@ -15,13 +14,11 @@ if TYPE_CHECKING:
 
 
 class QueryOptimizerMixin:
-    """
-    A mixin class providing query optimization methods.
+    """Mixin class providing query optimization and cost-estimation methods.
 
-    This mixin assumes it will be used with a class that has:
-    - self.collection (with db and name attributes)
-    - self.jsonb.jsonb_supported
-    - self.jsonb.json_function_prefix
+    Expects the host class to define ``self.collection`` (providing ``db``,
+    ``name``, and ``estimated_document_count``) as well as ``_jsonb_supported``
+    and ``_json_function_prefix`` attributes.
     """
 
     collection: "Collection"
@@ -29,11 +26,14 @@ class QueryOptimizerMixin:
     _json_function_prefix: str
 
     def _get_indexed_fields(self) -> list[str]:
-        """
-        Get a list of indexed fields for this collection.
+        """Get a list of indexed fields for this collection.
+
+        Reads SQLite index names matching ``idx_<table_name>_%`` and resolves
+        stored index key definitions via ``_load_index_keys``, falling back to
+        parsing legacy index names while excluding the automatic ``id`` index.
 
         Returns:
-            list[str]: A list of field names that have indexes.
+            list[str]: Field names that have indexes on this collection.
         """
         # Get indexes that match our naming convention
         cmd = (
@@ -63,16 +63,18 @@ class QueryOptimizerMixin:
         return indexed_fields
 
     def _estimate_result_size(self, pipeline: list[dict[str, Any]]) -> int:
-        """
-        Estimate the size of the aggregation result in bytes.
+        """Estimate the size of the aggregation result in bytes.
 
-        This method analyzes the pipeline to estimate the size of the result set.
+        Starts from ``estimated_document_count()``, applies heuristic row-count
+        multipliers for ``$match``, ``$limit``, ``$skip``, ``$unwind``, and
+        ``$group`` stages, clamps the count to ``[0, base_count * 10]``, and
+        multiplies by an assumed 1 KB average document size.
 
         Args:
-            pipeline: The aggregation pipeline to analyze
+            pipeline: Aggregation pipeline stages to analyze.
 
         Returns:
-            Estimated size in bytes
+            int: Estimated result size in bytes.
         """
         # Get the base collection size
         base_count = self.collection.estimated_document_count()
@@ -117,13 +119,14 @@ class QueryOptimizerMixin:
         return estimated_count * estimated_avg_doc_size
 
     def _estimate_query_cost(self, query: dict[str, Any]) -> float:
-        """
-        Estimate the cost of executing a query based on index availability.
+        """Estimate the cost of executing a query based on index availability.
 
-        Lower cost values indicate more efficient queries.
+        Lower cost values indicate more selective or index-backed queries.
+        Weights ``_id`` filters by ``0.1``, indexed fields by ``0.3``, and
+        recursively multiplies subquery costs for logical operators.
 
         Args:
-            query (dict[str, Any]): A dictionary representing the query criteria.
+            query: Dictionary representing the query filter criteria.
 
         Returns:
             float: Estimated cost of the query (lower is better).
@@ -157,14 +160,13 @@ class QueryOptimizerMixin:
         return cost
 
     def _estimate_pipeline_cost(self, pipeline: list[dict[str, Any]]) -> float:
-        """
-        Estimate the total cost of executing an aggregation pipeline.
+        """Estimate the total cost of executing an aggregation pipeline.
 
-        Lower cost values indicate more efficient pipelines.
-        This method considers data flow - earlier stages affect more documents.
+        Sums per-stage cost weights scaled by a cumulative data-volume
+        multiplier across stages; lower values indicate cheaper pipelines.
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages.
+            pipeline: List of aggregation pipeline stage dictionaries.
 
         Returns:
             float: Estimated cost of the pipeline (lower is better).
@@ -244,20 +246,18 @@ class QueryOptimizerMixin:
     def _optimize_match_pushdown(
         self, pipeline: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """
-        Optimize pipeline by pushing $match stages down to earlier positions when beneficial.
+        """Optimize a pipeline by moving eligible ``$match`` stages earlier.
 
-        This optimization moves $match stages earlier in the pipeline when they can
-        filter data before expensive operations like $unwind or $group.
-
-        Note: $match stages with $text search are NOT pushed down when they follow
-        $unwind stages, as the text search semantics depend on the unwound data.
+        Moves ``$match`` stages ahead of other stages when the pipeline has
+        at least two stages and contains expensive stages (``$unwind``,
+        ``$group``, or ``$lookup``). Stages containing ``$text`` or
+        ``$jsonSchema`` are kept in place so their semantics stay intact.
 
         Args:
-            pipeline (list[dict[str, Any]]): The pipeline stages to optimize.
+            pipeline: Aggregation pipeline stages to optimize.
 
         Returns:
-            list[dict[str, Any]]: The optimized pipeline.
+            list[dict[str, Any]]: Optimized pipeline stage list.
         """
         if len(pipeline) < 2:
             return pipeline
@@ -298,15 +298,16 @@ class QueryOptimizerMixin:
         return optimized
 
     def _is_datetime_indexed_field(self, field: str) -> bool:
-        """
-        Check if a field has a datetime index by looking for it in the database indexes.
-        Datetime indexes are created with the pattern: idx_{collection}_{field}_utc
+        """Check if a field has a UTC datetime index in ``sqlite_master``.
+
+        Datetime indexes follow the naming pattern
+        ``idx_{collection}_{field}_utc`` with dots replaced by underscores.
 
         Args:
-            field: The field name to check for datetime indexing
+            field: Field name (supports dot notation) to check.
 
         Returns:
-            bool: True if the field has a datetime index, False otherwise
+            bool: ``True`` if the datetime index exists, ``False`` otherwise.
         """
         # Construct the expected index name for datetime indexes
         # Convert dots to underscores in field name
@@ -323,17 +324,17 @@ class QueryOptimizerMixin:
     def _reorder_pipeline_for_indexes(
         self, pipeline: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """
-        Reorder pipeline stages to optimize performance based on index availability.
+        """Reorder pipeline stages to place index-backed matches first.
 
-        Moves $match stages with indexed fields to the beginning of the pipeline
-        to take advantage of index-based filtering.
+        Moves ``$match`` stages that reference ``_id`` or an indexed field
+        (either directly or nested inside ``$and``/``$or`` lists) to the start
+        of the pipeline ahead of all other stages.
 
         Args:
-            pipeline (list[dict[str, Any]]): The original pipeline stages.
+            pipeline: Original list of aggregation pipeline stages.
 
         Returns:
-            list[dict[str, Any]]: The reordered pipeline stages.
+            list[dict[str, Any]]: Reordered pipeline stage list.
         """
         if not pipeline:
             return pipeline

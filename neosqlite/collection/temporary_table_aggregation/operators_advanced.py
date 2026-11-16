@@ -19,8 +19,40 @@ logger = logging.getLogger(__name__)
 
 
 class OperatorsAdvancedMixin(OperatorsBaseMixin):
+    """Mixin implementing advanced SQL temporary-table aggregation stages.
+
+    Provides SQL-tier implementations for ``$densify``, ``$facet``,
+    ``$unionWith``, ``$out``, ``$merge``, ``$redact``, ``$setWindowFields``,
+    ``$graphLookup``, and ``$fill`` over intermediate SQLite temporary tables,
+    raising ``NotImplementedError`` when an option requires Tier 3 Python
+    evaluation.
+    """
+
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
-        """Process $densify stage — numeric series with bounds array/'full'/'partition' and partitionBy/partitionByFields."""
+        """Process a ``$densify`` stage for numeric series in SQLite.
+
+        Generates missing documents along a numeric ``field`` using a recursive
+        CTE bounded by ``"full"``, ``"partition"``, or an explicit
+        ``[lower, upper]`` numeric interval with step ``step`` (capped at 1000
+        steps), optionally grouped by ``partitionBy`` or
+        ``partitionByFields``.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            densify_spec: Stage specification dictionary for ``$densify``.
+
+        Returns:
+            str: Name of the temporary table containing original and densified
+                documents.
+
+        Raises:
+            ValueError: If ``range.step`` is numeric and not greater than zero.
+            NotImplementedError: If required fields are missing, ``unit`` is
+                specified, or ``step``, ``bounds``, or partition keys are not
+                supported in SQL.
+        """
         field = densify_spec.get("field")
         range_spec = densify_spec.get("range")
         raw_partition = densify_spec.get(
@@ -205,25 +237,24 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         return create_temp({"$densify": densify_spec}, select_clause, params)
 
     def _process_facet_stage(self, create_temp, current_table, facet_spec):
+        """Process a ``$facet`` stage across multiple sub-pipelines.
+
+        Extracts input documents from ``current_table`` (skipping corrupted
+        rows with a warning), runs each sub-pipeline in ``facet_spec`` against
+        a temporary collection using standard aggregation, and writes the
+        combined facet results into a single-document temporary table.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            facet_spec: Mapping of output facet field names to aggregation
+                sub-pipelines.
+
+        Returns:
+            str: Name of the temporary table containing the combined facet
+                result document.
         """
-        Process $facet stage - processes multiple sub-pipelines and combines results.
-
-        MongoDB syntax:
-        {
-          $facet: {
-            <output_field1>: [<pipeline stages>],
-            <output_field2>: [<pipeline stages>],
-            ...
-          }
-        }
-
-        This method:
-        1. Extracts input documents from the current temp table
-        2. For each sub-pipeline, executes it using normal aggregation (Tier 1/2/3)
-        3. Combines all results into a single document with facet fields
-        4. Returns a temp table containing that combined result
-        """
-
         from neosqlite.collection.json_helpers import (
             neosqlite_json_dumps,
             neosqlite_json_loads,
@@ -339,16 +370,27 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             raise e
 
     def _process_union_with_stage(self, create_temp, current_table, union_spec):
-        """
-        Process $unionWith stage - combines documents from another collection.
+        """Process a ``$unionWith`` stage combining documents from two sources.
 
-        MongoDB syntax:
-        {
-          $unionWith: {
-            coll: <collection_name>,
-            pipeline: [<pipeline stages>]  // optional
-          }
-        }
+        Reads documents from the target collection named by ``union_spec``
+        (either a collection name string or a ``{"coll": ...}`` dict) and
+        appends them to ``current_table`` using ``UNION ALL`` over matching
+        columns.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            union_spec: Collection name string or ``$unionWith`` specification
+                dictionary.
+
+        Returns:
+            str: Name of the temporary table containing the unioned rows, or
+                ``current_table`` if no target collection is specified.
+
+        Raises:
+            NotImplementedError: If ``union_spec`` specifies a non-empty
+                sub-pipeline.
         """
         if isinstance(union_spec, str):
             coll_name = union_spec
@@ -418,7 +460,20 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         quoted_target: str,
         where_clause: str = "",
     ) -> None:
-        """Insert documents from current_table into quoted_target(data, _id) synchronizing _id and $._id."""
+        """Insert stage rows into a target collection table.
+
+        Copies documents from ``current_table`` (optionally filtered by
+        ``where_clause``) into ``quoted_target(data, _id)`` while keeping the
+        ``_id`` column and ``$._id`` JSON field synchronized, generating a new
+        ObjectId-style hex identifier when neither is present.
+
+        Args:
+            current_table: Name of the source temporary table.
+            quoted_target: Properly quoted SQL identifier for the target
+                collection table.
+            where_clause: Optional SQL ``WHERE`` clause restricting source
+                rows to insert.
+        """
         cols = {
             col[1]
             for col in self.db.execute(
@@ -459,14 +514,43 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         self.db.execute(insert_sql)
 
     def _ensure_target_collection(self, target_coll_name: str):
-        """Return target collection, creating its backing SQLite table if missing."""
+        """Return a target collection, ensuring its SQLite table exists.
+
+        Args:
+            target_coll_name: Name of the destination collection within the
+                same database.
+
+        Returns:
+            Collection: Target collection object with its table initialized.
+        """
         target_coll = self.collection._database[target_coll_name]
         if hasattr(target_coll, "_initialize_table"):
             target_coll._initialize_table()
         return target_coll
 
     def _process_out_stage(self, create_temp, current_table, out_spec):
-        """$out writes all pipeline documents into a collection, replacing existing contents."""
+        """Process an ``$out`` stage by replacing a target collection.
+
+        Deletes existing rows in the destination collection, inserts all rows
+        from ``current_table``, and returns an empty temporary table as the
+        terminal pipeline result.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            out_spec: Target collection name string or ``{"coll": ...,
+                "db": ...}`` dictionary.
+
+        Returns:
+            str: Name of an empty temporary table matching ``current_table``'s
+                schema.
+
+        Raises:
+            ValueError: If ``out_spec`` is invalid or has an empty collection
+                name.
+            NotImplementedError: If ``out_spec`` targets a different database.
+        """
         if isinstance(out_spec, str):
             target_coll_name = out_spec
         elif isinstance(out_spec, dict):
@@ -495,7 +579,32 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         )
 
     def _process_merge_stage(self, create_temp, current_table, merge_spec):
-        """$merge writes pipeline results into a target collection using SQL."""
+        """Process a ``$merge`` stage by merging rows into a collection.
+
+        Matches source rows in ``current_table`` against ``into`` using the
+        specified ``on`` key field(s), pre-checks ``"fail"`` conditions so the
+        target collection is not mutated before raising, applies
+        ``whenMatched`` (``"replace"``, ``"merge"``, ``"keepExisting"``, or
+        ``"fail"``) and ``whenNotMatched`` (``"insert"``, ``"discard"``, or
+        ``"fail"``), and returns ``current_table``.
+
+        Args:
+            create_temp: Callback creating temporary tables (unused directly by
+                ``$merge``).
+            current_table: Name of the input temporary table.
+            merge_spec: Target collection name string or ``$merge`` option
+                dictionary.
+
+        Returns:
+            str: Name of ``current_table`` after writing merged results to the
+                target collection.
+
+        Raises:
+            NotImplementedError: If ``into``, ``on``, ``whenMatched``, or
+                ``whenNotMatched`` uses an option requiring Python fallback.
+            Exception: If ``whenMatched="fail"`` encounters a match or
+                ``whenNotMatched="fail"`` encounters an unmatched row.
+        """
         if isinstance(merge_spec, str):
             target_coll_name = merge_spec
             on_spec: Any = "_id"
@@ -644,6 +753,16 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             src_lookup = f"(SELECT src.data FROM {current_table} src WHERE {match_cond} ORDER BY src.id DESC LIMIT 1)"
 
             def _kv_select(src_expr: str) -> str:
+                """Build a SQL query extracting JSON key-value pairs.
+
+                Args:
+                    src_expr: SQL expression evaluating to a JSON object text
+                        or column reference.
+
+                Returns:
+                    str: ``SELECT`` query producing ``(k, jv)`` columns ready
+                        for ``json_group_object``.
+                """
                 return (
                     f"SELECT key AS k, "
                     f"CASE WHEN type = 'true' THEN 'true' WHEN type = 'false' THEN 'false' "
@@ -676,7 +795,26 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         return current_table
 
     def _process_redact_stage(self, create_temp, current_table, redact_spec):
-        """Process $redact stage in SQLite for top-level $$KEEP / $$PRUNE patterns."""
+        """Process a ``$redact`` stage in SQL for ``$$KEEP``/``$$PRUNE``.
+
+        Translates top-level ``$redact`` conditionals via
+        ``build_redact_where_sql`` into a filtered temporary table, raising
+        ``NotImplementedError`` when recursive strategies such as ``$$DESCEND``
+        require Tier 3 Python evaluation.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            redact_spec: Conditional ``$redact`` expression dictionary.
+
+        Returns:
+            str: Name of the temporary table containing retained rows.
+
+        Raises:
+            NotImplementedError: If ``redact_spec`` cannot be translated to a
+                SQL ``WHERE`` clause (such as when using ``$$DESCEND``).
+        """
         where_clause, params = build_redact_where_sql(
             self.expr_evaluator, redact_spec
         )
@@ -706,7 +844,30 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         current_table: str,
         spec: dict[str, Any],
     ) -> str:
-        """Process $setWindowFields stage."""
+        """Process a ``$setWindowFields`` stage using SQLite window functions.
+
+        Evaluates ``partitionBy`` and ``sortBy`` expressions in an inner
+        subquery, compiles requested window operators (such as ``$rank``,
+        ``$denseRank``, ``$documentNumber``, ``$count``, ``$first``, ``$last``,
+        ``$shift``, ``$sum``, ``$avg``, ``$min``, ``$max``, ``$push``,
+        ``$stdDevPop``, and ``$stdDevSamp``) with optional window frames, and
+        merges computed fields back into ``data``.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            spec: Stage specification dictionary containing optional
+                ``partitionBy`` and ``sortBy`` along with ``output``.
+
+        Returns:
+            str: Name of the temporary table containing augmented documents,
+                or ``current_table`` if it has no ``data`` column.
+
+        Raises:
+            NotImplementedError: If a window operator or frame specification is
+                not supported by the active SQLite version or SQL tier.
+        """
         partition_by = spec.get("partitionBy")
         sort_by: dict[str, int] = spec.get("sortBy", {})
         output: dict[str, Any] = spec.get("output", {})
@@ -928,11 +1089,38 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
     def _build_window_frame_sql(
         self, window_spec: dict[str, Any] | None
     ) -> str:
-        """Build SQL window frame clause (ROWS BETWEEN ... or RANGE BETWEEN ...)."""
+        """Build a SQL window frame clause from a MongoDB window spec.
+
+        Translates ``documents`` bounds into ``ROWS BETWEEN ...`` and
+        ``range`` bounds into ``RANGE BETWEEN ...``.
+
+        Args:
+            window_spec: Window specification dictionary with ``documents`` or
+                ``range`` bounds, or ``None``.
+
+        Returns:
+            str: SQL frame clause, or an empty string when no frame applies.
+
+        Raises:
+            NotImplementedError: If numeric ``range`` frames require SQLite
+                3.28+ on an older build, or if ``range`` bounds are invalid.
+        """
         if not window_spec:
             return ""
 
         def map_bound(val: Any, is_upper: bool, is_range: bool) -> str | None:
+            """Map a single MongoDB window bound value to a SQL frame keyword.
+
+            Args:
+                val: Bound value (``"unbounded"``, ``"current"``, or signed
+                    offset).
+                is_upper: ``True`` for the upper bound, ``False`` for lower.
+                is_range: ``True`` for ``RANGE`` frames (allows floats),
+                    ``False`` for ``ROWS`` frames (requires ``int``).
+
+            Returns:
+                str | None: SQL frame boundary token, or ``None`` if invalid.
+            """
             if val == "unbounded":
                 return (
                     "UNBOUNDED FOLLOWING" if is_upper else "UNBOUNDED PRECEDING"
@@ -981,7 +1169,23 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         current_table: str,
         spec: dict[str, Any],
     ) -> str:
-        """Process $graphLookup stage."""
+        """Process a ``$graphLookup`` stage using a recursive SQLite CTE.
+
+        Delegates CTE and projection SQL construction to
+        ``build_graph_lookup_parts`` and materializes the result in a new
+        temporary table.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            spec: Stage specification dictionary for ``$graphLookup``.
+
+        Returns:
+            str: Name of the temporary table with graph lookup results, or
+                ``current_table`` if ``build_graph_lookup_parts`` returns
+                ``None``.
+        """
         rec_cte = "graph_recurse_tier2"
         parts = build_graph_lookup_parts(
             self.collection,
@@ -1004,7 +1208,29 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         current_table: str,
         spec: dict[str, Any],
     ) -> str:
-        """Process $fill stage including constant value, locf, and linear interpolation."""
+        """Process a ``$fill`` stage for missing field values in SQLite.
+
+        Supports constant ``value`` replacement, ``"locf"`` (last observation
+        carried forward), and ``"linear"`` numeric interpolation across
+        optional ``partitionBy`` / ``partitionByFields`` groups ordered by
+        ``sortBy``.
+
+        Args:
+            create_temp: Callback creating a named temporary table from a stage
+                spec, SQL query, and parameter list.
+            current_table: Name of the input temporary table.
+            spec: Stage specification dictionary containing ``output`` and
+                optional ``partitionBy``, ``partitionByFields``, and
+                ``sortBy``.
+
+        Returns:
+            str: Name of the temporary table with filled fields, or
+                ``current_table`` unchanged when ``output`` is empty.
+
+        Raises:
+            NotImplementedError: If ``partitionByFields`` is not a list of
+                strings.
+        """
         partition_by = spec.get("partitionBy")
         partition_by_fields = spec.get("partitionByFields")
         if partition_by is None and partition_by_fields is not None:

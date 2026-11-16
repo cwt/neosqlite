@@ -12,12 +12,36 @@ from .base import BaseSqlMixin
 
 
 class SetMixin(BaseSqlMixin):
-    """$setUnion / $setIntersection / $setDifference / $setIsSubset / $anyElementTrue / $allElementsTrue → SQL."""
+    """SQL converters for MongoDB aggregation array set operators.
+
+    Translates ``$setEquals``, ``$setIntersection``, ``$setUnion``,
+    ``$setDifference``, ``$setIsSubset``, ``$anyElementTrue``, and
+    ``$allElementsTrue`` into SQLite queries using ``json_each`` or
+    ``jsonb_each`` and ``json_group_array`` or ``jsonb_group_array``.
+    """
 
     def _convert_set_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert set operators to SQL using json_each."""
+        """Convert set operators to SQL using ``json_each``/``jsonb_each``.
+
+        Supports ``$setEquals``, ``$setIntersection``, ``$setUnion``,
+        ``$setDifference``, ``$setIsSubset``, ``$anyElementTrue``, and
+        ``$allElementsTrue``. Normalizes single-value operands for the
+        boolean element-truthiness operators.
+
+        Args:
+            operator: Set operator name (e.g., ``"$setUnion"``).
+            operands: Two-element operand list for binary set operators, or a
+                single operand (or one-element list) for element truth checks.
+
+        Returns:
+            tuple[str, list[Any]]: SQL expression and bound parameter list.
+
+        Raises:
+            ValueError: If the operand count does not match the operator.
+            NotImplementedError: If ``operator`` is not supported in SQL.
+        """
         # Get the appropriate json_each function based on SQLite version
         json_each = self.json_each_function
         json_group_array = self.json_group_array_function

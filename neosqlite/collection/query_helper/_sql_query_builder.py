@@ -23,7 +23,18 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_id_value(v: Any) -> Any:
-    """Normalize an ID value for database queries."""
+    """Normalize an ``_id`` value for database queries.
+
+    Converts ``ObjectId`` instances and valid 24-character hex ObjectId strings
+    to their canonical string form; leaves other strings and non-ObjectId
+    values unchanged.
+
+    Args:
+        v: Candidate ``_id`` filter value.
+
+    Returns:
+        Any: Stringified ``ObjectId`` when applicable, otherwise ``v`` as-is.
+    """
     from ...objectid import ObjectId
 
     if isinstance(v, ObjectId):
@@ -37,9 +48,13 @@ def _normalize_id_value(v: Any) -> Any:
 
 
 class SqlQueryBuilderMixin:
-    """Mixin providing SQL WHERE clause building methods.
+    """Mixin providing SQL WHERE, ORDER BY, and pagination clause builders.
 
-    Designed to be composed into QueryBuilderMixin.
+    Designed to be composed into ``QueryBuilderMixin``. Translates MongoDB
+    query filters, FTS5 ``$text`` queries, ``_id`` predicates, array
+    containment checks, logical operators, sort specifications, and limit/skip
+    clauses into parameterized SQLite queries, returning ``None`` when Python
+    fallback is required.
     """
 
     collection: Collection
@@ -48,23 +63,33 @@ class SqlQueryBuilderMixin:
     _combine_expr_with_other_fields: Any
 
     def _is_text_search_query(self, query: dict[str, Any]) -> bool:
-        """
-        Check if the query is a text search query (contains $text operator).
+        """Check if the query is a text search query containing ``$text``.
 
         Args:
-            query: The query to check.
+            query: MongoDB query dictionary to inspect.
 
         Returns:
-            True if the query is a text search query, False otherwise.
+            bool: ``True`` if ``"$text"`` is a top-level key, else ``False``.
         """
         return "$text" in query
 
     def _build_fts_subquery(
         self, query: dict[str, Any]
     ) -> tuple[str, list[Any]] | None:
-        """
-        Build FTS subquery that calculates BM25 text relevance score across all
-        search indexes of this collection.
+        """Build an FTS5 subquery computing BM25 relevance across indexes.
+
+        Validates ``$text.$search``, sanitizes the query term, and queries all
+        search indexes defined on the collection. Single-index queries emit a
+        direct BM25 ``SELECT``; multi-index queries ``UNION ALL`` per-index
+        scores and sum them by rowid.
+
+        Args:
+            query: Query dictionary containing a ``$text`` search spec.
+
+        Returns:
+            tuple[str, list[Any]] | None: Pair ``(fts_subquery_sql, params)``
+            or ``None`` if fallback is forced, the spec is invalid, the
+            sanitized search term is empty, or no search indexes exist.
         """
         if "$text" not in query:
             return None
@@ -119,16 +144,20 @@ class SqlQueryBuilderMixin:
     def _build_text_search_query(
         self, query: dict[str, Any]
     ) -> tuple[str, list[Any], list[str]] | None:
-        """
-        Builds a SQL query for text search using FTS5.
+        """Build a SQL WHERE clause for an FTS5 text search query.
+
+        Returns ``("WHERE 0", [], [])`` when the sanitized search term is empty
+        so no documents match; otherwise wraps ``_build_fts_subquery`` in an
+        ``id IN (...)`` predicate.
 
         Args:
-            query: A dictionary representing the text search query with $text operator.
+            query: Dictionary representing the text search query with a
+                ``$text`` operator.
 
         Returns:
-            tuple[str, list[Any], list[str]] | None: A tuple containing the SQL WHERE clause,
-                                                      a list of parameters, and an empty list of
-                                                      tables to clean up, or None.
+            tuple[str, list[Any], list[str]] | None: Tuple containing the SQL
+            ``WHERE`` clause, parameter list, and an empty list of temporary
+            tables to clean up, or ``None`` if Python fallback is needed.
         """
         if "$text" not in query:
             return None
@@ -163,8 +192,22 @@ class SqlQueryBuilderMixin:
         sort: dict[str, Any] | None,
         collation: dict[str, Any] | None = None,
     ) -> str:
-        """
-        Build ORDER BY clause for FTS queries, prioritizing textScore if requested.
+        """Build an ORDER BY clause for FTS queries.
+
+        Maps ``{"$meta": "textScore"}`` (and descending ``score`` sorts) to
+        ``fts.text_score DESC``, ``_id`` to ``c._id``, and other fields to JSON
+        extractions on ``c.data`` with optional ``COLLATE NOCASE`` handling.
+
+        Args:
+            sort: Mapping from field names to sort directions or ``$meta``
+                sort descriptors, or ``None`` for no sorting.
+            collation: Optional collation dictionary controlling case
+                sensitivity (``strength <= 2`` or falsy ``caseLevel`` adds
+                ``COLLATE NOCASE``).
+
+        Returns:
+            str: SQL ``ORDER BY`` clause prefixed with a space, or ``""`` when
+            no sort fields are specified.
         """
         if not sort:
             return ""
@@ -211,8 +254,23 @@ class SqlQueryBuilderMixin:
         limit: int | None = None,
         skip: int | None = None,
     ) -> tuple[str, list[Any]] | None:
-        """
-        Build a complete FTS query with BM25 score, JOIN, sorting, and pagination.
+        """Build a CTE-based FTS query with score, filter, sort, and paging.
+
+        Combines the BM25 FTS subquery CTE with a join on the collection table,
+        optional non-``$text`` filter predicates, FTS-aware sorting, and
+        pagination.
+
+        Args:
+            query: Query filter dictionary containing ``$text`` and optional
+                additional predicates.
+            sort: Sort specification dictionary or ``None``.
+            collation: Optional collation settings dictionary.
+            limit: Optional maximum number of rows to return.
+            skip: Optional number of leading rows to skip.
+
+        Returns:
+            tuple[str, list[Any]] | None: Pair of ``(sql_query, parameters)``
+            or ``None`` if Python fallback is required.
         """
         if "$text" not in query:
             return None
@@ -276,13 +334,17 @@ class SqlQueryBuilderMixin:
         return cmd, all_params
 
     def _id_column_ref(self) -> str:
-        """Return the quoted SQL column reference that stores the logical _id.
+        """Return the quoted SQL column reference storing the logical ``_id``.
 
-        Modern collections keep the logical _id in a dedicated ``_id`` column.
-        Legacy collections that predate that column store it in the autoincrement
-        ``id`` surrogate, which is retained only as a deprecated fallback. All
-        _id queries must target this column so MongoDB-compatible _id semantics
-        are preserved (integer _id values are NOT redirected to ``id``).
+        Modern collections keep the logical ``_id`` in a dedicated ``_id``
+        column. Legacy collections that predate that column store it in the
+        autoincrement ``id`` surrogate, which is retained only as a deprecated
+        fallback. All ``_id`` queries must target this column so
+        MongoDB-compatible ``_id`` semantics are preserved (integer ``_id``
+        values are NOT redirected to ``id``).
+
+        Returns:
+            str: Quoted table-qualified ``_id`` column reference.
         """
         return (
             f"{quote_table_name(self.collection.name)}."
@@ -292,7 +354,18 @@ class SqlQueryBuilderMixin:
     def _regex_to_sql_pattern(
         self, value: Any, options: str = ""
     ) -> str | None:
-        """Convert a regex string (+ $options) or compiled re.Pattern to a validated SQLite REGEXP pattern."""
+        """Convert a regex value and options to a SQLite REGEXP pattern.
+
+        Delegates to ``neosqlite.collection.type_utils.regex_to_sql_pattern``.
+
+        Args:
+            value: Pattern string or compiled ``re.Pattern``.
+            options: MongoDB ``$options`` flag string (default ``""``).
+
+        Returns:
+            str | None: Validated SQLite REGEXP pattern, or ``None`` if
+            unsupported for SQL evaluation.
+        """
         from ..type_utils import regex_to_sql_pattern
 
         return regex_to_sql_pattern(value, options)
@@ -300,14 +373,20 @@ class SqlQueryBuilderMixin:
     def _build_id_operator_clause(
         self, value: dict
     ) -> tuple[str, list[Any]] | None:
-        """
-        Build a WHERE clause for _id field with operators like $in, $nin, $ne, etc.
+        """Build a SQL WHERE clause for ``_id`` with query operators.
+
+        Supports ``$in``, ``$nin`` (handling ``None`` elements with ``IS NULL``
+        / ``IS NOT NULL``), ``$ne``, ``$eq``, ``$regex``, and ``$options``.
+        Falls back to ``None`` for range operators (``$gt``, ``$gte``, ``$lt``,
+        ``$lte``) because mixed-type SQLite ordering differs from BSON, as well
+        as unsupported or malformed operator values.
 
         Args:
-            value: Dictionary containing operators like $in, $nin, $ne, etc.
+            value: Dictionary mapping MongoDB query operators to operands.
 
         Returns:
-            Tuple of (SQL clause, parameters) or None for Python fallback
+            tuple[str, list[Any]] | None: Pair of ``(sql_clause, params)``
+            joined with ``AND``, or ``None`` to trigger Python fallback.
         """
         id_col = self._id_column_ref()
 
@@ -404,11 +483,22 @@ class SqlQueryBuilderMixin:
     def _build_containment_clause(
         self, field: str, extract_expr: str, value: Any
     ) -> tuple[str, list[Any]]:
-        """Array-containment for plain equality (#99).
+        """Build an array-containment OR predicate for plain equality (#99).
 
-        The array may sit at any depth along the dotted path ("a.scores"
-        is a whole array; "students.name" names a leaf inside each element
-        of $.students), so one EXISTS arm is emitted per candidate depth.
+        The array may sit at any depth along the dotted path (``"a.scores"``
+        is a whole array; ``"students.name"`` names a leaf inside each element
+        of ``$.students``), so one ``EXISTS`` arm using ``json_each`` /
+        ``jsonb_each`` is emitted per candidate depth alongside direct scalar
+        equality.
+
+        Args:
+            field: Dotted MongoDB field path.
+            extract_expr: SQL expression extracting the field from ``data``.
+            value: Scalar target value to match directly or inside arrays.
+
+        Returns:
+            tuple[str, list[Any]]: Parenthesized SQL ``OR`` predicate and its
+            corresponding parameter list.
         """
         from ..type_utils import serialize_sql_query_value
 
@@ -456,10 +546,17 @@ class SqlQueryBuilderMixin:
         return "(" + clause + ")", params
 
     def _field_has_index(self, field: str) -> bool:
-        """True when an index exists whose name encodes this field (#99).
+        """Return whether an index exists whose name encodes ``field`` (#99).
 
         Indexed scalar equalities keep a sargable predicate; adding the
-        array-containment OR would otherwise force a full scan.
+        array-containment ``OR`` would otherwise force a full scan. Any error
+        while querying indexes is caught and treated as ``False``.
+
+        Args:
+            field: Dotted field name to look up in collection index names.
+
+        Returns:
+            bool: ``True`` if a matching index name suffix is found.
         """
         try:
             suffix = f"_{field.replace('.', '_')}"
@@ -473,15 +570,21 @@ class SqlQueryBuilderMixin:
     def _build_field_clause(
         self, field: str, value: Any
     ) -> tuple[str, list[Any]] | None:
-        """
-        Build a WHERE clause for a single field.
+        """Build a SQL WHERE clause for a single query field.
+
+        Handles ``_id`` comparisons using ``_id_column_ref()``, operator
+        dictionaries via ``_build_operator_clause``, regex patterns via
+        ``REGEXP``, ``None`` via ``IS NULL``, unindexed scalar equality with
+        array-containment support, and indexed scalar equality. Returns
+        ``None`` for ``$jsonSchema`` or predicates requiring Python fallback.
 
         Args:
-            field: Field name
-            value: Field value or operator dict
+            field: MongoDB field name or dotted path.
+            value: Literal match value, regex pattern, or operator dictionary.
 
         Returns:
-            Tuple of (SQL clause, parameters) or None for Python fallback
+            tuple[str, list[Any]] | None: Pair of ``(sql_clause, params)`` or
+            ``None`` when Python fallback is required.
         """
         from ...objectid import ObjectId
 
@@ -568,24 +671,22 @@ class SqlQueryBuilderMixin:
         self,
         query: dict[str, Any],
     ) -> tuple[str, list[Any], list[str]] | None:
-        """
-        Builds a SQL WHERE clause for simple queries that can be handled with json_extract.
+        """Build a SQL WHERE clause for queries handled with JSON extraction.
 
-        This method constructs a SQL WHERE clause based on the query provided.
-        It handles simple equality checks and query operators like $eq, $gt, $lt,
-        etc. for fields stored in JSON data. For more complex queries, it returns
-        None, indicating that a Python-based method should be used instead.
-
-        When the force fallback flag is set, this method returns None to force
-        Python-based processing for benchmarking and debugging purposes.
+        Normalizes ``_id`` query types, checks the fallback flag, compiles
+        ``$text`` queries (combining any additional non-``$text`` predicates),
+        delegates ``$expr`` queries to ``_build_expr_where_clause``, and
+        compiles standard filters via ``_build_query_condition``. Returns
+        ``None`` when Python-tier evaluation is needed.
 
         Args:
-            query (dict[str, Any]): A dictionary representing the query criteria.
+            query: Dictionary representing the MongoDB query filter criteria.
 
         Returns:
-            tuple[str, list[Any], list[str]] | None: A tuple containing the SQL WHERE clause,
-                                                      a list of parameters, and a list of
-                                                      temporary tables to clean up, or None.
+            tuple[str, list[Any], list[str]] | None: Tuple containing the SQL
+            ``WHERE`` clause (or ``""`` for match-all), parameter list, and an
+            empty list of temporary tables to clean up, or ``None`` for Python
+            fallback.
         """
         # Apply type correction to handle cases where users query 'id' with ObjectId
         # or other common type mismatches
@@ -640,7 +741,21 @@ class SqlQueryBuilderMixin:
     def _build_logical_field_clause(
         self, operator: str, value: Any
     ) -> tuple[str, list[Any]] | None:
-        """Build SQL condition for top-level logical operators ($and, $or, $nor, $not)."""
+        """Build a SQL condition for top-level logical query operators.
+
+        Handles ``$not`` (single sub-query dict) and non-empty condition lists
+        for ``$and``, ``$or``, and ``$nor``, wrapping negated and disjunctive
+        branches in ``COALESCE(..., 0)`` for SQL NULL safety.
+
+        Args:
+            operator: Logical operator name (``$and``, ``$or``, ``$nor``, or
+                ``$not``).
+            value: Sub-query dict (for ``$not``) or list of sub-query dicts.
+
+        Returns:
+            tuple[str, list[Any]] | None: Pair of ``(sql_condition, params)``
+            or ``None`` if invalid or any branch requires Python fallback.
+        """
         if operator == "$not":
             if not isinstance(value, dict):
                 return None
@@ -691,7 +806,25 @@ class SqlQueryBuilderMixin:
     def _build_query_condition(
         self, query: dict[str, Any]
     ) -> tuple[str, list[Any]] | None:
-        """Build a composable SQL boolean condition (without leading WHERE) for a query dict."""
+        """Build a composable SQL boolean condition for a query dictionary.
+
+        Produces a SQL predicate without a leading ``WHERE`` keyword, compiling
+        ``$jsonSchema``, logical operators, ``$expr`` (via tier-1
+        ``ExprEvaluator``), and field clauses. Returns ``("1 = 1", [])`` for an
+        empty query, or ``None`` for non-dict inputs, ``$text`` queries, or
+        branches requiring Python fallback.
+
+        Args:
+            query: MongoDB query filter dictionary.
+
+        Returns:
+            tuple[str, list[Any]] | None: Pair of ``(sql_condition, params)``
+            or ``None`` when Python fallback is required.
+
+        Raises:
+            NotImplementedError: If ``query`` contains ``$where``,
+                ``$function``, or ``$accumulator``.
+        """
         if not isinstance(query, dict):
             return None
 
@@ -797,16 +930,22 @@ class SqlQueryBuilderMixin:
         collation: dict[str, Any] | None = None,
         table_name: str | None = None,
     ) -> str:
-        """
-        Builds a SQL ORDER BY clause from a sort dictionary.
+        """Build a SQL ORDER BY clause from a sort specification dictionary.
+
+        Sorts ``_id`` directly on the collection table and other fields via
+        JSON extraction, adding ``COLLATE NOCASE`` when ``collation`` sets
+        ``strength <= 2`` or a falsy ``caseLevel``.
 
         Args:
-            sort: A dictionary mapping fields to sort directions (1 for ASC, -1 for DESC).
-            collation: Optional collation settings for case-insensitive sorting.
+            sort: Mapping from field names to sort directions (1 for ASC, -1
+                for DESC), or ``None`` for no ordering.
+            collation: Optional collation dictionary for case-insensitive
+                sorting.
             table_name: Optional table qualifier when sorting a JOIN query.
 
         Returns:
-            A SQL ORDER BY clause string (including 'ORDER BY' prefix), or empty string.
+            str: SQL ``ORDER BY`` clause prefixed with a space, or ``""`` when
+            ``sort`` is empty or ``None``.
         """
         if not sort:
             return ""
@@ -843,15 +982,20 @@ class SqlQueryBuilderMixin:
         limit: int | None,
         skip: int = 0,
     ) -> str:
-        """
-        Builds a SQL LIMIT and OFFSET clause.
+        """Build a SQL LIMIT and OFFSET pagination clause.
+
+        Treats ``limit == 0`` as unlimited (``None``), applies ``abs(limit)``
+        when bounded, and emits ``LIMIT -1 OFFSET <skip>`` when ``skip > 0``
+        without a limit (as required by SQLite).
 
         Args:
-            limit: The maximum number of documents to return.
-            skip: The number of documents to skip.
+            limit: Maximum number of documents to return, or ``None`` / ``0``
+                for no limit.
+            skip: Number of leading documents to skip (default ``0``).
 
         Returns:
-            A SQL LIMIT/OFFSET clause string, or empty string.
+            str: SQL ``LIMIT`` / ``OFFSET`` clause prefixed with a space, or
+            ``""`` when neither limit nor skip applies.
         """
         if limit == 0:
             limit = None
@@ -873,13 +1017,33 @@ class SqlQueryBuilderMixin:
         return clause
 
     def _json_type_guard_sql(self, json_path: str, value: Any) -> str:
-        """Return a SQL fragment restricting json_type to the value's BSON type."""
+        """Return SQL restricting ``json_type`` to a value's BSON type.
+
+        Delegates to ``neosqlite.collection.type_utils.json_type_guard_sql``.
+
+        Args:
+            json_path: Quoted SQLite JSON path expression.
+            value: Sample Python value whose BSON type determines the guard.
+
+        Returns:
+            str: SQL predicate restricting ``json_type(data, json_path)``.
+        """
         from ..type_utils import json_type_guard_sql
 
         return json_type_guard_sql(json_path, value)
 
     def _json_type_list_sql(self, value: Any) -> str:
-        """Return a SQL list of json_type/json_each.type values for the value's BSON type."""
+        """Return a SQL list of ``json_type`` values for ``value``'s BSON type.
+
+        Delegates to ``neosqlite.collection.type_utils.json_type_list_sql``.
+
+        Args:
+            value: Python value whose compatible SQLite JSON types are listed.
+
+        Returns:
+            str: SQL parenthesized tuple of ``json_type`` / ``json_each.type``
+            type names.
+        """
         from ..type_utils import json_type_list_sql
 
         return json_type_list_sql(value)
@@ -892,24 +1056,29 @@ class SqlQueryBuilderMixin:
         regex_options: str = "",
         allow_array_existential: bool = True,
     ) -> tuple[str | None, list[Any]]:
-        """
-        Builds a SQL clause for query operators.
+        """Build a SQL WHERE clause for MongoDB field query operators.
 
-        This method constructs a SQL clause based on the provided operators for
-        a specific JSON path. It handles various operators like $eq, $gt, $lt, etc.,
-        and returns a tuple containing the SQL clause and a list of parameters.
-        If an unsupported operator is encountered, it returns None, indicating
-        that a fallback to Python processing is needed.
+        Handles ``$eq``, ``$gt``, ``$lt``, ``$gte``, ``$lte``, ``$ne``,
+        ``$in``, ``$nin``, ``$all``, ``$exists``, ``$mod``, ``$size``,
+        ``$not``, ``$contains``, ``$elemMatch``, ``$options``, ``$regex``, and
+        ``$type``. Supports datetime-indexed columns and optional array
+        existential matching via ``json_each`` / ``jsonb_each``. Returns
+        ``(None, [])`` when any operator or value requires Python fallback.
 
         Args:
-            json_path (str): The JSON path to extract the value from.
-            operators (dict[str, Any]): A dictionary of operators and their values.
-            is_datetime_indexed (bool): Whether the field has a datetime index that requires timezone normalization.
+            json_path: Quoted JSON path (e.g., ``'$.field'``) or ``"value"``
+                when targeting a ``json_each`` row value inside ``$elemMatch``.
+            operators: Dictionary mapping MongoDB operator names to operands.
+            is_datetime_indexed: Whether the field uses a datetime index
+                requiring ``datetime(?)`` normalization.
+            regex_options: MongoDB ``$options`` flag string carried into
+                ``$regex`` compilation.
+            allow_array_existential: Whether scalar comparison operators emit
+                additional ``EXISTS (... json_each ...)`` array-element checks.
 
         Returns:
-            tuple[str | None, list[Any]]: A tuple containing the SQL clause and
-                                          parameters. If the operator is unsupported,
-                                          returns (None, []).
+            tuple[str | None, list[Any]]: Pair of ``(sql_clause, parameters)``,
+            or ``(None, [])`` when Python fallback is required.
         """
         from ..type_utils import (
             build_json_in_clause,

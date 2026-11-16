@@ -17,36 +17,39 @@ logger = logging.getLogger(__name__)
 
 
 class OperatorsMatchMixin(OperatorsBaseMixin):
+    """Mixin providing temporary-table handlers for match and unwind stages.
+
+    Implements ``$match`` filtering (including ``$text`` search delegation)
+    and sequential ``$unwind`` array expansion over temporary SQLite tables.
+    """
+
     def _process_match_stage(
         self,
         create_temp: Callable,
         current_table: str,
         match_spec: dict[str, Any],
     ) -> str:
-        """
-        Process a $match stage using temporary tables.
+        """Process a ``$match`` stage using temporary tables.
 
-        This method creates a temporary table that contains only documents matching
-        the specified criteria. It translates the MongoDB-style match specification
-        into SQL WHERE conditions using json_extract for field access.
-
-        The method supports these match operators:
-        - $eq, $gt, $lt, $gte, $lte: Comparison operators
-        - $in, $nin: Array membership operators
-        - $ne: Not equal operator
-        - $text: Text search operator (handled with special logic for unwound elements)
-
-        For the special _id field, it uses the table's id column directly rather
-        than json_extract.
+        Delegates text-search specs to ``_process_text_search_stage`` and
+        translates general match criteria with ``sql_translator`` into a
+        SQL ``WHERE`` clause over ``current_table``, adapting ``_id``
+        references when operating on post-``$group`` tables without an
+        ``_id`` column.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing
-                                 input data
-            match_spec (dict[str, Any]): The $match stage specification
+            create_temp: Callback creating a named temporary table from a
+                stage specification, SQL query, and optional parameters.
+            current_table: Name of the current input temporary table.
+            match_spec: The ``$match`` stage filter specification.
 
         Returns:
-            str: Name of the newly created temporary table with matched documents
+            str: Name of the newly created temporary table containing matched
+                documents.
+
+        Raises:
+            NotImplementedError: If ``match_spec`` contains operators that
+                cannot be translated by ``sql_translator``.
         """
         # Check if text search is involved
         if _contains_text_search(match_spec):
@@ -139,40 +142,27 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
     def _process_unwind_stages(
         self, create_temp: Callable, current_table: str, unwind_specs: list[Any]
     ) -> str:
-        """
-        Process one or more consecutive $unwind stages using temporary tables.
+        """Process one or more consecutive ``$unwind`` stages.
 
-        This method handles the $unwind stage which deconstructs an array field
-        from input documents to output a document for each element. It can process
-        either a single unwind stage or multiple consecutive unwind stages.
-
-        For a single unwind, it uses SQLite's json_each function to expand the
-        array into separate rows. For multiple consecutive unwinds, it processes
-        them sequentially (one at a time) rather than trying to process them all
-        together, which doesn't work for nested arrays that depend on previous
-        unwind operations.
-
-        The method properly handles array validation, ensuring that only documents
-        with array fields are processed. It also supports the special _id field
-        handling if it were to be unwound (though this would be unusual).
-
-        Supports these $unwind options:
-        - path: The array field to unwind (required)
-        - preserveNullAndEmptyArrays: If true, includes documents where the array is missing/null/empty
-        - includeArrayIndex: If specified, includes the array index in the output
+        Expands each ``$unwind`` stage sequentially into a new temporary
+        table using ``json_each``/``jsonb_each`` so chained unwinds see
+        earlier expansions. Supports string paths as well as specification
+        dicts with ``path``, ``preserveNullAndEmptyArrays``, and
+        ``includeArrayIndex``.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing
-                                 input data
-            unwind_specs (list[Any]): List of $unwind stage specifications to
-                                      process consecutively
+            create_temp: Callback creating a named temporary table from a
+                stage specification and SQL query.
+            current_table: Name of the current input temporary table.
+            unwind_specs: Ordered list of ``$unwind`` stage specifications
+                (strings or option dictionaries).
 
         Returns:
-            str: Name of the newly created temporary table with unwound documents
+            str: Name of the final temporary table with unwound documents.
 
         Raises:
-            ValueError: If an invalid unwind specification is encountered
+            ValueError: If an unwind specification is malformed or its path
+                does not begin with ``"$"``.
         """
 
         # Process unwind stages one at a time to handle nested dependencies correctly

@@ -33,16 +33,35 @@ _RESUME_RETENTION_ROWS = 1000
 
 
 def _wire_token(rowid: int) -> dict[str, str]:
-    """Opaque resume token embedding the changelog row id.
+    """Build an opaque resume token embedding a changelog row ID.
 
-    Deterministic per row id so repeated getMore calls agree, matching the
-    ``postBatchResumeToken == last event _id`` invariant.
+    Produces a deterministic token per row ID so repeated ``getMore`` calls
+    agree, preserving the ``postBatchResumeToken == last event _id``
+    invariant.
+
+    Args:
+        rowid: Changelog row ID from ``_neosqlite_changestream``.
+
+    Returns:
+        dict[str, str]: Resume token dictionary of the form
+            ``{"_data": "nx:<rowid>"}``.
     """
     return {"_data": f"nx:{int(rowid)}"}
 
 
 def _wire_rowid(token: Any) -> int | None:
-    """Extract a changelog row id from a resume token, if recognizable."""
+    """Extract a changelog row ID from a resume token if recognizable.
+
+    Unwraps ``{"_id": ...}``, ``{"id": ...}``, and ``{"_data": ...}``
+    envelopes and parses ``"nx:<int>"`` strings or non-boolean integers.
+
+    Args:
+        token: Candidate resume token dictionary, string, or integer.
+
+    Returns:
+        int | None: Parsed changelog row ID, or ``None`` if unrecognized or
+            malformed.
+    """
     try:
         candidate = token
         if isinstance(candidate, dict) and set(candidate) == {"_id"}:
@@ -63,6 +82,16 @@ def _wire_rowid(token: Any) -> int | None:
 
 
 def _get_dotted(document: Any, path: str) -> Any:
+    """Resolve a dot-separated field path from a nested mapping.
+
+    Args:
+        document: Root value (typically a ``dict``) to traverse.
+        path: Dot-delimited key path such as ``"fullDocument.status"``.
+
+    Returns:
+        Any: Value at ``path``, or ``None`` if any intermediate value is not a
+            ``dict`` or a key is missing.
+    """
     current = document
     for part in path.split("."):
         if not isinstance(current, dict) or part not in current:
@@ -72,7 +101,20 @@ def _get_dotted(document: Any, path: str) -> Any:
 
 
 def _match_spec(value: Any, condition: Any) -> bool:
-    """Minimal $match predicate: equality plus $eq/$ne/$in/$nin/$exists."""
+    """Evaluate a minimal ``$match`` predicate against a field value.
+
+    Supports direct equality as well as operator dictionaries using
+    ``$eq``, ``$ne``, ``$in``, ``$nin``, and ``$exists``. Unrecognized
+    ``$``-prefixed operators evaluate to ``False``.
+
+    Args:
+        value: Actual field value extracted from a change event.
+        condition: Expected scalar/dict value or operator specification dict.
+
+    Returns:
+        bool: ``True`` if ``value`` satisfies ``condition``, otherwise
+            ``False``.
+    """
     if isinstance(condition, dict) and any(
         k.startswith("$") for k in condition
     ):
@@ -101,7 +143,18 @@ def _match_spec(value: Any, condition: Any) -> bool:
 def _pipeline_matches(
     change: dict[str, Any], pipeline: list[dict[str, Any]]
 ) -> bool:
-    """Apply $match stages; other stages are accepted and ignored."""
+    """Filter a change event through ``$match`` stages in a pipeline.
+
+    ``$changeStream`` stages and non-``dict`` entries are skipped; other
+    stages are logged at debug level and ignored.
+
+    Args:
+        change: Translated wire change document to test.
+        pipeline: Aggregation pipeline configured on the change stream.
+
+    Returns:
+        bool: ``True`` if all ``$match`` stages accept ``change``.
+    """
     for stage in pipeline:
         if not isinstance(stage, dict):
             continue
@@ -120,7 +173,20 @@ def _pipeline_matches(
 
 
 def _restore_id(document_id_value: Any, document_id: Any) -> Any:
-    """Best-effort restore of a document _id from trigger columns."""
+    """Restore a document ``_id`` from trigger tracking columns.
+
+    When ``document_id_value`` is present, attempts to reconstruct an
+    ``ObjectId`` from it and falls back to the raw value if invalid;
+    otherwise returns ``document_id``.
+
+    Args:
+        document_id_value: Serialized ObjectId hex value from the trigger
+            table, or ``None``.
+        document_id: Scalar ``_id`` value stored in the changelog row.
+
+    Returns:
+        Any: Restored ``ObjectId`` or scalar document identifier.
+    """
     if document_id_value is not None:
         try:
             from neosqlite.objectid import ObjectId
@@ -132,7 +198,20 @@ def _restore_id(document_id_value: Any, document_id: Any) -> Any:
 
 
 class ChangeStreamCursor:
-    """Wire-level cursor over one (db, collection) change log."""
+    """Wire-level cursor over a single ``(db, collection)`` change log.
+
+    Tracks the stream's filtering pipeline, resume options, unique cursor ID,
+    and changelog watermark across ``getMore`` pulls.
+
+    Attributes:
+        collection_name: Target collection name being watched.
+        pipeline: Change stream aggregation pipeline stages.
+        resume_after: Optional ``resumeAfter`` token from ``$changeStream``.
+        start_after: Optional ``startAfter`` token from ``$changeStream``.
+        start_at_operation_time: Optional ``startAtOperationTime`` timestamp.
+        full_document: Full-document lookup mode (defaults to ``"default"``).
+        db_name: Database name owning the watched collection.
+    """
 
     def __init__(
         self,
@@ -146,6 +225,21 @@ class ChangeStreamCursor:
         start_after: dict | None = None,
         watermark: int = 0,
     ):
+        """Initialize a wire-level change stream cursor.
+
+        Args:
+            collection_name: Name of the watched collection.
+            pipeline: Aggregation pipeline stages applied to events.
+            resume_after: Optional resume token specifying where to resume.
+            start_at_operation_time: Optional operation timestamp option.
+            full_document: Full-document mode (e.g., ``"default"``,
+                ``"updateLookup"``, or ``"off"``).
+            db_name: Database name containing the watched collection.
+            owner: Opaque owner handle (such as a client connection) used for
+                bulk cleanup.
+            start_after: Optional ``startAfter`` resume token.
+            watermark: Initial changelog row ID already seen by this cursor.
+        """
         self.collection_name = collection_name
         self.pipeline = pipeline or []
         self.resume_after = resume_after
@@ -162,16 +256,28 @@ class ChangeStreamCursor:
         self._last_token_id: int | None = None
 
     def get_resume_token(self) -> dict:
-        """Token for the most recently delivered event (or current point)."""
+        """Return the resume token for the cursor's current position.
+
+        Returns:
+            dict: Wire resume token for the most recently matched event, or
+                the current watermark when no event has matched yet.
+        """
         if self._last_token_id is None:
             return _wire_token(self._watermark)
         return _wire_token(self._last_token_id)
 
 
 class ChangeStreamManager:
-    """Wire stream registry plus per-(db, collection) trigger trackers."""
+    """Registry of wire change streams and per-collection trigger trackers.
+
+    Manages shared :class:`neosqlite.changestream.ChangeStream` trigger
+    watchers keyed by ``(db_name, collection_name)`` alongside active
+    :class:`ChangeStreamCursor` instances, supporting thread-safe lifecycle
+    tracking, pull-based event reading, and changelog retention pruning.
+    """
 
     def __init__(self) -> None:
+        """Initialize empty stream and tracker registries with a lock."""
         self._streams: dict[int, ChangeStreamCursor] = {}
         self._trackers: dict[tuple[str, str], dict[str, Any]] = {}
         self._lock = threading.Lock()
@@ -181,10 +287,22 @@ class ChangeStreamManager:
     def ensure_tracked(
         self, db_name: str, collection_name: str, get_collection: Callable
     ) -> dict[str, Any] | None:
-        """Ensure trigger tracking exists; None when unsupported.
+        """Ensure trigger tracking exists for a collection.
 
-        Dotted names (e.g. ``fs.files``) cannot have triggers in NeoSQLite
-        and fall back to empty streams.
+        Dotted collection names (for example, ``fs.files``) cannot have
+        SQLite triggers in NeoSQLite and return ``None`` so streams fall back
+        to empty results. Re-creates the tracker if its triggers were dropped.
+
+        Args:
+            db_name: Database name containing the collection.
+            collection_name: Collection name to track.
+            get_collection: Zero-argument factory returning the NeoSQLite
+                collection object.
+
+        Returns:
+            dict[str, Any] | None: Tracker dictionary containing
+                ``"watcher"`` and ``"collection"``, or ``None`` when trigger
+                tracking is unsupported for ``collection_name``.
         """
         from neosqlite.changestream import ChangeStream as NeoChangeStream
 
@@ -212,7 +330,16 @@ class ChangeStreamManager:
 
     @staticmethod
     def _triggers_live(tracker: dict[str, Any]) -> bool:
-        """Check the shared triggers still exist (survives table drops)."""
+        """Check whether all three SQLite triggers still exist for a tracker.
+
+        Args:
+            tracker: Tracker dictionary containing the tracked
+                ``"collection"``.
+
+        Returns:
+            bool: ``True`` if insert, update, and delete triggers exist in
+                ``sqlite_master``, otherwise ``False``.
+        """
         from neosqlite.changestream import ChangeStream as NeoChangeStream
 
         collection = tracker["collection"]
@@ -232,6 +359,11 @@ class ChangeStreamManager:
             return False
 
     def _drop_tracker_locked(self, tracker: dict[str, Any]) -> None:
+        """Close the ``ChangeStream`` watcher stored in a tracker dict.
+
+        Args:
+            tracker: Tracker dictionary whose ``"watcher"`` should be closed.
+        """
         watcher = tracker.get("watcher")
         if watcher is not None:
             try:
@@ -240,6 +372,16 @@ class ChangeStreamManager:
                 pass
 
     def _watermark_now(self, tracker: dict[str, Any]) -> int:
+        """Return the latest changelog row ID for a tracked collection.
+
+        Args:
+            tracker: Tracker dictionary containing the tracked
+                ``"collection"``.
+
+        Returns:
+            int: Highest ``id`` in ``_neosqlite_changestream`` for the
+                collection, or ``0`` if none exist or querying fails.
+        """
         collection = tracker["collection"]
         try:
             row = collection.db.execute(
@@ -265,7 +407,28 @@ class ChangeStreamManager:
         start_after: dict | None = None,
         get_collection: Callable | None = None,
     ) -> ChangeStreamCursor:
-        """Create a wire stream, seeking past any resume token."""
+        """Create and register a wire stream positioned at the right offset.
+
+        Installs trigger tracking if ``get_collection`` is provided and sets
+        the initial watermark from ``resume_after`` or ``start_after`` when
+        recognizable, or from the current changelog head otherwise.
+
+        Args:
+            collection_name: Name of the watched collection.
+            pipeline: Aggregation pipeline stages applied to events.
+            resume_after: Optional resume token for resuming after an event.
+            start_at_operation_time: Optional operation timestamp (ignored in
+                NeoSQLite; starts from current head).
+            full_document: Full-document inclusion mode.
+            db_name: Database name owning ``collection_name``.
+            owner: Opaque owner handle associated with the stream.
+            start_after: Optional ``startAfter`` resume token.
+            get_collection: Optional factory returning the NeoSQLite
+                collection to ensure trigger tracking.
+
+        Returns:
+            ChangeStreamCursor: Newly registered cursor instance.
+        """
         watermark = 0
         if get_collection is not None:
             tracker = self.ensure_tracked(
@@ -303,11 +466,18 @@ class ChangeStreamManager:
         return stream
 
     def has_activity(self, db_name: str) -> bool:
-        """True while any watch stream or tracker exists for a database.
+        """Return whether any watch stream or tracker exists for a database.
 
-        Used by the connection-cache LRU: a live stream reads the
-        database on getMore, so its connection must not be evicted or
-        closed under it.
+        Used by the connection-cache LRU because a live stream reads the
+        database on ``getMore``, so its connection must not be evicted or
+        closed underneath it.
+
+        Args:
+            db_name: Database name to check for active streams or trackers.
+
+        Returns:
+            bool: ``True`` if at least one stream or tracker targets
+                ``db_name``.
         """
         with self._lock:
             return any(
@@ -315,12 +485,27 @@ class ChangeStreamManager:
             ) or any(key[0] == db_name for key in self._trackers)
 
     def get_stream(self, stream_id: int) -> ChangeStreamCursor | None:
-        """Get a change stream by ID."""
+        """Look up a registered change stream cursor by ID.
+
+        Args:
+            stream_id: Wire cursor identifier assigned to the stream.
+
+        Returns:
+            ChangeStreamCursor | None: Matching stream cursor, or ``None`` if
+                not found.
+        """
         with self._lock:
             return self._streams.get(stream_id)
 
     def close_stream(self, stream_id: int) -> None:
-        """Close a change stream."""
+        """Close and unregister a change stream cursor by ID.
+
+        Marks the cursor closed and prunes consumed changelog rows for its
+        collection.
+
+        Args:
+            stream_id: Wire cursor identifier of the stream to close.
+        """
         with self._lock:
             stream = self._streams.pop(stream_id, None)
         if stream is None:
@@ -329,7 +514,12 @@ class ChangeStreamManager:
         self._prune(stream.db_name, stream.collection_name)
 
     def close_streams_for_owner(self, owner: Any) -> None:
-        """Close every stream created by the given owner (e.g. a connection)."""
+        """Close every stream created by the given owner.
+
+        Args:
+            owner: Owner handle (for example, a client connection) whose
+                streams should be closed and pruned.
+        """
         with self._lock:
             owned = [
                 stream
@@ -343,7 +533,12 @@ class ChangeStreamManager:
             self._prune(stream.db_name, stream.collection_name)
 
     def invalidate(self, db_name: str | None = None) -> None:
-        """Drop trigger trackers (database dropped or handler closing)."""
+        """Drop trigger trackers for a database or for all databases.
+
+        Args:
+            db_name: Database name whose trackers should be dropped, or
+                ``None`` to drop all trackers across every database.
+        """
         with self._lock:
             keys = [
                 key
@@ -359,7 +554,20 @@ class ChangeStreamManager:
     def pull_stream(
         self, stream: ChangeStreamCursor, batch_size: int = 101
     ) -> tuple[list[dict[str, Any]], dict]:
-        """Read events after the stream watermark, advancing past skips."""
+        """Read new changelog events past the stream's watermark.
+
+        Queries ``_neosqlite_changestream`` for rows with ``id > watermark``,
+        translates each row, filters through ``stream.pipeline``, advances
+        the watermark past all scanned rows, and prunes obsolete history.
+
+        Args:
+            stream: Change stream cursor to advance.
+            batch_size: Maximum number of changelog rows to read in one pull.
+
+        Returns:
+            tuple[list[dict[str, Any]], dict]: Pair of the matched change
+                event batch and the updated wire resume token.
+        """
         with self._lock:
             tracker = self._trackers.get(
                 (stream.db_name, stream.collection_name)
@@ -402,6 +610,19 @@ class ChangeStreamManager:
     def _translate_row(
         self, stream: ChangeStreamCursor, rowid: int, row: Any
     ) -> dict[str, Any] | None:
+        """Translate a changelog table row into a wire change event dict.
+
+        Args:
+            stream: Cursor specifying ``db_name``, ``collection_name``, and
+                ``full_document`` options.
+            rowid: Integer row ID of the changelog entry.
+            row: Five-element row tuple ``(id, operation, document_id,
+                document_data, document_id_value)``.
+
+        Returns:
+            dict[str, Any] | None: Formatted MongoDB wire change event
+                dictionary.
+        """
         _rid, operation, document_id, document_data, document_id_value = row[:5]
         actual_id = _restore_id(document_id_value, document_id)
         full_doc = None
@@ -429,7 +650,15 @@ class ChangeStreamManager:
         }
 
     def _prune(self, db_name: str, collection_name: str) -> None:
-        """Delete rows every open stream has passed (keeping retention)."""
+        """Delete changelog rows passed by all open streams on a collection.
+
+        Retains the newest ``_RESUME_RETENTION_ROWS`` entries per collection
+        so resume tokens remain replayable.
+
+        Args:
+            db_name: Database name owning the collection.
+            collection_name: Collection name whose changelog may be pruned.
+        """
         with self._lock:
             tracker = self._trackers.get((db_name, collection_name))
             marks = [
@@ -471,7 +700,19 @@ class ChangeStreamManager:
         update_description: dict | None = None,
         db_name: str = "test",
     ) -> None:
-        """Deprecated: tracking is trigger-backed; kept for tests."""
+        """Ignore deprecated change notifications (kept for tests).
+
+        Change tracking is trigger-backed via SQLite triggers and pulled by
+        ``pull_stream``.
+
+        Args:
+            collection_name: Name of the mutated collection.
+            operation_type: Mutation operation name.
+            document: Document payload associated with the mutation.
+            document_key: Key document containing ``_id``.
+            update_description: Optional update description payload.
+            db_name: Database name containing the collection.
+        """
         logger.debug(
             "notify_change(%r) ignored: streams are trigger-backed",
             collection_name,
@@ -479,7 +720,14 @@ class ChangeStreamManager:
 
 
 def is_change_stream_pipeline(pipeline: list[dict]) -> bool:
-    """Check if a pipeline contains a $changeStream stage."""
+    """Check if an aggregation pipeline contains a ``$changeStream`` stage.
+
+    Args:
+        pipeline: Aggregation pipeline list of stage dictionaries.
+
+    Returns:
+        bool: ``True`` if any stage dictionary has a ``"$changeStream"`` key.
+    """
     for stage in pipeline:
         if isinstance(stage, dict) and "$changeStream" in stage:
             return True
@@ -487,7 +735,17 @@ def is_change_stream_pipeline(pipeline: list[dict]) -> bool:
 
 
 def extract_change_stream_options(pipeline: list[dict]) -> dict[str, Any]:
-    """Extract options from $changeStream stage."""
+    """Extract change-stream options from the first ``$changeStream`` stage.
+
+    Args:
+        pipeline: Aggregation pipeline list of stage dictionaries.
+
+    Returns:
+        dict[str, Any]: Dictionary mapping normalized option names
+            (``resume_after``, ``start_after``, ``start_at_operation_time``,
+            and ``full_document``) when present, or empty if no dict-valued
+            ``$changeStream`` stage is found.
+    """
     options: dict[str, Any] = {}
     for stage in pipeline:
         if isinstance(stage, dict) and "$changeStream" in stage:

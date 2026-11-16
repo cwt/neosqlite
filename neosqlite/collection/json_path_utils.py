@@ -1,28 +1,31 @@
-"""
-Shared utility module for JSON path parsing functionality.
+"""Shared utility module for JSON path parsing functionality.
 
-This module provides common JSON path parsing functions to avoid code duplication
-across multiple modules. It handles conversion of dot notation with optional
-array indexing to JSON path syntax.
+Provides common JSON path parsing and SQLite JSON/JSONB extraction helpers to
+avoid code duplication across modules, converting dot notation with optional
+array indexing into SQLite JSON path syntax.
 """
 
 
 def parse_json_path(field: str) -> str:
-    """
-    Convert dot notation with array indexing to JSON path syntax.
+    """Convert dot notation with array indexing to SQLite JSON path syntax.
 
     Supports:
-    - Simple fields: "name" -> "$.name"
-    - Nested fields: "address.street" -> "$.address.street"
-    - Array indexing: "tags[0]" -> "$.tags[0]"
-    - Nested array access: "orders.items[2].name" -> "$.orders.items[2].name"
-    - Complex paths: "a.b[0].c[1].d" -> "$.a.b[0].c[1].d"
+
+    - Simple fields: ``"name"`` -> ``"$.name"``
+    - Nested fields: ``"address.street"`` -> ``"$.address.street"``
+    - Array indexing: ``"tags[0]"`` -> ``"$.tags[0]"``
+    - Nested array access: ``"orders.items[2].name"`` ->
+      ``"$.orders.items[2].name"``
+    - Complex paths: ``"a.b[0].c[1].d"`` -> ``"$.a.b[0].c[1].d"``
+
+    Returns ``"_id"`` unchanged and escapes single quotes in path segments by
+    doubling them for SQLite string safety.
 
     Args:
-        field (str): The field path in dot notation with optional array indices
+        field: Field path in dot notation with optional array indices.
 
     Returns:
-        str: Properly formatted JSON path
+        str: Properly formatted SQLite JSON path (or ``"_id"``).
     """
     # Handle special case for _id
     if field == "_id":
@@ -76,30 +79,32 @@ def parse_json_path(field: str) -> str:
 
 
 def build_json_extract_expression(data_column: str, field_path: str) -> str:
-    """
-    Build a complete json_extract SQL expression with properly formatted JSON path.
+    """Build a ``json_extract`` SQL expression with a formatted JSON path.
 
     Args:
-        data_column (str): The name of the JSON data column (e.g., "data")
-        field_path (str): The field path in dot notation (e.g., "name", "address.street[0]")
+        data_column: Name of the JSON data column (e.g., ``"data"``).
+        field_path: Field path in dot notation (e.g., ``"name"`` or
+            ``"address.street[0]"``).
 
     Returns:
-        str: Complete json_extract expression, e.g., "json_extract(data, '$.field')"
+        str: Complete ``json_extract`` expression, e.g.,
+            ``"json_extract(data, '$.field')"``.
     """
     json_path = parse_json_path(field_path)
     return f"json_extract({data_column}, '{json_path}')"
 
 
 def build_jsonb_extract_expression(data_column: str, field_path: str) -> str:
-    """
-    Build a complete jsonb_extract SQL expression with properly formatted JSON path.
+    """Build a ``jsonb_extract`` SQL expression with a formatted JSON path.
 
     Args:
-        data_column (str): The name of the JSON data column (e.g., "data")
-        field_path (str): The field path in dot notation (e.g., "name", "address.street[0]")
+        data_column: Name of the JSON data column (e.g., ``"data"``).
+        field_path: Field path in dot notation (e.g., ``"name"`` or
+            ``"address.street[0]"``).
 
     Returns:
-        str: Complete jsonb_extract expression, e.g., "jsonb_extract(data, '$.field')"
+        str: Complete ``jsonb_extract`` expression, e.g.,
+            ``"jsonb_extract(data, '$.field')"``.
     """
     json_path = parse_json_path(field_path)
     return f"jsonb_extract({data_column}, '{json_path}')"

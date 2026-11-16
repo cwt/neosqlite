@@ -13,7 +13,14 @@ logger = logging.getLogger(__name__)
 
 
 def _try_convert_to_int(value: str) -> int | str:
-    """Try to convert a string to int, return original if fails."""
+    """Try converting a string to an integer, returning it unchanged on error.
+
+    Args:
+        value: String value to parse as a base-10 integer.
+
+    Returns:
+        int | str: Parsed integer, or the original string if parsing fails.
+    """
     try:
         return int(value)
     except ValueError as e:
@@ -22,7 +29,15 @@ def _try_convert_to_int(value: str) -> int | str:
 
 
 def _is_valid_objectid_hex(value: str) -> bool:
-    """Check if string is a valid ObjectId hex string (24 chars, valid hex)."""
+    """Check whether a string is a valid 24-character ObjectId hex string.
+
+    Args:
+        value: Candidate hex string to validate.
+
+    Returns:
+        bool: True if ``value`` has length 24 and parses as an ``ObjectId``,
+            False otherwise.
+    """
     if len(value) != 24:
         return False
     try:
@@ -34,7 +49,17 @@ def _is_valid_objectid_hex(value: str) -> bool:
 
 
 def _convert_list_item(item: Any) -> Any:
-    """Convert a single list item - recurse on dicts while preserving ObjectIds."""
+    """Normalize a single list item inside a logical query operator.
+
+    Recursively normalizes dictionary items via ``normalize_id_query_for_db``
+    while returning non-dictionary values unchanged.
+
+    Args:
+        item: Element from a ``$and``, ``$or``, or ``$nor`` clause list.
+
+    Returns:
+        Any: Normalized query dictionary or original non-dict item.
+    """
     match item:
         case dict():
             return normalize_id_query_for_db(item)
@@ -43,20 +68,24 @@ def _convert_list_item(item: Any) -> Any:
 
 
 def normalize_id_query_for_db(query: dict[str, Any]) -> dict[str, Any]:
-    """
-    Normalize ID types in a query dictionary to correct common mismatches.
+    """Normalize ID types in a query dictionary for database lookup.
 
-    This method automatically detects and corrects common ID type mismatches:
-    - When 'id' field is queried with an ObjectId/hex string, it's converted to '_id'
-    - When 'id' field is queried with an integer string, it's converted to integer
-    - When '_id' field is queried with an integer string, it's converted to integer
-    - When any other field is queried with an ObjectId, it's converted to string
+    Applies NeoSQLite's ID normalization rules:
+
+    - ``id`` with an ``ObjectId`` or 24-char ObjectId hex string is rewritten
+      to ``_id`` as a hex string.
+    - ``id`` with an integer string is converted via ``_try_convert_to_int``.
+    - ``_id`` with an ``ObjectId`` is converted to ``str(value)``.
+    - ``_id`` with a string is preserved verbatim without integer conversion.
+    - Logical operators (``$and``, ``$or``, ``$nor``, ``$not``) are processed
+      recursively while preserving ``ObjectId`` values in non-ID fields.
 
     Args:
-        query: The query dictionary to process
+        query: Query dictionary to normalize. Non-dict inputs are returned
+            as-is.
 
     Returns:
-        A new query dictionary with corrected ID types
+        dict[str, Any]: New query dictionary with normalized ID fields.
     """
     if not isinstance(query, dict):
         return query
@@ -117,11 +146,23 @@ def get_integer_id_for_doc_id(
     collection_name: str,
     doc_id: Any,
 ) -> int:
-    """
-    Resolve a document's _id value (ObjectId, int, str, etc.) to SQLite row id.
+    """Resolve a document ``_id`` value to its SQLite integer row ``id``.
 
-    Unlike get_integer_id_for_oid, integer inputs are looked up in the _id
-    column rather than assumed to already be SQLite primary keys.
+    Unlike ``get_integer_id_for_oid``, integer inputs are queried against the
+    ``_id`` column (trying both numeric and string forms for ``int``/``float``
+    excluding ``bool``, and raw/string forms for ``bytes``) rather than
+    assumed to be SQLite row IDs.
+
+    Args:
+        db_connection: SQLite database connection to query.
+        collection_name: Name of the collection table.
+        doc_id: Document ``_id`` value (``ObjectId``, ``int``, ``str``, etc.).
+
+    Returns:
+        int: Matching SQLite integer primary key from the ``id`` column.
+
+    Raises:
+        ValueError: If no row matches ``doc_id`` in the collection.
     """
     quoted = quote_table_name(collection_name)
     if isinstance(doc_id, (int, float)) and not isinstance(doc_id, bool):
@@ -147,19 +188,21 @@ def get_integer_id_for_oid(
     collection_name: str,
     oid: Any,
 ) -> int:
-    """
-    Get the integer ID for a given ObjectId or other ID type.
+    """Get the SQLite integer row ID for an ObjectId or integer ID.
+
+    Returns integer ``oid`` values directly; otherwise looks up ``_id`` in
+    the collection table using ``str(oid)`` when available.
 
     Args:
-        db_connection: SQLite database connection
-        collection_name: Name of the collection/table
-        oid: The ID value (ObjectId, int, str, etc.)
+        db_connection: SQLite database connection to query.
+        collection_name: Name of the collection table.
+        oid: ID value (``int``, ``ObjectId``, ``str``, etc.).
 
     Returns:
-        Integer ID from the database
+        int: Integer ``id`` value from the collection table or ``oid`` itself.
 
     Raises:
-        ValueError: If the ID cannot be found
+        ValueError: If a non-integer ``oid`` cannot be found in the table.
     """
     match oid:
         case int():
@@ -180,21 +223,20 @@ def get_integer_id_for_table(
     table_name: str,
     oid: Any,
 ) -> int:
-    """
-    Get the integer ID for a file in GridFS tables.
+    """Get the SQLite integer row ID for a GridFS file ID.
 
-    This is an alias for get_integer_id_for_oid, provided for clarity
-    when working with GridFS tables.
+    Thin wrapper around ``get_integer_id_for_oid`` provided for clarity when
+    resolving identifiers against GridFS tables.
 
     Args:
-        db_connection: SQLite database connection
-        table_name: Name of the GridFS table
-        oid: The file ID
+        db_connection: SQLite database connection to query.
+        table_name: Name of the GridFS table.
+        oid: File ID (``int``, ``ObjectId``, ``str``, etc.).
 
     Returns:
-        Integer ID from the database
+        int: Integer ``id`` value from the GridFS table or ``oid`` itself.
 
     Raises:
-        ValueError: If the ID cannot be found
+        ValueError: If a non-integer ``oid`` cannot be found in the table.
     """
     return get_integer_id_for_oid(db_connection, table_name, oid)

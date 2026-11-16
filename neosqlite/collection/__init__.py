@@ -40,11 +40,12 @@ logger = logging.getLogger(__name__)
 
 
 class Collection:
-    """
-    Provides a class representing a collection in a SQLite database.
+    """Represents a document collection backed by a SQLite table.
 
-    This class encapsulates operations on a collection such as inserting,
-    updating, deleting, and querying documents.
+    Encapsulates CRUD operations, querying, aggregation pipelines, indexing,
+    TTL expiration, change streams, and GridFS compatibility on top of a
+    SQLite connection, delegating core query and index operations to
+    ``QueryEngine`` and ``IndexManager``.
     """
 
     # Optional per-instance options set by with_options() (#typed rollout)
@@ -61,15 +62,17 @@ class Collection:
         database=None,
         **kwargs: Any,
     ):
-        """
-        Initialize a new collection object.
+        """Initialize a new collection instance.
 
         Args:
-            db: Database object to which the collection belongs.
-            name: Name of the collection.
-            create: Whether to create the collection table if it doesn't exist.
-            database: Database object that contains this collection.
-            **kwargs: Additional options for collection creation.
+            db: SQLite database connection backing the collection.
+            name: Name of the collection table.
+            create: Whether to create the collection table if it does not
+                already exist. Defaults to ``True``.
+            database: Parent ``Connection`` instance containing this
+                collection, or ``None``.
+            **kwargs: Additional collection creation options passed to
+                ``create()`` (such as ``validator``).
         """
         self.db = db
         self.name = name
@@ -91,19 +94,19 @@ class Collection:
     def _load(
         self, id: int, data: str | bytes, stored_id: Any = None
     ) -> dict[str, Any]:
-        """
-        Deserialize and load a document from its ID and JSON data.
+        """Deserialize and load a document from its ID and JSON data.
 
-        Deserialize the JSON string or bytes back into a Python dictionary,
-        add the document ID to it, and return the document.
+        Decodes JSON string or UTF-8 bytes ``data`` into a Python dict and
+        populates ``_id`` from ``data``, ``stored_id``, the ``_id`` column,
+        or the auto-increment ``id`` fallback.
 
         Args:
-            id (int): The document ID.
-            data (str | bytes): The JSON string or bytes representing the document.
-            stored_id (Any, optional): The stored _id value if already retrieved.
+            id: Auto-increment integer row ID in SQLite.
+            data: JSON string or UTF-8 bytes representing the document.
+            stored_id: Optional raw ``_id`` column value if already fetched.
 
         Returns:
-            dict[str, Any]: The deserialized document with the _id field added.
+            dict[str, Any]: Deserialized document with ``_id`` populated.
         """
         if isinstance(data, bytes):
             data = data.decode("utf-8")
@@ -123,14 +126,17 @@ class Collection:
         return document
 
     def _parse_stored_id(self, stored_id: Any) -> Any:
-        """
-        Parse a value retrieved from the _id column into its appropriate Python type.
+        """Parse a raw value from the ``_id`` column into a Python value.
+
+        Decodes JSON object or array strings using ``neosqlite_json_loads``
+        and returns scalar values or ``None`` unchanged.
 
         Args:
-            stored_id: The raw value from the _id column.
+            stored_id: Raw value retrieved from the ``_id`` column.
 
         Returns:
-            Any: The parsed value (e.g., ObjectId, int, str, or None).
+            Any: Parsed value (e.g., ``ObjectId``, ``dict``, ``int``,
+            ``str``, or ``None``).
         """
         match stored_id:
             case None:
@@ -151,16 +157,20 @@ class Collection:
     def _load_with_stored_id(
         self, id_val: int, data: str | bytes, stored_id_val
     ) -> dict[str, Any]:
-        """
-        Deserialize and load a document with the stored _id value.
+        """Deserialize and load a document with a pre-fetched ``_id`` value.
+
+        Returns a minimal sentinel dictionary with
+        ``{"_id": ..., "__neosqlite_corrupted__": True}`` if ``data``
+        cannot be decoded into a JSON dictionary.
 
         Args:
-            id_val (int): The auto-increment document ID.
-            data (str | bytes): The JSON string or bytes representing the document.
-            stored_id_val: The stored _id value from the _id column.
+            id_val: Auto-increment integer row ID in SQLite.
+            data: JSON string or UTF-8 bytes representing the document.
+            stored_id_val: Raw ``_id`` column value from the row.
 
         Returns:
-            dict[str, Any]: The deserialized document with the _id field added.
+            dict[str, Any]: Deserialized document with ``_id`` populated,
+            or a corrupted-document sentinel dictionary.
         """
         try:
             if isinstance(data, bytes):
@@ -191,15 +201,16 @@ class Collection:
     def _resolve_stored_id(
         self, stored_id_val: Any, fallback_id: int
     ) -> ObjectId | Any:
-        """
-        Resolve the stored _id value, attempting to parse as ObjectId.
+        """Resolve a stored ``_id`` value with auto-increment fallback.
 
         Args:
-            stored_id_val: The stored _id value from the _id column.
-            fallback_id: Fallback auto-increment ID if stored_id_val is None.
+            stored_id_val: Raw value from the ``_id`` column, or ``None``.
+            fallback_id: Fallback auto-increment ID if ``stored_id_val`` is
+                ``None``.
 
         Returns:
-            ObjectId or the original stored_id_val, or fallback_id.
+            ObjectId | Any: Parsed ``_id`` value, or ``fallback_id`` when
+            ``stored_id_val`` is ``None``.
         """
         if stored_id_val is not None:
             return self._parse_stored_id(stored_id_val)
@@ -208,14 +219,17 @@ class Collection:
             return fallback_id
 
     def _get_stored_id(self, doc_id: int) -> ObjectId | int | str | None:
-        """
-        Retrieve the stored _id for a document from the _id column.
+        """Retrieve the stored ``_id`` for a document by integer row ID.
+
+        Returns ``doc_id`` directly for legacy tables without an ``_id``
+        column, or ``None`` if no row matches or lookup fails.
 
         Args:
-            doc_id (int): The document ID.
+            doc_id: Auto-increment integer row ID in SQLite.
 
         Returns:
-            ObjectId | int | None: The stored _id value, or None if the column doesn't exist yet.
+            ObjectId | int | str | None: Parsed ``_id`` value, ``doc_id``
+            for legacy schemas, or ``None`` if unavailable.
         """
         try:
             # Check if the _id column exists
@@ -247,12 +261,15 @@ class Collection:
 
     @property
     def _id_column(self) -> str:
-        """Return the name of the column that stores the logical _id.
+        """Return the name of the column that stores the logical ``_id``.
 
-        Modern collections keep _id in a dedicated ``_id`` column. Legacy
-        collections (before _id column was introduced) store it in the
-        autoincrement ``id`` column, which is retained only as a deprecated
-        fallback.
+        Modern collections keep ``_id`` in a dedicated ``_id`` column.
+        Legacy collections (before the ``_id`` column was introduced) store
+        it in the auto-increment ``id`` column, which is retained only as
+        a fallback.
+
+        Returns:
+            str: ``"_id"`` when the column exists, otherwise ``"id"``.
         """
         cursor = self.db.execute(
             "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
@@ -263,18 +280,20 @@ class Collection:
         return "id"
 
     def _get_val(self, item: dict[str, Any], key: Any) -> Any:
-        """
-        Retrieves a value from a dictionary using a key, handling nested keys and
-        optional prefixes.
+        """Retrieve a value from a dictionary using a dotted key path.
+
+        Strips an optional leading ``$`` and traverses nested dicts by
+        splitting on ``"."``. Non-string keys are returned directly as
+        literal values (for example, literal ``$group`` ``_id`` values).
 
         Args:
-            item (dict[str, Any]): The dictionary to search.
-            key (Any): The key to retrieve. If a string, may include nested keys
-                       separated by dots or be prefixed with '$'. If non-string,
-                       returns the key itself (for literal values like $group _id).
+            item: Dictionary to search.
+            key: Dotted field path (optionally ``$``-prefixed), or a
+                non-string literal value.
 
         Returns:
-            Any: The value associated with the key, or None if the key is not found.
+            Any: Resolved value, ``key`` itself when non-string, or ``None``
+            if any segment is missing or encounters a non-dict.
         """
         if not isinstance(key, str):
             return key
@@ -287,15 +306,15 @@ class Collection:
         return val
 
     def _set_val(self, item: dict[str, Any], key: str, value: Any) -> None:
-        """
-        Sets a value in a dictionary using a key, handling nested keys and
-        optional prefixes.
+        """Set a value in a dictionary at a dotted key path.
+
+        Strips an optional leading ``$`` and creates intermediate nested
+        dictionaries when a segment is missing or not a ``dict``.
 
         Args:
-            item (dict[str, Any]): The dictionary to modify.
-            key (str): The key to set, may include nested keys separated by dots
-                       or may be prefixed with \'$.
-            value (Any): The value to set.
+            item: Dictionary to modify in place.
+            key: Dotted target field path, optionally prefixed with ``$``.
+            value: Value to assign at the target path.
         """
         key = key.removeprefix("$")
 
@@ -313,13 +332,18 @@ class Collection:
 
     # --- Collection methods ---
     def create(self, **kwargs: Any):
-        """
-        Initialize the collection table if it does not exist.
+        """Create the collection table and ``_id`` index if not present.
 
-        This method creates a table with an 'id' column, a '_id' column for
-        ObjectId storage, and a 'data' column for storing JSON data.
-        If the JSONB data type is supported, it will be used,
-        otherwise, TEXT data type will be used.
+        Creates the backing SQLite table with ``id``, ``_id``, and ``data``
+        columns (using ``JSONB`` when supported, otherwise ``TEXT``),
+        optionally adding a ``CHECK`` constraint compiled from
+        ``kwargs["validator"]["$jsonSchema"]``. Also creates the unique
+        index on ``_id`` and ensures the ``_id`` column exists on legacy
+        tables.
+
+        Args:
+            **kwargs: Optional collection creation options such as
+                ``validator``.
         """
         validator = kwargs.get("validator")
         check_clause = ""
@@ -360,8 +384,10 @@ class Collection:
         self._ensure_id_column_exists()
 
     def _ensure_id_column_exists(self):
-        """
-        Ensure that the _id column exists in the collection table for backward compatibility.
+        """Ensure the ``_id`` column exists on the backing table.
+
+        For backward compatibility with legacy schemas, adds ``_id BLOB``
+        and creates a unique index on it if missing.
         """
         try:
             # Check if _id column exists using PRAGMA table_info
@@ -386,11 +412,20 @@ class Collection:
             pass
 
     def __getattr__(self, name: str) -> Any:
-        """
-        Support GridFS-style nested access like collection.files, collection.chunks.
+        """Support GridFS-style nested sub-collection attribute access.
 
-        For GridFS compatibility, allow access to sub-collections like 'files' and 'chunks'
-        under a bucket name (e.g., db.fs.files).
+        Allows accessing ``files`` and ``chunks`` sub-collections under a
+        bucket collection (for example, ``db.fs.files``).
+
+        Args:
+            name: Attribute name requested on the collection.
+
+        Returns:
+            Any: A ``Collection`` instance for ``<collection>_files`` or
+            ``<collection>_chunks``.
+
+        Raises:
+            AttributeError: If ``name`` is not ``"files"`` or ``"chunks"``.
         """
         if name in ("files", "chunks"):
             full_name = f"{quote_table_name(self.name)}_{name}"
@@ -400,18 +435,18 @@ class Collection:
         )
 
     def rename(self, new_name: str) -> None:
-        """
-        Renames the collection to the specified new name.
-        If the new name is the same as the current name, does nothing.
+        """Rename the collection table and its associated SQLite objects.
 
-        Checks if a table with the new name exists and raises an error if it does.
-        Renames the underlying table and updates the collection's name.
+        Does nothing when ``new_name`` equals ``self.name``. Otherwise
+        renames the table, associated ``*_fts`` virtual tables, regular
+        indexes (updating ``neosqlite_index_keys``), and table triggers,
+        then updates ``self.name`` and clears the TTL cache.
 
         Args:
-            new_name (str): The new name for the collection.
+            new_name: New name for the collection table.
 
         Raises:
-            sqlite3.Error: If a collection with the new name already exists.
+            sqlite3.Error: If a table named ``new_name`` already exists.
         """
         # If the new name is the same as the current name, do nothing
         if new_name == self.name:
@@ -494,12 +529,13 @@ class Collection:
         self._invalidate_ttl_cache()
 
     def options(self) -> dict[str, Any]:
-        """
-        Retrieves options set on this collection.
+        """Retrieve schema metadata and PyMongo-compatible collection options.
 
         Returns:
-            dict: A dictionary containing various options for the collection,
-                including the table's name, columns, indexes, and count of documents.
+            dict[str, Any]: Dictionary containing ``name``, ``columns``,
+            ``indexes``, ``count``, and (when table inspection succeeds)
+            ``codec_options``, ``read_preference``, ``write_concern``, and
+            ``read_concern``.
         """
         # For SQLite, we can provide information about the table structure
         options: dict[str, Any] = {
@@ -543,9 +579,17 @@ class Collection:
     def insert_one(
         self, document: dict[str, Any], session: ClientSession | None = None
     ) -> InsertOneResult:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_one`.
+        """Insert a single document into the collection.
+
+        Delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_one`.
+
+        Args:
+            document: Document dictionary to insert.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            InsertOneResult: Result containing the inserted document's ``_id``.
         """
         return self.query_engine.insert_one(document, session=session)
 
@@ -555,9 +599,19 @@ class Collection:
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> InsertManyResult:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_many`.
+        """Insert multiple documents into the collection.
+
+        Delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.insert_many`.
+
+        Args:
+            documents: List of document dictionaries to insert.
+            ordered: Whether to insert sequentially in order. Defaults to
+                ``True``.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            InsertManyResult: Result containing the inserted document IDs.
         """
         return self.query_engine.insert_many(
             documents, ordered=ordered, session=session
@@ -571,9 +625,22 @@ class Collection:
         array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_one`.
+        """Update a single document matching the filter.
+
+        Delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.update_one`.
+
+        Args:
+            filter: Query filter selecting the target document.
+            update: Update operators to apply.
+            upsert: Insert a new document when no document matches. Defaults
+                to ``False``.
+            array_filters: Optional filter expressions for positional array
+                updates.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            UpdateResult: Result with matched, modified, and upserted counts.
         """
         return self.query_engine.update_one(
             filter,
@@ -591,9 +658,22 @@ class Collection:
         array_filters: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ) -> UpdateResult:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.update_many`.
+        """Update all documents matching the filter.
+
+        Delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.update_many`.
+
+        Args:
+            filter: Query filter selecting documents to update.
+            update: Update operators to apply to matched documents.
+            upsert: Insert a new document when no document matches. Defaults
+                to ``False``.
+            array_filters: Optional filter expressions for positional array
+                updates.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            UpdateResult: Result with matched, modified, and upserted counts.
         """
         return self.query_engine.update_many(
             filter,
@@ -610,9 +690,20 @@ class Collection:
         upsert: bool = False,
         session: ClientSession | None = None,
     ) -> UpdateResult:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.replace_one`.
+        """Replace a single document matching the filter.
+
+        Delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.replace_one`.
+
+        Args:
+            filter: Query filter selecting the document to replace.
+            replacement: Replacement document dictionary.
+            upsert: Insert ``replacement`` when no document matches. Defaults
+                to ``False``.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            UpdateResult: Result with matched, modified, and upserted info.
         """
         return self.query_engine.replace_one(
             filter, replacement, upsert=upsert, session=session
@@ -621,19 +712,18 @@ class Collection:
     def delete_one(
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
-        """
-        Delete a single document.
+        """Delete a single document matching the filter.
 
-        For GridFS system collections (e.g., fs_files, fs_chunks), this method
-        automatically delegates to GridFSBucket.delete() to handle the different schema
-        and properly clean up both files and chunks.
+        For GridFS system collections (e.g., ``fs_files``, ``fs_chunks``),
+        delegates to ``GridFSBucket.delete()`` so both file metadata and
+        chunks are removed together.
 
         Args:
-            filter: Query filter to match document to delete
-            session: A ClientSession for transactions.
+            filter: Query filter selecting the document to delete.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            DeleteResult: Result of the delete operation
+            DeleteResult: Result containing the count of deleted documents.
         """
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
@@ -642,15 +732,17 @@ class Collection:
         return self.query_engine.delete_one(filter, session=session)
 
     def _get_gridfs_bucket(self):
-        """Return a GridFSBucket for this collection's bucket.
+        """Return a ``GridFSBucket`` for this GridFS system collection.
 
         Extracts the bucket name by stripping the ``_files`` or ``_chunks``
-        suffix from the collection name.  Raises :exc:`RuntimeError` when the
-        collection name does not follow the GridFS naming convention.
+        suffix from ``self.name``.
 
-        This helper eliminates the duplicate bucket-name extraction logic that
-        was previously copy-pasted in ``_delete_one_as_gridfs``,
-        ``_delete_many_as_gridfs`` and ``_find_as_gridfs``.
+        Returns:
+            GridFSBucket: Bucket instance bound to ``self.db``.
+
+        Raises:
+            RuntimeError: If ``self.name`` does not end with ``_files`` or
+                ``_chunks``.
         """
         from ..gridfs import GridFSBucket
 
@@ -665,7 +757,14 @@ class Collection:
         return GridFSBucket(self.db, bucket_name=bucket_name)
 
     def _delete_one_as_gridfs(self, filter: dict[str, Any]):
-        """Delete a single document from a GridFS system collection."""
+        """Delete the first matching file from a GridFS system collection.
+
+        Args:
+            filter: Query filter matched against the bucket's files.
+
+        Returns:
+            DeleteResult: Result with ``deleted_count`` of ``0`` or ``1``.
+        """
         from ..results import DeleteResult
 
         bucket = self._get_gridfs_bucket()
@@ -686,19 +785,18 @@ class Collection:
     def delete_many(
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> DeleteResult:
-        """
-        Delete multiple documents.
+        """Delete all documents matching the filter.
 
-        For GridFS system collections (e.g., fs_files, fs_chunks), this method
-        automatically delegates to GridFSBucket.delete() to handle the different schema
-        and properly clean up both files and chunks.
+        For GridFS system collections (e.g., ``fs_files``, ``fs_chunks``),
+        delegates to ``GridFSBucket.delete()`` so both file metadata and
+        chunks are removed together.
 
         Args:
-            filter: Query filter to match documents to delete
-            session: A ClientSession for transactions.
+            filter: Query filter selecting the documents to delete.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            DeleteResult: Result of the delete operation
+            DeleteResult: Result containing the count of deleted documents.
         """
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
@@ -707,7 +805,14 @@ class Collection:
         return self.query_engine.delete_many(filter, session=session)
 
     def _delete_many_as_gridfs(self, filter: dict[str, Any]):
-        """Delete multiple documents from a GridFS system collection."""
+        """Delete all matching files from a GridFS system collection.
+
+        Args:
+            filter: Query filter matched against the bucket's files.
+
+        Returns:
+            DeleteResult: Result with the total count of deleted files.
+        """
         from ..results import DeleteResult
 
         bucket = self._get_gridfs_bucket()
@@ -744,26 +849,31 @@ class Collection:
         ) = None,
         **kwargs: Any,
     ) -> Cursor:
-        """
-        Find documents in the collection.
+        """Find documents in the collection matching a filter.
 
-        For GridFS system collections (e.g., fs_files, fs_chunks), this method
-        automatically delegates to GridFSBucket.find() to handle the different schema.
+        For GridFS system collections (e.g., ``fs_files``, ``fs_chunks``),
+        delegates to ``_find_as_gridfs``. Otherwise auto-purges expired TTL
+        documents, delegates to ``QueryEngine.find``, and applies optional
+        ``skip``, ``limit``, and ``sort`` modifiers.
 
         Args:
-            filter: Query filter
-            projection: Field projection (not supported for GridFS collections)
-            hint: Index hint (not supported for GridFS collections)
-            session: A ClientSession for transactions.
-            limit: Maximum docs to return (0/None = no limit, PyMongo parity).
-            skip: Number of docs to skip (0/None = none, PyMongo parity).
-            sort: Sort spec as list of (key, direction) tuples, dict,
-                ``(key, direction)`` tuple, or single field name.
-            **kwargs: Back-compat aliases (``limit``, ``skip``, ``sort`` may
-                also arrive here from older call sites).
+            filter: Optional query filter dictionary.
+            projection: Optional field projection dictionary (not used for
+                GridFS collections).
+            hint: Optional index hint name (not used for GridFS).
+            session: Optional ``ClientSession`` for transaction validation.
+            limit: Maximum number of documents to return (``0`` or ``None``
+                for no limit).
+            skip: Number of leading documents to skip (``0`` or ``None``
+                for none).
+            sort: Sort specification as a list of ``(field, direction)``
+                tuples, dict, ``(field, direction)`` tuple, or field name.
+            **kwargs: Back-compatibility aliases for ``limit``, ``skip``,
+                and ``sort``.
 
         Returns:
-            Cursor or GridOutCursor: Query results
+            Cursor: Query cursor (or GridFS cursor/chunk list for GridFS
+            collections).
         """
         if "limit" in kwargs and limit is None:
             limit = kwargs.pop("limit")
@@ -794,6 +904,16 @@ class Collection:
     def _normalize_sort_spec(
         sort: list[tuple[str, int]] | dict[str, int] | str | tuple[str, int],
     ) -> list[tuple[str, int]]:
+        """Normalize PyMongo-style sort specifications to key/direction pairs.
+
+        Args:
+            sort: Field name string, dict mapping fields to directions,
+                single ``(field, direction)`` tuple, or iterable of pairs.
+
+        Returns:
+            list[tuple[str, int]]: Normalized list of ``(field, direction)``
+            tuples with integer directions.
+        """
         if isinstance(sort, str):
             return [(sort, 1)]
         if isinstance(sort, dict):
@@ -805,15 +925,15 @@ class Collection:
         return [(key, int(direction)) for key, direction in list(sort)]
 
     def _is_gridfs_collection(self) -> bool:
-        """
-        Check if this collection is a GridFS system collection.
+        """Check whether this collection is a GridFS system collection.
 
-        Uses a two-step verification:
-        1. Check naming convention (ends with _files or _chunks)
-        2. Verify schema has GridFS-specific columns
+        Verifies both the ``_files``/``_chunks`` naming suffix and the
+        presence of GridFS-specific columns via ``PRAGMA table_info``,
+        falling back to the naming convention if schema inspection fails.
 
         Returns:
-            bool: True if this is a GridFS system collection
+            bool: ``True`` if this collection represents GridFS files or
+            chunks, ``False`` otherwise.
         """
         # Step 1: Check naming convention
         if not (self.name.endswith("_files") or self.name.endswith("_chunks")):
@@ -857,7 +977,16 @@ class Collection:
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ):
-        """Execute find on a GridFS system collection via GridFSBucket."""
+        """Execute ``find`` on a GridFS ``_files`` or ``_chunks`` collection.
+
+        Args:
+            filter: Optional query filter dictionary.
+            session: Optional ``ClientSession`` passed to ``GridFSBucket``.
+
+        Returns:
+            Any: List of chunk dicts for ``_chunks`` collections, or a
+            ``GridOutCursor`` for ``_files`` collections.
+        """
         if self.name.endswith("_chunks"):
             return self._find_chunks_direct(filter)
         bucket = self._get_gridfs_bucket()
@@ -866,13 +995,20 @@ class Collection:
     def _find_chunks_direct(
         self, filter: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
-        """Find chunk documents directly from the chunks table.
+        """Query chunk documents directly from a GridFS ``_chunks`` table.
 
-        ``GridFSBucket.find`` queries the *files* table and returns
-        ``GridOut`` objects, so delegating ``fs.chunks.find`` to it could
-        only ever pass vacuously (unknown ``files_id`` filters previously
-        returned the whole bucket). Query the chunks table instead and
-        return plain chunk dicts.
+        ``GridFSBucket.find`` queries the ``_files`` table and returns
+        ``GridOut`` objects, so ``fs.chunks.find`` queries the chunks table
+        directly using supported filters on ``files_id``, ``n``, and
+        ``_id`` (``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``,
+        ``$in``).
+
+        Args:
+            filter: Optional query filter dictionary.
+
+        Returns:
+            list[dict[str, Any]]: Matching chunk dicts with ``_id``,
+            ``files_id``, ``n``, and ``data`` keys.
         """
         table = quote_table_name(self.name)
         where_parts: list[str] = []
@@ -933,7 +1069,17 @@ class Collection:
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ) -> int:
-        """Count documents in a GridFS system collection (fs_files or fs_chunks)."""
+        """Count documents in a GridFS ``_files`` or ``_chunks`` table.
+
+        Args:
+            filter: Optional query filter dictionary.
+            session: Optional ``ClientSession`` (accepted for signature
+                parity).
+
+        Returns:
+            int: Number of matching rows in the GridFS table, or ``0`` if
+            the table name does not match a GridFS suffix.
+        """
         table = quote_table_name(self.name)
         if self.name.endswith("_files"):
             from ..gridfs.grid_file import build_gridfs_files_where
@@ -1005,9 +1151,20 @@ class Collection:
         batch_size: int = 100,
         session: ClientSession | None = None,
     ) -> RawBatchCursor:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_raw_batches`.
+        """Query documents and return raw JSON batches.
+
+        Delegates to ``QueryEngine.find_raw_batches()``.
+
+        Args:
+            filter: Optional query filter dictionary.
+            projection: Optional field projection dictionary.
+            hint: Optional index hint name.
+            batch_size: Maximum number of documents per batch. Defaults to
+                ``100``.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            RawBatchCursor: Cursor yielding raw JSON document batches.
         """
         return self.query_engine.find_raw_batches(
             filter, projection, hint, batch_size, session=session
@@ -1020,20 +1177,23 @@ class Collection:
         hint: str | None = None,
         session: ClientSession | None = None,
     ) -> dict[str, Any] | None:
-        """
-        Find a single document.
+        """Find a single document matching the filter.
 
-        For GridFS system collections (e.g., fs_files, fs_chunks), this method
-        automatically delegates to GridFSBucket.find() to handle the different schema.
+        For GridFS system collections (e.g., ``fs_files``, ``fs_chunks``),
+        delegates to ``_find_as_gridfs`` and returns the first match.
+        Otherwise auto-purges expired TTL documents and delegates to
+        ``QueryEngine.find_one``.
 
         Args:
-            filter: Query filter
-            projection: Field projection (not supported for GridFS collections)
-            hint: Index hint (not supported for GridFS collections)
-            session: A ClientSession for transactions.
+            filter: Optional query filter dictionary.
+            projection: Optional field projection dictionary (not used for
+                GridFS collections).
+            hint: Optional index hint name (not used for GridFS).
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            Dict or GridOut or None: Query result
+            dict[str, Any] | None: First matching document (or ``GridOut``
+            for GridFS ``_files``), or ``None`` if no document matches.
         """
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
@@ -1051,8 +1211,17 @@ class Collection:
     def count_documents(
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> int:
-        """
-        Count documents matching the filter.
+        """Count documents matching the given filter.
+
+        Auto-purges expired TTL documents before counting and handles GridFS
+        system collections directly.
+
+        Args:
+            filter: Query filter dictionary.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            int: Exact count of matching documents.
         """
         self._auto_purge_ttl()
         if self._is_gridfs_collection():
@@ -1064,27 +1233,19 @@ class Collection:
         options: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ) -> int:
-        """
-        Get an estimated count of documents in the collection.
+        """Get an estimated count of documents in the collection.
 
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.estimated_document_count`.
+        Delegates to ``_count_documents_as_gridfs`` for GridFS collections,
+        or to ``QueryEngine.estimated_document_count()``.
 
         Args:
-            options (dict[str, Any], optional): Options for the count operation.
-                Supported options (for PyMongo API compatibility):
-                - maxTimeMS: Maximum execution time in milliseconds (ignored in NeoSQLite)
-                - hint: Index to use for the count (ignored in NeoSQLite)
-            session: A ClientSession for transactions.
+            options: Optional PyMongo-compatible count options (such as
+                ``maxTimeMS`` or ``hint``), accepted for compatibility and
+                ignored in SQLite.
+            session: Optional ``ClientSession`` for transaction validation.
 
         Returns:
-            int: Estimated number of documents in the collection
-
-        Note:
-            This method returns an estimate based on SQLite metadata, which is fast
-            but may not be exact. For an exact count, use count_documents({}).
-            The options parameter is accepted for PyMongo API compatibility but
-            most options are not applicable to SQLite.
+            int: Estimated number of documents in the collection.
         """
         if self._is_gridfs_collection():
             return self._count_documents_as_gridfs({}, session=session)
@@ -1098,9 +1259,23 @@ class Collection:
         session: ClientSession | None = None,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_delete`.
+        """Find a single matching document and delete it atomically.
+
+        Delegates to ``QueryEngine.find_one_and_delete()``.
+
+        Args:
+            filter: Query filter selecting the candidate document.
+            projection: Optional field projection applied to the returned
+                document.
+            sort: Optional sort specification as ``(field, direction)``
+                pairs when multiple documents match.
+            session: Optional ``ClientSession`` for transaction validation.
+            **kwargs: Additional keyword arguments forwarded to
+                ``QueryEngine.find_one_and_delete``.
+
+        Returns:
+            dict[str, Any] | None: The deleted document before removal, or
+            ``None`` if no document matched.
         """
         return self.query_engine.find_one_and_delete(
             filter, projection=projection, sort=sort, session=session, **kwargs
@@ -1117,9 +1292,28 @@ class Collection:
         session: ClientSession | None = None,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_replace`.
+        """Find a single matching document and replace it.
+
+        Delegates to ``QueryEngine.find_one_and_replace()``.
+
+        Args:
+            filter: Query filter selecting the candidate document.
+            replacement: Replacement document dictionary.
+            projection: Optional field projection applied to the returned
+                document.
+            sort: Optional sort specification as ``(field, direction)``
+                pairs when multiple documents match.
+            upsert: Insert ``replacement`` when no document matches. Defaults
+                to ``False``.
+            return_document: If truthy, return the document after
+                replacement; otherwise return the original document.
+            session: Optional ``ClientSession`` for transaction validation.
+            **kwargs: Additional keyword arguments forwarded to
+                ``QueryEngine.find_one_and_replace``.
+
+        Returns:
+            dict[str, Any] | None: Document before or after replacement, or
+            ``None`` if no document matched (and not returned on upsert).
         """
         return self.query_engine.find_one_and_replace(
             filter,
@@ -1144,9 +1338,30 @@ class Collection:
         session: ClientSession | None = None,
         **kwargs: Any,
     ) -> dict[str, Any] | None:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.find_one_and_update`.
+        """Find a single matching document and apply update operators.
+
+        Delegates to ``QueryEngine.find_one_and_update()``.
+
+        Args:
+            filter: Query filter selecting the candidate document.
+            update: Update operators to apply.
+            projection: Optional field projection applied to the returned
+                document.
+            sort: Optional sort specification as ``(field, direction)``
+                pairs when multiple documents match.
+            upsert: Insert a new document when no document matches. Defaults
+                to ``False``.
+            return_document: If truthy, return the updated document;
+                otherwise return the document before update.
+            array_filters: Optional filter expressions for positional array
+                updates.
+            session: Optional ``ClientSession`` for transaction validation.
+            **kwargs: Additional keyword arguments forwarded to
+                ``QueryEngine.find_one_and_update``.
+
+        Returns:
+            dict[str, Any] | None: Document before or after update, or
+            ``None`` if no document matched.
         """
         return self.query_engine.find_one_and_update(
             filter,
@@ -1168,19 +1383,22 @@ class Collection:
         session: ClientSession | None = None,
         **kwargs: Any,
     ) -> AggregationCursor:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate`.
+        """Execute an aggregation pipeline on the collection.
+
+        Auto-purges expired TTL documents and returns a lazy
+        ``AggregationCursor`` configured with the supplied pipeline and
+        options.
 
         Args:
-            pipeline: The aggregation pipeline to execute
-            allowDiskUse: Ignored in NeoSQLite (kept for PyMongo compatibility)
-            batchSize: Batch size for results (kept for PyMongo compatibility)
-            session: A ClientSession for transactions.
-            **kwargs: Additional keyword arguments for PyMongo compatibility
+            pipeline: List of aggregation pipeline stage dictionaries.
+            allowDiskUse: Accepted for PyMongo compatibility (ignored).
+            batchSize: Optional batch size hint for cursor fetching.
+            session: Optional ``ClientSession`` for transaction validation.
+            **kwargs: Additional PyMongo-compatible keyword arguments
+                forwarded to ``AggregationCursor``.
 
         Returns:
-            An AggregationCursor instance
+            AggregationCursor: Cursor iterating over pipeline results.
         """
         self._auto_purge_ttl()
         return AggregationCursor(
@@ -1198,9 +1416,18 @@ class Collection:
         batch_size: int = 100,
         session: ClientSession | None = None,
     ) -> RawBatchCursor:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.aggregate_raw_batches`.
+        """Execute an aggregation pipeline returning raw JSON batches.
+
+        Delegates to ``QueryEngine.aggregate_raw_batches()``.
+
+        Args:
+            pipeline: List of aggregation pipeline stage dictionaries.
+            batch_size: Maximum number of documents per batch. Defaults to
+                ``100``.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            RawBatchCursor: Cursor yielding raw JSON document batches.
         """
         return self.query_engine.aggregate_raw_batches(
             pipeline, batch_size, session=session
@@ -1212,9 +1439,18 @@ class Collection:
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ) -> list[Any]:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
+        """Return distinct values for a field across matching documents.
+
+        Auto-purges expired TTL documents and delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.distinct`.
+
+        Args:
+            key: Dotted field path to extract distinct values from.
+            filter: Optional query filter restricting documents considered.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            list[Any]: List of distinct values found for ``key``.
         """
         self._auto_purge_ttl()
         return self.query_engine.distinct(key, filter, session=session)
@@ -1226,19 +1462,34 @@ class Collection:
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> BulkWriteResult:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.bulk_write`.
+        """Execute a batch of write requests against the collection.
+
+        Delegates to
+        :meth:`~neosqlite.collection.query_engine.QueryEngine.bulk_write`.
+
+        Args:
+            requests: List of write request objects (insert, update, replace,
+                or delete operations).
+            ordered: Whether to stop on the first write error. Defaults to
+                ``True``.
+            session: Optional ``ClientSession`` for transaction validation.
+
+        Returns:
+            BulkWriteResult: Summary of inserted, matched, modified,
+            deleted, and upserted counts and IDs.
         """
         return self.query_engine.bulk_write(requests, ordered, session=session)
 
     def initialize_ordered_bulk_op(self) -> BulkOperationExecutor:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.initialize_ordered_bulk_op`.
+        """Initialize a deprecated ordered bulk operation builder.
+
+        Delegates to ``QueryEngine.initialize_ordered_bulk_op()``.
 
         .. deprecated::
             Use :meth:`bulk_write` instead.
+
+        Returns:
+            BulkOperationExecutor: Executor configured for ordered writes.
         """
         warnings.warn(
             "initialize_ordered_bulk_op is deprecated, use bulk_write instead",
@@ -1248,12 +1499,15 @@ class Collection:
         return self.query_engine.initialize_ordered_bulk_op()
 
     def initialize_unordered_bulk_op(self) -> BulkOperationExecutor:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.query_engine.QueryEngine.initialize_unordered_bulk_op`.
+        """Initialize a deprecated unordered bulk operation builder.
+
+        Delegates to ``QueryEngine.initialize_unordered_bulk_op()``.
 
         .. deprecated::
             Use :meth:`bulk_write` instead.
+
+        Returns:
+            BulkOperationExecutor: Executor configured for unordered writes.
         """
         warnings.warn(
             "initialize_unordered_bulk_op is deprecated, use bulk_write instead",
@@ -1276,14 +1530,34 @@ class Collection:
         name: str | None = None,
         **kwargs: Any,
     ) -> str:
-        """
-        Create an index, PyMongo-compatible.
+        """Create an index on the collection (PyMongo-compatible).
 
-        Accepts ``expireAfterSeconds`` for TTL declaration (stored in
-        ``_neosqlite_ttl_indexes``; expiry behavior is owned by the TTL
-        engine) plus ``name`` and other extra options for compatibility.
+        Delegates to ``IndexManager.create_index()`` and invalidates the
+        cached TTL specifications afterward. Supports single-field,
+        compound, unique, sparse, FTS5, datetime, and TTL
+        (``expireAfterSeconds``) indexes.
 
-        Returns the generated SQLite index name.
+        Args:
+            key: Field name, list of field names, or PyMongo ``(field,
+                direction_or_type)`` specification list.
+            reindex: Accepted for compatibility (unused by native SQLite
+                indexes). Defaults to ``True``.
+            sparse: Create a partial index excluding missing field values.
+                Defaults to ``False``.
+            unique: Enforce uniqueness on indexed values. Defaults to
+                ``False``.
+            fts: Create an FTS5 text search index. Defaults to ``False``.
+            tokenizer: Optional FTS5 tokenizer name (e.g., ``"icu"``).
+            datetime_field: Create a UTC-normalized datetime expression
+                index. Defaults to ``False``.
+            expireAfterSeconds: Optional TTL expiration duration in seconds
+                for single-field indexes.
+            name: Optional index name accepted for compatibility (SQLite
+                index names are auto-generated).
+            **kwargs: Additional PyMongo-compatible index options.
+
+        Returns:
+            str: Generated SQLite index or FTS virtual table name.
         """
         try:
             return self.indexes.create_index(
@@ -1306,9 +1580,16 @@ class Collection:
         key: str,
         tokenizer: str | None = None,
     ):
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_search_index`.
+        """Create an FTS5 search index on a single field.
+
+        Delegates to ``IndexManager.create_search_index()``.
+
+        Args:
+            key: Field path to index for full-text search.
+            tokenizer: Optional FTS5 tokenizer name.
+
+        Returns:
+            str: Generated FTS5 search table name.
         """
         return self.indexes.create_search_index(key, tokenizer)
 
@@ -1316,9 +1597,15 @@ class Collection:
         self,
         indexes: list[IndexModel],
     ) -> list[str]:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_indexes`.
+        """Create multiple indexes from ``IndexModel`` specifications.
+
+        Delegates to ``IndexManager.create_indexes()``.
+
+        Args:
+            indexes: List of ``IndexModel`` definitions to create.
+
+        Returns:
+            list[str]: Names of the created SQLite indexes.
         """
         return self.indexes.create_indexes(indexes)
 
@@ -1326,9 +1613,15 @@ class Collection:
         self,
         indexes: list[str],
     ) -> list[str]:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.create_search_indexes`.
+        """Create FTS5 search indexes for multiple fields.
+
+        Delegates to ``IndexManager.create_search_indexes()``.
+
+        Args:
+            indexes: List of field paths to index for full-text search.
+
+        Returns:
+            list[str]: Names of the created search indexes.
         """
         return self.indexes.create_search_indexes(indexes)
 
@@ -1338,23 +1631,57 @@ class Collection:
         sparse: bool = False,
         documents: list[dict[str, Any]] | None = None,
     ):
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.reindex`.
+        """Reindex the collection (no-op compatibility wrapper).
+
+        Delegates to ``IndexManager.reindex()``. Native SQLite JSON
+        indexes update automatically on write.
+
+        Args:
+            table: Table name (unused).
+            sparse: Sparse flag (unused).
+            documents: Optional document list (unused).
         """
         self.indexes.reindex(table, sparse, documents)
 
     @overload
-    def list_indexes(self, as_keys: Literal[True]) -> list[list[str]]: ...
+    def list_indexes(self, as_keys: Literal[True]) -> list[list[str]]:
+        """List index key specifications for this collection.
+
+        Args:
+            as_keys: Pass ``True`` to return indexed key lists.
+
+        Returns:
+            list[list[str]]: List of key name lists per index.
+        """
+        ...
+
     @overload
-    def list_indexes(self, as_keys: Literal[False] = False) -> list[str]: ...
+    def list_indexes(self, as_keys: Literal[False] = False) -> list[str]:
+        """List index names for this collection.
+
+        Args:
+            as_keys: Pass ``False`` (default) to return index names.
+
+        Returns:
+            list[str]: List of SQLite index names.
+        """
+        ...
+
     def list_indexes(
         self,
         as_keys: bool = False,
     ) -> list[str] | list[list[str]]:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.list_indexes`.
+        """List indexes defined on this collection.
+
+        Delegates to ``IndexManager.list_indexes()``.
+
+        Args:
+            as_keys: If ``True``, return lists of indexed key paths instead
+                of SQLite index names. Defaults to ``False``.
+
+        Returns:
+            list[str] | list[list[str]]: Index names when ``as_keys`` is
+            ``False``, or key path lists when ``as_keys`` is ``True``.
         """
         # This explicit check is the key to solving the Mypy error on overloading.
         if as_keys:
@@ -1365,23 +1692,34 @@ class Collection:
             return self.indexes.list_indexes(as_keys)
 
     def list_search_indexes(self) -> list[str]:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.list_search_indexes`.
+        """List FTS5 search indexes defined on this collection.
+
+        Delegates to ``IndexManager.list_search_indexes()``.
+
+        Returns:
+            list[str]: Field names covered by FTS5 search indexes.
         """
         return self.indexes.list_search_indexes()
 
     def update_search_index(self, key: str, tokenizer: str | None = None):
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.update_search_index`.
+        """Recreate an FTS5 search index with updated options.
+
+        Delegates to ``IndexManager.update_search_index()``.
+
+        Args:
+            key: Indexed field path to recreate.
+            tokenizer: Optional new FTS5 tokenizer name.
         """
         self.indexes.update_search_index(key, tokenizer)
 
     def drop_index(self, index: str):
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_index`.
+        """Drop a single index from the collection.
+
+        Delegates to ``IndexManager.drop_index()`` and invalidates the
+        cached TTL specifications afterward.
+
+        Args:
+            index: Index name or field specification to drop.
         """
         try:
             self.indexes.drop_index(index)
@@ -1389,16 +1727,20 @@ class Collection:
             self._invalidate_ttl_cache()
 
     def drop_search_index(self, index: str):
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_search_index`.
+        """Drop an FTS5 search index from the collection.
+
+        Delegates to ``IndexManager.drop_search_index()``.
+
+        Args:
+            index: Field name of the search index to drop.
         """
         self.indexes.drop_search_index(index)
 
     def drop_indexes(self):
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.drop_indexes`.
+        """Drop all user indexes from the collection.
+
+        Delegates to ``IndexManager.drop_indexes()`` and invalidates the
+        cached TTL specifications afterward.
         """
         try:
             self.indexes.drop_indexes()
@@ -1406,23 +1748,32 @@ class Collection:
             self._invalidate_ttl_cache()
 
     def index_information(self) -> dict[str, Any]:
-        """
-        This is a delegating method. For implementation details, see the
-        core logic in :meth:`~neosqlite.collection.index_manager.IndexManager.index_information`.
+        """Return metadata describing indexes on this collection.
+
+        Delegates to ``IndexManager.index_information()``.
+
+        Returns:
+            dict[str, Any]: Mapping from index name to index metadata
+            (version, uniqueness, key mapping, and optional TTL).
         """
         return self.indexes.index_information()
 
     def get_ttl_specs(self) -> list[dict[str, Any]]:
-        """
-        List TTL index specs declared on this collection.
+        """List TTL index specs declared on this collection.
 
         Returns:
-            list[dict]: Each dict has ``index_name``, ``collection_name``,
-                ``field`` and ``expireAfterSeconds`` keys.
+            list[dict[str, Any]]: Each dict contains ``index_name``,
+            ``collection_name``, ``field``, and ``expireAfterSeconds``.
         """
         return self.indexes.get_ttl_specs()
 
     def _ttl_specs_cached(self) -> list[dict[str, Any]]:
+        """Return cached TTL specs, loading them on first access.
+
+        Returns:
+            list[dict[str, Any]]: Cached list of TTL index specification
+            dicts for this collection.
+        """
         cached = self.__dict__.get("_ttl_specs_cache")
         if cached is None:
             cached = self.get_ttl_specs()
@@ -1430,11 +1781,11 @@ class Collection:
         return cached
 
     def _invalidate_ttl_cache(self) -> None:
+        """Clear the cached TTL specifications for this collection."""
         self._ttl_specs_cache = None
 
     def purge_expired(self, now: datetime | None = None) -> int:
-        """
-        Delete documents expired under this collection's TTL indexes.
+        """Delete documents expired under this collection's TTL indexes.
 
         A document expires when ``now >= field_value + expireAfterSeconds``.
         Both UTC datetimes (ISO strings) and numeric epoch seconds are
@@ -1443,8 +1794,8 @@ class Collection:
 
         Args:
             now: Reference time (timezone-aware preferred; naive is assumed
-                UTC). Defaults to current UTC time. Accepts an explicit value
-                so tests need not sleep.
+                UTC). Defaults to current UTC time. Accepts an explicit
+                value so tests need not sleep.
 
         Returns:
             int: Number of documents deleted.
@@ -1476,6 +1827,7 @@ class Collection:
         return total
 
     def _auto_purge_ttl(self) -> None:
+        """Lazily purge expired TTL documents when TTL indexes exist."""
         try:
             if not self._ttl_specs_cached():
                 return
@@ -1489,8 +1841,7 @@ class Collection:
     # --- Other methods ---
     @property
     def client(self) -> Connection:
-        """
-        Get the MongoClient instance (returns the parent Connection).
+        """Get the parent connection instance (PyMongo ``client`` alias).
 
         Returns:
             Connection: The parent connection instance.
@@ -1499,11 +1850,11 @@ class Collection:
 
     @property
     def codec_options(self) -> Any:
-        """
-        Get the codec options for this collection.
+        """Get the codec options configured for this collection.
 
         Returns:
-            Any: The codec options.
+            Any: Collection-level codec options, or the parent database's
+            codec options if not overridden.
         """
         if hasattr(self, "_codec_options") and self._codec_options is not None:
             return self._codec_options
@@ -1511,11 +1862,11 @@ class Collection:
 
     @property
     def read_preference(self) -> Any:
-        """
-        Get the read preference for this collection.
+        """Get the read preference configured for this collection.
 
         Returns:
-            Any: The read preference.
+            Any: Collection-level read preference, or the parent database's
+            read preference if not overridden.
         """
         if (
             hasattr(self, "_read_preference")
@@ -1526,11 +1877,11 @@ class Collection:
 
     @property
     def write_concern(self) -> Any:
-        """
-        Get the write concern for this collection.
+        """Get the write concern configured for this collection.
 
         Returns:
-            Any: The write concern.
+            Any: Collection-level write concern, or the parent database's
+            write concern if not overridden.
         """
         if hasattr(self, "_write_concern") and self._write_concern is not None:
             return self._write_concern
@@ -1538,11 +1889,11 @@ class Collection:
 
     @property
     def read_concern(self) -> Any:
-        """
-        Get the read concern for this collection.
+        """Get the read concern configured for this collection.
 
         Returns:
-            Any: The read concern.
+            Any: Collection-level read concern, or the parent database's
+            read concern if not overridden.
         """
         if hasattr(self, "_read_concern") and self._read_concern is not None:
             return self._read_concern
@@ -1550,37 +1901,38 @@ class Collection:
 
     @property
     def database(self) -> Connection:
-        """
-        Get the database that this collection is a part of.
+        """Get the parent database connection for this collection.
 
         Returns:
-            Connection: The connection object this collection is associated with.
+            Connection: The connection object associated with this
+            collection.
         """
         return self._database
 
     @property
     def db_path(self) -> str:
-        """
-        Get the path to the database file.
+        """Get the path to the underlying SQLite database file.
 
         Returns:
-            str: The database file path.
+            str: Database file path, or ``":memory:"`` if no parent database
+            is attached.
         """
         return self.database.db_path if self.database else ":memory:"
 
     @property
     def full_name(self) -> str:
-        """
-        Get the full name of the collection (database.collection).
+        """Get the full collection name (``<database>.<collection>``).
 
         Returns:
-            str: The full name of the collection
+            str: Full name including database prefix when available,
+            otherwise ``self.name``.
 
         Example:
-            >>> db = Connection("test.db")
+            >>> from neosqlite import Connection
+            >>> db = Connection(":memory:")
             >>> coll = db.my_collection
             >>> print(coll.full_name)
-            'test.my_collection'
+            memory.my_collection
         """
         if self._database and hasattr(self._database, "name"):
             return f"{self._database.name}.{quote_table_name(self.name)}"
@@ -1593,25 +1945,27 @@ class Collection:
         write_concern=None,
         read_concern=None,
     ):
-        """
-        Get a clone of this collection with different options.
+        """Return a clone of this collection with updated PyMongo options.
 
-        Note: NeoSQLite is a single-node database, so read_preference,
-        write_concern, and read_concern are stored for API compatibility
-        but don't affect query behavior.
+        Note: NeoSQLite is a single-node database, so ``read_preference``,
+        ``write_concern``, and ``read_concern`` are stored for API
+        compatibility and do not alter query execution.
 
         Args:
-            codec_options: Codec options (stored for compatibility, not used)
-            read_preference: Read preference (stored for compatibility, not used)
-            write_concern: Write concern (stored for compatibility, not used)
-            read_concern: Read concern (stored for compatibility, not used)
+            codec_options: Optional codec options stored on the clone.
+            read_preference: Optional read preference stored on the clone.
+            write_concern: Optional write concern stored on the clone.
+            read_concern: Optional read concern stored on the clone.
 
         Returns:
-            Collection: A new collection instance with the specified options
+            Collection: A new ``Collection`` instance with the specified
+            options attached.
 
         Example:
+            >>> from neosqlite import Connection
+            >>> db = Connection(":memory:")
             >>> coll = db.my_collection
-            >>> coll_with_options = coll.with_options(write_concern={"w": "majority"})
+            >>> clone = coll.with_options(write_concern={"w": "majority"})
         """
         # Create a new collection instance (clone)
         clone = Collection(
@@ -1630,15 +1984,15 @@ class Collection:
         return clone
 
     def _object_exists(self, type_: str, name: str) -> bool:
-        """
-        Check if an object (table or index) of a specific type and name exists within the database.
+        """Check whether a SQLite table or index exists in ``sqlite_master``.
 
         Args:
-            type_ (str): The type of object to check, either "table" or "index".
-            name (str): The name of the object to check.
+            type_: SQLite object type (``"table"`` or ``"index"``).
+            name: Object name to check in ``sqlite_master``.
 
         Returns:
-            bool: True if the object exists, False otherwise.
+            bool: ``True`` if an object of the given type and name exists,
+            ``False`` otherwise.
         """
         match type_:
             case "table":
@@ -1660,11 +2014,11 @@ class Collection:
                 return False
 
     def drop(self):
-        """
-        Drop the entire collection.
+        """Drop the collection table and clear related caches.
 
-        This method removes the collection (table) from the database. After calling
-        this method, the collection will no longer exist in the database.
+        Executes ``DROP TABLE IF EXISTS`` on the backing table, invalidates
+        the TTL specification cache, and evicts this collection from its
+        parent database cache if present.
         """
         self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(self.name)}")
         self._invalidate_ttl_cache()
@@ -1690,27 +2044,29 @@ class Collection:
         session: ClientSession | None = None,
         start_after: dict[str, Any] | None = None,
     ) -> ChangeStream:
-        """
-        Monitor changes on this collection using SQLite's change tracking features.
+        """Monitor changes on this collection via a ``ChangeStream``.
 
-        This method creates a change stream that allows iterating over change events
-        generated by modifications to the collection. While SQLite doesn't natively
-        support change streams like MongoDB, this implementation uses triggers and
-        SQLite's built-in change tracking mechanisms to provide similar functionality.
+        Uses SQLite triggers and change tracking tables to emit change
+        events for modifications to this collection.
 
         Args:
-            pipeline (list[dict[str, Any]]): Aggregation pipeline stages to apply to change events.
-            full_document (str): Determines how the 'fullDocument' field is populated in change events.
-            resume_after (dict[str, Any]): Logical starting point for the change stream.
-            max_await_time_ms (int): Maximum time to wait for new documents in milliseconds.
-            batch_size (int): Number of documents to return per batch.
-            collation (dict[str, Any]): Collation settings for the operation.
-            start_at_operation_time (Any): Operation time to start monitoring from.
-            session (ClientSession): Client session for the operation.
-            start_after (dict[str, Any]): Logical starting point for the change stream.
+            pipeline: Optional aggregation pipeline stages applied to change
+                events.
+            full_document: Controls how ``fullDocument`` is populated on
+                update events.
+            resume_after: Optional resume token specifying a logical
+                starting point.
+            max_await_time_ms: Maximum wait time in milliseconds for new
+                changes.
+            batch_size: Maximum number of change events fetched per batch.
+            collation: Optional collation settings for the stream.
+            start_at_operation_time: Optional operation timestamp to start
+                monitoring from.
+            session: Optional ``ClientSession`` for transaction validation.
+            start_after: Optional resume token to start strictly after.
 
         Returns:
-            ChangeStream: A change stream object that can be iterated over to receive change events.
+            ChangeStream: Change stream iterating over collection events.
         """
         validate_session(session, self._database)
         return ChangeStream(

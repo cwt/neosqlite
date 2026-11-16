@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class OperatorsSortProjMixin(OperatorsBaseMixin):
+    """Mixin for sort, skip, limit, addFields, project, and replaceRoot.
+
+    Provides temporary-table SQL stage processors (with Python-hybrid support
+    for complex ``$addFields`` expressions) for ``$sort``, ``$skip``,
+    ``$limit``, ``$addFields``, ``$project``, and ``$replaceRoot`` /
+    ``$replaceWith`` stages.
+    """
+
     def _process_sort_skip_limit_stage(
         self,
         create_temp: Callable,
@@ -27,33 +35,25 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         skip_value: int = 0,
         limit_value: int | None = None,
     ) -> str:
-        """
-        Process sort/skip/limit stages using temporary tables.
+        """Process ``$sort``, ``$skip``, and ``$limit`` using temporary tables.
 
-        This method handles the $sort, $skip, and $limit aggregation stages, which
-        can be used individually or in combination. It creates a temporary table
-        with the results sorted and/or paginated according to the specifications.
-
-        The method supports sorting on both regular fields (using json_extract)
-        and the special _id field (using the id column directly). It handles
-        ascending and descending sort orders, as well as skip and limit operations
-        with proper OFFSET and LIMIT clauses in the SQL query.
-
-        When multiple sort/skip/limit stages are consecutive in a pipeline, they
-        are processed together in a single operation for efficiency.
+        Inspects ``current_table`` columns to adapt ``_id`` sorting (using
+        ``_id``, ``id``, or JSON extraction as available), builds ``ORDER BY``
+        and ``LIMIT``/``OFFSET`` clauses via ``sql_translator``, and preserves
+        existing ``id`` and ``_id`` columns in the output table.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing input data
-            sort_spec (dict[str, Any] | None): The $sort stage specification, mapping
-                                              field names to sort directions (1
-                                              for ascending, -1 for descending)
-            skip_value (int): The number of documents to skip (from $skip stage)
-            limit_value (int | None): The maximum number of documents to return
-                                      (from $limit stage)
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            sort_spec: ``$sort`` specification mapping field names to sort
+                directions (``1`` ascending, ``-1`` descending), or ``None``.
+            skip_value: Number of documents to skip from ``$skip``.
+            limit_value: Maximum number of documents to return from ``$limit``,
+                or ``None`` if unbounded.
 
         Returns:
-            str: Name of the newly created temporary table with sorted/skipped/limited results
+            str: Name of the newly created temporary table with sorted and
+                paginated results.
         """
         # Check what columns the current table has
         columns = self.db.execute(
@@ -130,25 +130,24 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         current_table: str,
         add_fields_spec: dict[str, Any],
     ) -> str:
-        """
-        Process an $addFields stage using temporary tables.
+        """Process an ``$addFields`` stage using temporary tables.
 
-        This method implements the $addFields aggregation stage which adds new fields
-        to documents. It uses SQLite's json_set function to add fields to the JSON data.
-
-        Supports:
-        - Simple field copying: {"newField": "$existingField"}
-        - $replaceOne: {$replaceOne: {input: "$text", find: "old", replacement: "new"}}
-        - Literal values: {"field": "value"}
+        Constructs nested ``json_set`` / ``jsonb_set`` expressions for
+        ``$replaceOne`` on field references, simple ``$field`` copies
+        (mapping ``$_id`` to ``id``), literal values bound via ``json(?)``,
+        and SQL-translatable expressions via ``expr_evaluator``. Falls back to
+        :meth:`_process_add_fields_stage_python_hybrid` when any field uses an
+        unsupported expression, literal subdocument, or non-field
+        ``$replaceOne`` input.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing input data
-            add_fields_spec (dict[str, Any]): The $addFields stage specification mapping
-                                              new field names to source field paths
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            add_fields_spec: ``$addFields`` specification mapping new field
+                names to expressions, field references, or literal values.
 
         Returns:
-            str: Name of the newly created temporary table with added fields
+            str: Name of the newly created temporary table with added fields.
         """
         # Build json_set expressions for each field to add
         # We'll construct a nested json_set call for each field
@@ -308,21 +307,23 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         current_table: str,
         add_fields_spec: dict[str, Any],
     ) -> str:
-        """
-        Process $addFields stage with complex expressions using Python hybrid approach.
+        """Process ``$addFields`` with complex expressions via a Python hybrid.
 
-        This method loads documents from the current temp table, applies the $addFields
-        expressions in Python (using ExprEvaluator), and creates a new temp table.
-        This allows us to stay in Tier 2 (temp tables) while still supporting complex
-        expressions like $filter, $map, $reduce, etc.
+        Loads rows from ``current_table``, preserves or restores ``_id``,
+        evaluates complex expressions in Python via
+        ``ExprEvaluator._evaluate_expr_python`` (along with ``$$ROOT``,
+        ``$$CURRENT``, ``$field`` references, and literals), and writes the
+        updated documents into a newly created temporary table so processing
+        remains in Tier 2.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table
-            add_fields_spec (dict[str, Any]): The $addFields stage specification
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            add_fields_spec: ``$addFields`` specification mapping target fields
+                to expressions, field references, or literals.
 
         Returns:
-            str: Name of the newly created temporary table with added fields
+            str: Name of the newly created temporary table with added fields.
         """
         from neosqlite.collection.expr_evaluator import (
             AggregationContext,
@@ -428,7 +429,18 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         return new_table
 
     def _is_expression(self, expr: Any) -> bool:
-        """Check if an expression is a complex expression (not a simple field reference or literal)."""
+        """Check whether ``expr`` is evaluated as an expression dictionary.
+
+        Returns ``True`` when ``expr`` is a ``dict`` whose single key starts
+        with ``"$"`` or when ``expr`` is a ``dict`` with zero or multiple keys.
+
+        Args:
+            expr: Candidate field value or expression specification.
+
+        Returns:
+            bool: ``True`` if ``expr`` is treated as an expression dict,
+                ``False`` otherwise.
+        """
         if isinstance(expr, dict):
             # Check if it looks like an expression (has operators starting with $)
             if len(expr) == 1:
@@ -443,30 +455,24 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         current_table: str,
         project_spec: dict[str, Any],
     ) -> str:
-        """
-        Process a $project stage using temporary tables.
+        """Process a ``$project`` stage using temporary tables.
 
-        This method implements the $project aggregation stage which reshapes
-        each document in the stream, by adding new fields, removing existing
-        fields, or renaming fields. It reconstructs a unified ``data`` column
-        using ``json_object`` / ``jsonb_object`` so that downstream stages
-        (especially FTS5 text search via ``json_tree``) continue to work
-        without modification.
-
-        Supports:
-        - Simple inclusion: ``{"field": 1}``
-        - Exclusion: ``{"field": 0}``
-        - Field references: ``{"alias": "$some.path"}``
-        - Expression projections: ``{"alias": {$concat: [...]}}``
-        - ``_id`` inclusion/exclusion
+        Dispatches to exclusion mode (using ``json_remove`` /
+        ``jsonb_remove``) when all non-``_id`` values equal ``0``, or to
+        inclusion mode (rebuilding ``data`` via ``json_object`` /
+        ``jsonb_object``) otherwise.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table
-            project_spec (dict[str, Any]): The $project stage specification
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            project_spec: The ``$project`` stage specification dictionary.
 
         Returns:
-            str: Name of the newly created temporary table
+            str: Name of the newly created temporary table.
+
+        Raises:
+            NotImplementedError: If ``get_force_fallback()`` is enabled or any
+                non-``_id`` key contains a dotted path.
         """
         # Check kill switch FIRST — force Python fallback
         from ..query_helper import get_force_fallback
@@ -508,7 +514,22 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         project_spec: dict[str, Any],
         include_id: bool,
     ) -> str:
-        """Handle exclusion-mode projection by removing fields via json_remove."""
+        """Handle exclusion-mode ``$project`` via ``json_remove``.
+
+        Strips non-``_id`` fields marked ``0`` from ``data`` in a single
+        ``json_remove`` / ``jsonb_remove`` call and optionally drops ``_id``
+        from the projected columns.
+
+        Args:
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            project_spec: ``$project`` specification with exclusion flags.
+            include_id: Whether to include the ``_id`` column in the output
+                table.
+
+        Returns:
+            str: Name of the newly created temporary table.
+        """
         fields_to_remove = [
             k
             for k, v in project_spec.items()
@@ -543,12 +564,28 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         project_spec: dict[str, Any],
         include_id_default: bool,
     ) -> str:
-        """Handle inclusion-mode projection by reconstructing data via json_object.
+        """Handle inclusion-mode ``$project`` by rebuilding ``data``.
 
-        Handles:
-        - Simple inclusion: ``{"field": 1}``
-        - Field references: ``{"alias": "$some.path"}``
-        - Expression projections: ``{"alias": {$concat: [...]}}``
+        Reconstructs documents with ``json_object`` / ``jsonb_object`` for
+        ``$meta: "textScore"``, SQL-translatable expressions via
+        ``ExprEvaluator``, ``$$CURRENT``, ``$field`` references, and simple
+        ``1`` inclusions, pruning absent fields with ``json_remove`` /
+        ``jsonb_remove``. Wraps parameterized queries in a subquery to avoid
+        duplicating SQL placeholders inside ``jsonb.data_column``.
+
+        Args:
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            project_spec: ``$project`` specification dictionary.
+            include_id_default: Default ``_id`` inclusion flag when no
+                expression or field-reference projections are present.
+
+        Returns:
+            str: Name of the newly created temporary table.
+
+        Raises:
+            NotImplementedError: If ``$$ROOT`` is projected or an expression
+                cannot be translated to SQL.
         """
         jsonb = self.jsonb
         json_obj_func = self.jsonb.function("object")
@@ -690,15 +727,14 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         return create_temp(project_stage, sql, all_params or None)
 
     def _generate_text_score_sql(self) -> str:
-        """
-        Generate SQL for $meta: "textScore" using stored BM25 score.
+        """Generate SQL for ``$meta: "textScore"`` using stored BM25 score.
 
-        During $text search stages, the FTS5 BM25 relevance score is captured
-        and stored in the document's JSON data as `_textScore`. This method
-        extracts that score for use in $project/$addFields stages.
+        During ``$text`` search stages, the FTS5 BM25 relevance score is
+        stored in the document JSON as ``_textScore``. Extracts that score
+        with a ``0.0`` fallback when absent.
 
         Returns:
-            SQL expression that returns the BM25 relevance score (positive value)
+            str: SQL expression evaluating to the stored relevance score.
         """
         json_extract = f"{self.jsonb.json_function_prefix}_extract"
         return f"COALESCE({json_extract}(data, '$._textScore'), 0.0)"
@@ -709,23 +745,26 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         current_table: str,
         replace_spec: Any,
     ) -> str:
-        """
-        Process a $replaceRoot or $replaceWith stage using temporary tables.
+        """Process a ``$replaceRoot`` or ``$replaceWith`` stage in SQL.
 
-        This method implements the $replaceRoot/$replaceWith aggregation stage which
-        replaces the root document with a specified field or expression.
-
-        MongoDB syntax:
-            {$replaceRoot: {newRoot: "$field"}}
-            {$replaceWith: "$field"}
+        Supports field references (for example, ``{"newRoot": "$field"}`` or
+        ``"$field"``) by extracting the target subdocument into ``data``.
+        Complex expressions raise ``NotImplementedError`` to trigger Python
+        fallback.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing input data
-            replace_spec (Any): The replace specification (field path or expression)
+            create_temp: Callback used to materialize the next temporary table.
+            current_table: Name of the temporary table holding input rows.
+            replace_spec: Replacement specification (``{"newRoot": ...}`` or
+                direct ``$replaceWith`` value).
 
         Returns:
-            str: Name of the newly created temporary table with replaced root documents
+            str: Name of the newly created temporary table with replaced root
+                documents.
+
+        Raises:
+            NotImplementedError: If the replacement target is not a ``$field``
+                reference string.
         """
         # Handle both $replaceRoot ({newRoot: ...}) and $replaceWith (direct value)
         if isinstance(replace_spec, dict) and "newRoot" in replace_spec:

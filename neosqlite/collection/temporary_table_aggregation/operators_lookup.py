@@ -21,6 +21,17 @@ HASH_JOIN_MEMORY_THRESHOLD = 100 * 1024 * 1024  # 100 MB default threshold
 
 
 def _serialize_lookup_key(key_val: Any) -> str | None:
+    """Serialize a lookup join key value to a canonical text string.
+
+    Preserves ``None`` as SQL ``NULL``, encodes ``dict`` and ``list`` values
+    as compact JSON strings, and coerces other scalar values via ``str()``.
+
+    Args:
+        key_val: Extracted join key value from a document.
+
+    Returns:
+        str | None: Serialized text key for indexing, or ``None``.
+    """
     if key_val is None:
         return None
     if isinstance(key_val, (dict, list)):
@@ -29,25 +40,38 @@ def _serialize_lookup_key(key_val: Any) -> str | None:
 
 
 class OperatorsLookupMixin(OperatorsBaseMixin):
+    """Mixin implementing ``$lookup`` aggregation stage evaluation.
+
+    Supports both an indexed temporary hash-join strategy (for small foreign
+    collections or pipeline-based lookups) and a correlated SQL subquery
+    fallback (for large foreign collections), with ObjectId-aware key
+    extraction and row-by-row fallback for malformed JSON rows.
+    """
+
     def _create_lookup_hash_table(
         self,
         from_collection: str,
         foreign_field: str | None,
         pipeline: list[dict[str, Any]] | None = None,
     ) -> tuple[str, str]:
-        """
-        Create a hash table (temp table with index) from a foreign collection
-        for efficient hash join lookup.
+        """Create an indexed temporary hash table for a foreign collection.
 
-        This implements O(n+m) hash join instead of O(n*m) correlated subquery.
+        Builds an indexed temp table enabling ``O(n + m)`` hash joins instead
+        of ``O(n * m)`` correlated subqueries. When ``pipeline`` is provided,
+        runs it through ``TemporaryTableAggregationProcessor`` first; otherwise
+        reads directly from ``from_collection``, falling back to row-by-row
+        parsing on malformed JSON ``OperationalError``. Drops the temp table
+        and re-raises if creation fails.
 
         Args:
-            from_collection: The collection to build hash table from
-            foreign_field: The field to use as join key (None for _id)
-            pipeline: Optional pipeline to run on foreign collection first
+            from_collection: Name of the foreign collection to materialize.
+            foreign_field: Foreign field path used as join key (defaults to
+                ``"_id"`` when ``None``).
+            pipeline: Optional sub-pipeline to execute on ``from_collection``
+                before indexing.
 
         Returns:
-            Tuple of (hash_table_name, join_key_column)
+            tuple[str, str]: Pair of ``(hash_table_name, join_key_column)``.
         """
         if foreign_field is None:
             foreign_field = "_id"
@@ -173,17 +197,18 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         foreign_field: str,
         join_key: str,
     ) -> None:
-        """
-        Fallback method to create hash table by reading documents one by one.
+        """Create a lookup hash table row by row, skipping corrupted JSON.
 
-        Used when the SQL approach fails due to malformed JSON in the data column.
-        This method skips corrupted documents gracefully.
+        Used when bulk SQL creation fails due to malformed JSON in ``data``.
+        Parses each document individually via ``neosqlite_json_loads`` and
+        skips rows raising ``UnicodeDecodeError``, ``ValueError``,
+        ``TypeError``, or ``KeyError`` with a warning.
 
         Args:
-            hash_table_name: Name of the hash table to create
-            from_collection: Source collection name
-            foreign_field: Field to use as join key
-            join_key: Name of the join key column
+            hash_table_name: Name of the temporary hash table to create.
+            from_collection: Source foreign collection name.
+            foreign_field: Foreign field path used as the join key.
+            join_key: Name of the join key column in ``hash_table_name``.
         """
         from ..json_helpers import neosqlite_json_dumps, neosqlite_json_loads
 
@@ -244,16 +269,16 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             )
 
     def _estimate_collection_size(self, collection_name: str) -> int:
-        """
-        Estimate the size of a collection in bytes.
+        """Estimate the in-memory size of a collection in bytes.
 
-        Uses SQLite's table statistics to estimate size.
+        Queries row count and average ``LENGTH(data)``, adds 50 bytes per row
+        for ``id`` and ``_id`` overhead, and returns ``0`` on empty or error.
 
         Args:
-            collection_name: Name of the collection to estimate
+            collection_name: Name of the collection to inspect.
 
         Returns:
-            Estimated size in bytes
+            int: Estimated collection size in bytes.
         """
         try:
             result = self.db.execute(
@@ -274,11 +299,14 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         return 0
 
     def _get_available_memory(self) -> int:
-        """
-        Get available memory for hash join operations.
+        """Estimate available memory in bytes for hash join operations.
+
+        Computes half of SQLite's configured page cache (``PRAGMA page_size``
+        times ``abs(PRAGMA cache_size)``), falling back to 30% of
+        ``RLIMIT_AS`` soft limit or ``HASH_JOIN_MEMORY_THRESHOLD``.
 
         Returns:
-            Available memory in bytes (estimated from SQLite cache or system)
+            int: Estimated available memory budget in bytes.
         """
         try:
             page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
@@ -306,19 +334,18 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         from_collection: str,
         pipeline: list[dict[str, Any]] | None = None,
     ) -> bool:
-        """
-        Decide whether to use hash join or correlated subquery for $lookup.
+        """Decide between hash join and correlated subquery for ``$lookup``.
 
-        Uses memory estimation to decide:
-        - If foreign collection estimate < 30% of available memory: use hash join (faster)
-        - Otherwise: use correlated subquery (lower memory, slower)
+        Always uses hash join when ``pipeline`` is provided. Otherwise compares
+        the estimated foreign collection size against 30% of available memory,
+        defaulting to ``True`` on estimation failure.
 
         Args:
-            from_collection: The foreign collection name
-            pipeline: Optional pipeline to run on foreign collection first
+            from_collection: Name of the foreign collection to join with.
+            pipeline: Optional sub-pipeline to run on the foreign collection.
 
         Returns:
-            True if should use hash join, False for correlated subquery
+            bool: ``True`` to use hash join, ``False`` for correlated subquery.
         """
         if pipeline:
             return True
@@ -331,7 +358,18 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             return True
 
     def _extract_field_value(self, doc: dict[str, Any], field: str) -> Any:
-        """Extract field value from document, supporting dot notation."""
+        """Extract a nested field value from a document using dot notation.
+
+        Traverses dictionary keys along ``field.split(".")``, returning
+        ``None`` if any segment is missing or traverses a non-dict value.
+
+        Args:
+            doc: Source document dictionary.
+            field: Field name or dot-separated nested path.
+
+        Returns:
+            Any: Extracted field value, or ``None`` if not found.
+        """
         parts = field.split(".")
         val: Any = doc
         for part in parts:
@@ -347,29 +385,23 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         current_table: str,
         lookup_spec: dict[str, Any],
     ) -> str:
-        """
-        Process a $lookup stage using hash join for O(n+m) complexity.
+        """Process a ``$lookup`` aggregation stage into a new temp table.
 
-        This method implements the $lookup aggregation stage which performs a left
-        outer join to another collection in the same database. It uses an optimized
-        hash join approach:
-        1. Creates a temporary table with an index on the foreign field (hash table)
-        2. Uses a single JOIN query instead of correlated subquery
-
-        This replaces the previous correlated subquery approach which was O(n*m).
+        Selects between ``_process_lookup_hash_join`` (``O(n + m)`` via an
+        indexed temporary hash table) and
+        ``_process_lookup_correlated_subquery`` (``O(n * m)`` with lower
+        memory usage) using ``_should_use_hash_join``.
 
         Args:
-            create_temp (Callable): Function to create temporary tables
-            current_table (str): Name of the current temporary table containing input data
-            lookup_spec (dict[str, Any]): The $lookup stage specification containing:
-                - "from": The name of the collection to join with
-                - "localField": The field from the input documents
-                - "foreignField": The field from the documents of the "from" collection
-                - "as": The name of the new array field to add to the matching documents
-                - "pipeline": Optional pipeline to run on foreign collection
+            create_temp: Callable that creates and populates the next temporary
+                table from a stage specification and SQL query.
+            current_table: Name of the current input temporary table.
+            lookup_spec: ``$lookup`` stage configuration containing ``"from"``,
+                ``"as"``, ``"localField"``, ``"foreignField"``, and optional
+                ``"pipeline"``.
 
         Returns:
-            str: Name of the newly created temporary table with lookup results added
+            str: Name of the newly created temporary table with joined arrays.
         """
         from_collection = lookup_spec["from"]
         pipeline = lookup_spec.get("pipeline", [])
@@ -391,18 +423,25 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         current_table: str,
         lookup_spec: dict[str, Any],
     ) -> str:
-        """
-        Process $lookup using correlated subquery (O(n*m) but low memory).
+        """Process ``$lookup`` via correlated subquery for low memory usage.
 
-        This is the fallback when the foreign collection is too large for hash join.
+        Used as a fallback when the foreign collection is too large for an
+        in-memory hash join. When ``pipeline`` is present, materializes its
+        results into a temporary table that is dropped in a ``finally`` block.
 
         Args:
-            create_temp: Function to create temporary tables
-            current_table: Current temp table name
-            lookup_spec: The $lookup specification
+            create_temp: Callable that creates the next temporary table.
+            current_table: Name of the current input temporary table.
+            lookup_spec: ``$lookup`` stage configuration dictionary.
 
         Returns:
-            Name of the new temporary table
+            str: Name of the newly created temporary table.
+
+        Raises:
+            NotImplementedError: If ``pipeline`` is given without both
+                ``localField`` and ``foreignField``.
+            ValueError: If ``from``, ``localField``, ``foreignField``, or
+                ``as`` is missing in non-pipeline mode.
         """
         from_collection = lookup_spec["from"]
         local_field = lookup_spec.get("localField")
@@ -504,7 +543,15 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         return new_table
 
     def _local_id_extract_expr(self) -> str:
-        """Return SQL TEXT expression extracting main_table._id with ObjectId support."""
+        """Return a SQL TEXT expression extracting ``main_table._id``.
+
+        Checks ``main_table._id``, falls back to ``$._id`` (unwrapping
+        ``__neosqlite_objectid__`` markers when present), and finally falls
+        back to ``main_table.id`` cast as ``TEXT``.
+
+        Returns:
+            str: SQL ``CAST(COALESCE(...) AS TEXT)`` expression.
+        """
         prefix = self.jsonb.json_function_prefix
         return (
             f"CAST(COALESCE(main_table._id, "
@@ -523,7 +570,24 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         as_field: str,
         related_doc_expr: str,
     ) -> tuple[str, str]:
-        """Build SELECT/FROM SQL fragments for correlated subquery $lookup."""
+        """Build SELECT and FROM SQL clauses for a correlated ``$lookup``.
+
+        Handles ``_id`` and nested ObjectId-aware field extraction on both
+        ``main_table`` and ``related``, aggregating matched rows with
+        ``json_group_array`` / ``jsonb_group_array`` and defaulting empty
+        matches to an empty JSON array.
+
+        Args:
+            current_table: Name of the left-hand temporary table.
+            related_table: Quoted table name or temp table for foreign rows.
+            local_field: Field path in ``current_table`` to match on.
+            foreign_field: Field path in ``related_table`` to match on.
+            as_field: Destination array field name written into ``data``.
+            related_doc_expr: SQL expression yielding each matched foreign doc.
+
+        Returns:
+            tuple[str, str]: Pair of ``(select_clause, from_clause)``.
+        """
         prefix = self.jsonb.json_function_prefix
         json_set_func = f"{prefix}_set"
 
@@ -565,16 +629,26 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         current_table: str,
         lookup_spec: dict[str, Any],
     ) -> str:
-        """
-        Process $lookup using hash join (O(n+m) but uses more memory).
+        """Process ``$lookup`` using an indexed temporary hash table join.
+
+        Creates the indexed foreign hash table via
+        ``_create_lookup_hash_table``, performs a ``LEFT JOIN`` grouped by
+        ``_join_key`` using ``json_group_array_function``, writes the result
+        via ``create_temp``, and drops the hash table in ``finally``.
 
         Args:
-            create_temp: Function to create temporary tables
-            current_table: Current temp table name
-            lookup_spec: The $lookup specification
+            create_temp: Callable that creates the next temporary table.
+            current_table: Name of the current input temporary table.
+            lookup_spec: ``$lookup`` stage configuration dictionary.
 
         Returns:
-            Name of the new temporary table
+            str: Name of the newly created temporary table.
+
+        Raises:
+            NotImplementedError: If ``pipeline`` is given without both
+                ``localField`` and ``foreignField``.
+            ValueError: If ``from``, ``localField``, ``foreignField``, or
+                ``as`` is missing in non-pipeline mode.
         """
         from_collection = lookup_spec["from"]
         local_field = lookup_spec.get("localField")

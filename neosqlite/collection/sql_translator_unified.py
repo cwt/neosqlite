@@ -1,9 +1,7 @@
-"""
-Unified SQL translation framework for NeoSQLite.
+"""Unified SQL translation framework for NeoSQLite.
 
-This module provides a unified approach to translating MongoDB-style queries
-into SQL statements that can be used both for direct execution and for
-temporary table generation.
+Provides a unified framework for translating MongoDB-style queries into SQL
+clauses usable both for direct query execution and temporary table pipelines.
 """
 
 import logging
@@ -24,32 +22,29 @@ from .jsonb_support import (
 
 
 def _empty_result() -> tuple[str, list[Any]]:
-    """
-    Return an empty result tuple for fallback cases.
+    """Return an empty SQL clause result tuple for fallback cases.
 
     Returns:
-        tuple[str, list[Any]]: A tuple containing an empty string and an empty list.
+        tuple[str, list[Any]]: Tuple of an empty string and an empty list.
     """
     return "", []
 
 
 def _text_search_fallback() -> tuple[None, list[Any]]:
-    """
-    Return a text search result tuple for fallback cases.
+    """Return a sentinel fallback result indicating Python execution is needed.
 
     Returns:
-        tuple[None, list[Any]]: A tuple containing None and an empty list.
+        tuple[None, list[Any]]: Tuple of ``None`` and an empty parameter list.
     """
     return None, []
 
 
 class SQLFieldAccessor:
-    """
-    Handles field access patterns for different contexts.
+    """Generates SQL expressions for accessing document fields by context.
 
-    This class provides methods to generate appropriate SQL expressions
-    for accessing fields in different contexts, such as direct table access
-    or temporary table access.
+    Maps ``_id`` to the dedicated ``_id`` column when ``allow_id_column`` is
+    enabled and translates nested JSON fields to ``json_extract`` or
+    ``jsonb_extract`` calls depending on JSONB and text-search rules.
     """
 
     def __init__(
@@ -59,14 +54,18 @@ class SQLFieldAccessor:
         jsonb_supported: bool = False,
         allow_id_column: bool = True,
     ):
-        """
-        Initialize the SQLFieldAccessor with column names.
+        """Initialize the SQLFieldAccessor with column and JSONB settings.
 
         Args:
-            data_column: The name of the column containing JSON data (default: "data")
-            id_column: The name of the column containing document IDs (default: "id")
-            jsonb_supported: Whether JSONB functions are supported (default: False)
-            allow_id_column: Whether "_id" maps to the _id column instead of $. _id JSON
+            data_column: Name of the column storing JSON data. Defaults to
+                ``"data"``.
+            id_column: Name of the column storing integer document IDs.
+                Defaults to ``"id"``.
+            jsonb_supported: Whether SQLite JSONB functions are supported.
+                Defaults to ``False``.
+            allow_id_column: Whether ``"_id"`` maps to the ``_id`` column
+                instead of extracting ``$._id`` from JSON. Defaults to
+                ``True``.
         """
         self.data_column = data_column
         self.id_column = id_column
@@ -79,16 +78,18 @@ class SQLFieldAccessor:
         context: str = "direct",
         query: dict | None = None,
     ) -> str:
-        """
-        Generate field access SQL expression for the given field.
+        """Generate a SQL expression for accessing a document field.
 
         Args:
-            field: The field name to access
-            context: The context for field access (default: "direct")
-            query: The query being processed (used to determine if text search is needed)
+            field: MongoDB dot-notation field name to access.
+            context: Execution context identifier (reserved for callers).
+                Defaults to ``"direct"``.
+            query: Optional full query dictionary inspected to decide whether
+                ``json_*`` functions are required over ``jsonb_*``.
 
         Returns:
-            SQL expression for accessing the field
+            str: SQL expression referencing ``_id`` or calling
+                ``json_extract`` / ``jsonb_extract``.
         """
         if field == "_id" and self.allow_id_column:
             # Special handling for _id field - access the _id column directly
@@ -107,7 +108,16 @@ class SQLFieldAccessor:
 def _parse_extract_expr(
     field_access: str,
 ) -> tuple[str, str, str, bool] | None:
-    """Parse ``json[b]_extract(col, '$.path')`` into (prefix, col, path_sql, is_jsonb)."""
+    """Parse a ``json_extract`` or ``jsonb_extract`` call expression.
+
+    Args:
+        field_access: SQL field access expression to inspect.
+
+    Returns:
+        tuple[str, str, str, bool] | None: Tuple containing
+            ``(prefix, col, path_sql, is_jsonb)`` if ``field_access`` has the
+            form ``json[b]_extract(col, '$.path')``, or ``None`` otherwise.
+    """
     for prefix, is_jsonb in (("jsonb", True), ("json", False)):
         fn_prefix = f"{prefix}_extract("
         if field_access.startswith(fn_prefix) and field_access.endswith(")"):
@@ -119,12 +129,11 @@ def _parse_extract_expr(
 
 
 class SQLOperatorTranslator:
-    """
-    Translates MongoDB operators to SQL expressions.
+    """Translates MongoDB query operators into SQLite SQL expressions.
 
-    This class handles the translation of MongoDB query operators (like $eq, $gt, $in, etc.)
-    into equivalent SQL expressions. It uses an SQLFieldAccessor to generate appropriate
-    field access expressions for different contexts.
+    Converts comparison, array, existence, bitwise, modulo, regex, BSON type,
+    and ``$elemMatch`` operators into parameterized SQL predicates using an
+    ``SQLFieldAccessor`` and ``json_each`` / ``jsonb_each`` support.
     """
 
     def __init__(
@@ -133,15 +142,16 @@ class SQLOperatorTranslator:
         json_each_function: str | None = None,
         db_connection: Any = None,
     ):
-        """
-        Initialize the SQLOperatorTranslator with an optional field accessor.
+        """Initialize the SQLOperatorTranslator.
 
         Args:
-            field_accessor: An SQLFieldAccessor instance to use for field access expressions.
-                            If None, a default SQLFieldAccessor will be created.
-            json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
-                               If None, defaults to 'json_each'.
-            db_connection: Optional SQLite connection for nested $expr evaluation.
+            field_accessor: ``SQLFieldAccessor`` used for field access
+                expressions. Creates a default instance when ``None``.
+            json_each_function: Table-valued JSON iteration function name
+                (``"jsonb_each"`` or ``"json_each"``). Defaults to
+                ``"json_each"``.
+            db_connection: Optional SQLite connection retained for nested
+                ``$expr`` evaluation.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
         self._json_each_function = json_each_function or "json_each"
@@ -154,25 +164,26 @@ class SQLOperatorTranslator:
         value: Any,
         regex_options: str = "",
     ) -> tuple[str | None, list[Any]]:
-        """
-        Translate a MongoDB operator to SQL.
+        """Translate a MongoDB query operator to a SQL predicate.
 
-        This method handles the translation of MongoDB query operators into equivalent
-        SQL expressions. It supports various operators including comparison operators
-        ($eq, $gt, $lt, $gte, $lte, $ne), array operators ($in, $nin), existence checks
-        ($exists), modulo operations ($mod), array size checks ($size), and substring
-        searches ($contains).
-
-        Special handling is included for Binary objects which are serialized using
-        the compact format for SQL comparisons.
+        Handles comparison (``$eq``, ``$gt``, ``$lt``, ``$gte``, ``$lte``,
+        ``$ne``), array (``$in``, ``$nin``, ``$all``, ``$size``,
+        ``$elemMatch``), existence (``$exists``), modulo (``$mod``), substring
+        (``$contains``), bitwise (``$bitsAllClear``, ``$bitsAllSet``,
+        ``$bitsAnyClear``, ``$bitsAnySet``), regex (``$regex``), and BSON type
+        (``$type``) operators, including ``datetime()`` normalization for
+        datetime values. Returns ``(None, [])`` when Python fallback is needed.
 
         Args:
-            field_access: The SQL expression for accessing the field
-            operator: The MongoDB operator ($eq, $gt, etc.)
-            value: The value to compare against
+            field_access: SQL expression for accessing the target field.
+            operator: MongoDB operator name (e.g., ``"$eq"``, ``"$in"``).
+            value: Comparison value or operator specification.
+            regex_options: Regex flag string (e.g., ``"i"``) used with
+                ``$regex``. Defaults to ``""``.
 
         Returns:
-            Tuple of (SQL expression, parameters) or (None, []) if unsupported
+            tuple[str | None, list[Any]]: ``(sql_expr, params)`` tuple, or
+                ``(None, [])`` when the operator must fall back to Python.
         """
         from ..objectid import ObjectId
         from .type_utils import (
@@ -199,6 +210,14 @@ class SQLOperatorTranslator:
         each_is_jsonb = self._json_each_function == "jsonb_each"
 
         def _normalize_for_field(val: Any) -> tuple[Any, str]:
+            """Serialize a comparison value and choose its SQL placeholder.
+
+            Args:
+                val: Python value to normalize for the target SQL expression.
+
+            Returns:
+                tuple[Any, str]: ``(serialized_value, placeholder)`` pair.
+            """
             if field_access == "_id":
                 return (str(val) if isinstance(val, ObjectId) else val), "?"
             if field_access == "json_each.value":
@@ -207,6 +226,15 @@ class SQLOperatorTranslator:
 
         # Check if this is a datetime comparison that should be wrapped with datetime() function
         def to_iso(v: Any) -> str:
+            """Convert a datetime instance to an ISO-8601 string.
+
+            Args:
+                v: Datetime object or pre-formatted string value.
+
+            Returns:
+                str: ISO-8601 formatted string if ``v`` is a ``datetime``,
+                    otherwise ``v`` unchanged.
+            """
             if isinstance(v, datetime):
                 return v.isoformat()
             return v
@@ -657,7 +685,22 @@ class SQLOperatorTranslator:
     def _translate_elem_match(
         self, data_expr: str, json_path: str, elem_query: Any
     ) -> tuple[str | None, list[Any]]:
-        """Translate $elemMatch on a JSON array field to SQLite EXISTS."""
+        """Translate ``$elemMatch`` on a JSON array field to SQLite ``EXISTS``.
+
+        Supports scalar criteria, empty criteria dictionaries, element-level
+        operator dictionaries (``$eq``, ``$gt``, ``$lt``, ``$gte``, ``$lte``,
+        ``$ne``, ``$in``, ``$nin``, ``$regex``/``$options``, ``$type``), and
+        subdocument queries over array objects.
+
+        Args:
+            data_expr: SQL column or expression holding the parent JSON value.
+            json_path: Quoted JSON path string for the target array field.
+            elem_query: Scalar value or criteria dictionary for array elements.
+
+        Returns:
+            tuple[str | None, list[Any]]: ``(sql_expr, params)`` tuple, or
+                ``(None, [])`` when the query requires Python evaluation.
+        """
         from .type_utils import (
             is_encoded_json_value,
             json_type_list_sql,
@@ -830,14 +873,14 @@ class SQLOperatorTranslator:
         )
 
     def _is_datetime_value(self, value: Any) -> bool:
-        """
-        Check if a value is a datetime string.
+        """Check whether a value represents a datetime or ISO date string.
 
         Args:
-            value: Value to check
+            value: Value to inspect for datetime representation.
 
         Returns:
-            True if value is a datetime string, False otherwise
+            bool: ``True`` if ``value`` is a recognized datetime value,
+                ``False`` otherwise.
         """
         from .datetime_utils import is_datetime_value
 
@@ -845,13 +888,10 @@ class SQLOperatorTranslator:
 
 
 class SQLClauseBuilder:
-    """
-    Builds SQL clauses with reusable components.
+    """Builds SQL WHERE, ORDER BY, and LIMIT/OFFSET clauses from queries.
 
-    This class provides methods to build various SQL clauses including WHERE, ORDER BY,
-    and LIMIT/OFFSET clauses. It uses SQLFieldAccessor for field access and
-    SQLOperatorTranslator for operator translations to create SQL expressions from
-    MongoDB-style query specifications.
+    Combines ``SQLFieldAccessor`` and ``SQLOperatorTranslator`` to translate
+    MongoDB filter, sort, skip, and limit specifications into SQLite clauses.
     """
 
     def __init__(
@@ -861,18 +901,19 @@ class SQLClauseBuilder:
         json_each_function: str | None = None,
         db_connection: Any = None,
     ):
-        """
-        Initialize the SQLClauseBuilder with optional field accessor and operator translator.
+        """Initialize the SQLClauseBuilder.
 
         Args:
-            field_accessor: An SQLFieldAccessor instance to use for field access expressions.
-                            If None, a default SQLFieldAccessor will be created.
-            operator_translator: An SQLOperatorTranslator instance to use for operator translations.
-                                 If None, a default SQLOperatorTranslator will be created.
-            json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
-                               If provided and operator_translator is None, a new SQLOperatorTranslator
-                               will be created with this function.
-            db_connection: Optional SQLite connection for $expr Tier-1 translation.
+            field_accessor: ``SQLFieldAccessor`` for generating field access
+                SQL expressions. Creates a default instance when ``None``.
+            operator_translator: ``SQLOperatorTranslator`` for translating
+                field operators. Creates a default or configured instance when
+                ``None``.
+            json_each_function: Table-valued iteration function name
+                (``"jsonb_each"`` or ``"json_each"``). Used when constructing
+                a default translator and array containment predicates.
+            db_connection: Optional SQLite connection for Tier-1 ``$expr``
+                evaluation.
         """
         self.field_accessor = field_accessor or SQLFieldAccessor()
         # Retained so clause builders can emit array-containment checks (#99)
@@ -894,20 +935,24 @@ class SQLClauseBuilder:
         conditions: list[dict[str, Any]],
         context: str = "direct",
     ) -> tuple[str | None, list[Any]]:
-        """
-        Build a logical condition ($and, $or, $nor, $not).
+        """Build a SQL logical condition for ``$and``, ``$or``, or ``$nor``.
 
-        This method handles the construction of SQL expressions for MongoDB logical operators.
-        It recursively processes nested conditions and builds appropriate SQL expressions
-        with proper parentheses grouping.
+        Recursively translates each sub-condition dictionary via
+        ``build_where_clause()`` and combines them using ``AND``, ``OR``, or
+        ``NOT (... OR ...)`` with ``COALESCE(..., 0)`` null-safety for
+        disjunctions.
 
         Args:
-            operator: The logical operator ($and, $or, $nor)
-            conditions: List of condition dictionaries
-            context: The context for field access (default: "direct")
+            operator: Logical operator name (``"$and"``, ``"$or"``, or
+                ``"$nor"``).
+            conditions: List of sub-condition dictionaries.
+            context: Execution context passed to ``build_where_clause()``.
+                Defaults to ``"direct"``.
 
         Returns:
-            Tuple of (SQL expression, parameters) or (None, []) if unsupported
+            tuple[str | None, list[Any]]: ``(sql_expr, params)``, ``("", [])``
+                when no clauses were produced, or ``(None, [])`` when any
+                sub-condition is unsupported or non-dict.
         """
         # default `sql` and `params`
         sql: str | None = None
@@ -967,21 +1012,31 @@ class SQLClauseBuilder:
         is_nested: bool = False,
         query_param: dict | None = None,
     ) -> tuple[str | None, list[Any]]:
-        """
-        Build a WHERE clause from a MongoDB-style query.
+        """Build a SQL WHERE clause from a MongoDB query dictionary.
 
-        This method translates a MongoDB-style query specification into an SQL WHERE clause.
-        It handles both simple field conditions and complex logical operators ($and, $or, $nor, $not).
-        The method recursively processes nested conditions and properly groups them with parentheses.
+        Translates field comparisons, operator dicts, logical operators
+        (``$and``, ``$or``, ``$nor``, ``$not``), ``$jsonSchema``, ``$expr``,
+        regex patterns, datetimes, nulls, and array containment checks into a
+        parameterized SQL predicate.
 
         Args:
-            query: The MongoDB-style query
-            context: The context for field access (default: "direct")
-            is_nested: Whether this is a nested condition within a logical operator (default: False)
-            query_param: The original query being processed (used to determine if text search is needed)
+            query: MongoDB-style query dictionary.
+            context: Execution context passed to ``get_field_access()``.
+                Defaults to ``"direct"``.
+            is_nested: When ``True``, omits the leading ``"WHERE "`` prefix.
+                Defaults to ``False``.
+            query_param: Optional outer query dictionary used when deciding
+                between ``json_*`` and ``jsonb_*`` functions.
 
         Returns:
-            Tuple of (WHERE clause, parameters) or (None, []) if unsupported
+            tuple[str | None, list[Any]]: ``(where_clause, params)`` tuple,
+                ``("", [])`` for an empty query, or ``(None, [])`` when Python
+                fallback is required.
+
+        Raises:
+            NotImplementedError: If ``query`` contains unsupported JavaScript
+                or custom aggregation operators (``$where``, ``$function``, or
+                ``$accumulator``).
         """
         # default `sql` and `params`
         sql: str | None = None
@@ -1195,18 +1250,17 @@ class SQLClauseBuilder:
     def build_order_by_clause(
         self, sort_spec: dict[str, Any], context: str = "direct"
     ) -> str:
-        """
-        Build an ORDER BY clause from a sort specification.
-
-        This method translates a MongoDB-style sort specification into an SQL ORDER BY clause.
-        It handles multiple sort fields with their respective sort directions (ascending or descending).
+        """Build a SQL ``ORDER BY`` clause from a MongoDB sort specification.
 
         Args:
-            sort_spec: The sort specification mapping field names to sort directions
-            context: The context for field access (default: "direct")
+            sort_spec: Mapping of field names to sort directions (``1`` for
+                ascending, ``DESCENDING`` / ``-1`` for descending).
+            context: Field access context identifier. Defaults to
+                ``"direct"``.
 
         Returns:
-            ORDER BY clause as a string
+            str: SQL ``ORDER BY ...`` clause, or ``""`` when ``sort_spec`` is
+                empty.
         """
         if not sort_spec:
             return ""
@@ -1223,18 +1277,19 @@ class SQLClauseBuilder:
     def build_limit_offset_clause(
         self, limit_value: int | None = None, skip_value: int = 0
     ) -> str:
-        """
-        Build LIMIT and OFFSET clauses.
+        """Build SQL ``LIMIT`` and ``OFFSET`` clauses.
 
-        This method constructs SQL LIMIT and OFFSET clauses based on the provided limit and skip values.
-        It handles the special case where SQLite requires a LIMIT clause when using OFFSET.
+        Treats ``limit_value == 0`` as unlimited and emits ``LIMIT -1 OFFSET``
+        when ``skip_value > 0`` without a limit, as required by SQLite syntax.
 
         Args:
-            limit_value: The limit value (default: None)
-            skip_value: The skip value (default: 0)
+            limit_value: Maximum number of documents to return (absolute value
+                is used), or ``None`` / ``0`` for no limit.
+            skip_value: Number of leading documents to skip. Defaults to ``0``.
 
         Returns:
-            LIMIT and OFFSET clauses as a string
+            str: SQL ``LIMIT``/``OFFSET`` clause string, or ``""`` if neither
+                limit nor skip applies.
         """
         if limit_value == 0:
             limit_value = None
@@ -1254,13 +1309,11 @@ class SQLClauseBuilder:
 
 
 class SQLTranslator:
-    """
-    Unified SQL translator that can be used for both direct SQL generation
-    and temporary table generation.
+    """High-level unified SQL translator for direct and temp-table queries.
 
-    This class provides a high-level interface for translating MongoDB-style query
-    operations into SQL clauses. It integrates SQLFieldAccessor, SQLOperatorTranslator,
-    and SQLClauseBuilder to provide comprehensive SQL translation capabilities.
+    Coordinates ``SQLFieldAccessor``, ``SQLOperatorTranslator``, and
+    ``SQLClauseBuilder`` to translate ``$match``, ``$sort``, ``$skip``,
+    ``$limit``, and field access expressions into SQLite SQL clauses.
     """
 
     def __init__(
@@ -1273,20 +1326,24 @@ class SQLTranslator:
         db_connection: Any = None,
         jsonb_context: JSONBContext | None = None,
     ):
-        """
-        Initialize the SQLTranslator with table and column names.
+        """Initialize the SQLTranslator with table, column, and JSONB config.
 
         Args:
-            table_name: The name of the table to query (default: "collection")
-            data_column: The name of the column containing JSON data (default: "data")
-            id_column: The name of the column containing document IDs (default: "id")
-            jsonb_supported: Whether JSONB functions are supported (default: False)
-            json_each_function: The json_each function to use ('jsonb_each' or 'json_each').
-                              If None, defaults to 'json_each'.
-            db_connection: Optional SQLite connection for $expr Tier-1 translation.
-            jsonb_context: Optional capability context.  When provided, it
-                overrides jsonb_supported/json_each_function so callers do not
-                have to repeat the two capability flags.
+            table_name: Target table name. Defaults to ``"collection"`` when
+                ``None`` or empty.
+            data_column: Column name storing JSON documents. Defaults to
+                ``"data"``.
+            id_column: Column name storing document row IDs. Defaults to
+                ``"id"``.
+            jsonb_supported: Whether SQLite JSONB functions are supported.
+                Defaults to ``False``.
+            json_each_function: Name of the ``json_each`` function
+                (``"jsonb_each"`` or ``"json_each"``); defaults to
+                ``"json_each"``.
+            db_connection: Optional SQLite connection for Tier-1 ``$expr``
+                evaluation.
+            jsonb_context: Optional ``JSONBContext`` whose flags override
+                ``jsonb_supported`` and ``json_each_function`` when provided.
         """
         if jsonb_context is not None:
             jsonb_supported = jsonb_context.jsonb_supported
@@ -1315,20 +1372,20 @@ class SQLTranslator:
     def translate_match(
         self, match_spec: dict[str, Any], context: str = "direct"
     ) -> tuple[str | None, list[Any]]:
-        """
-        Translate a $match stage to SQL WHERE clause.
+        """Translate a ``$match`` stage specification into a SQL WHERE clause.
 
-        This method translates a MongoDB $match specification into an SQL WHERE clause.
-        It handles special cases like text search queries by returning None to indicate
-        that fallback to Python implementation is required. For regular queries, it delegates
-        to the SQLClauseBuilder's build_where_clause method.
+        Returns ``(None, [])`` when the force-fallback flag is active, when
+        ``match_spec`` is not a dict, or when any ``$text`` operator is present
+        so the caller can run FTS or Python fallback handling.
 
         Args:
-            match_spec: The $match specification
-            context: The context for field access (default: "direct")
+            match_spec: MongoDB ``$match`` query specification dictionary.
+            context: Field access context identifier. Defaults to
+                ``"direct"``.
 
         Returns:
-            Tuple of (WHERE clause, parameters) or (None, []) for text search
+            tuple[str | None, list[Any]]: ``(where_clause, params)`` tuple, or
+                ``(None, [])`` if fallback handling is required.
         """
         from .query_helper.utils import get_force_fallback
 
@@ -1356,17 +1413,17 @@ class SQLTranslator:
         )
 
     def _contains_text_operator(self, query: dict[str, Any]) -> bool:
-        """
-        Check if a query contains any $text operators, including nested in logical operators.
+        """Check whether a query contains any ``$text`` operators.
 
-        This method delegates to the centralized _contains_text_operator function
-        to ensure consistent text search detection across all NeoSQLite components.
+        Delegates to ``jsonb_support._contains_text_operator`` so top-level and
+        nested logical-operator ``$text`` checks stay consistent.
 
         Args:
-            query: The query to check
+            query: MongoDB query dictionary to inspect.
 
         Returns:
-            True if the query contains $text operators, False otherwise
+            bool: ``True`` if ``query`` contains any ``$text`` operator,
+                ``False`` otherwise.
         """
         from .jsonb_support import _contains_text_operator
 
@@ -1375,39 +1432,30 @@ class SQLTranslator:
     def translate_sort(
         self, sort_spec: dict[str, Any], context: str = "direct"
     ) -> str:
-        """
-        Translate a $sort stage to SQL ORDER BY clause.
-
-        This method translates a MongoDB $sort specification into an SQL ORDER BY clause.
-        It delegates to the SQLClauseBuilder's build_order_by_clause method to perform
-        the actual translation, handling multiple sort fields with their respective
-        sort directions (ascending or descending).
+        """Translate a ``$sort`` stage specification to a SQL ORDER BY clause.
 
         Args:
-            sort_spec: The $sort specification
-            context: The context for field access (default: "direct")
+            sort_spec: Mapping of field names to sort directions.
+            context: Field access context identifier. Defaults to
+                ``"direct"``.
 
         Returns:
-            ORDER BY clause
+            str: SQL ``ORDER BY`` clause string, or ``""`` if empty.
         """
         return self.clause_builder.build_order_by_clause(sort_spec, context)
 
     def translate_skip_limit(
         self, limit_value: int | None = None, skip_value: int = 0
     ) -> str:
-        """
-        Translate $skip and $limit stages to SQL LIMIT/OFFSET clauses.
-
-        This method translates MongoDB $skip and $limit specifications into SQL LIMIT and OFFSET clauses.
-        It delegates to the SQLClauseBuilder's build_limit_offset_clause method to perform the actual
-        translation, handling both limit and skip values appropriately for SQLite syntax.
+        """Translate ``$skip`` and ``$limit`` values to LIMIT/OFFSET clauses.
 
         Args:
-            limit_value: The limit value (default: None)
-            skip_value: The skip value (default: 0)
+            limit_value: Maximum number of rows to return, or ``None``/``0``
+                for unlimited.
+            skip_value: Number of leading rows to skip. Defaults to ``0``.
 
         Returns:
-            LIMIT and OFFSET clauses
+            str: SQL ``LIMIT``/``OFFSET`` clause string, or ``""`` if unused.
         """
         return self.clause_builder.build_limit_offset_clause(
             limit_value, skip_value
@@ -1416,21 +1464,15 @@ class SQLTranslator:
     def translate_field_access(
         self, field: str, context: str = "direct"
     ) -> str:
-        """
-        Translate field access for a given field and context.
-
-        This method generates the appropriate SQL expression for accessing a field
-        based on the field name and context. It delegates to the SQLFieldAccessor's
-        get_field_access method to perform the actual translation, handling special
-        cases like the "_id" field which maps to the ID column, and regular fields
-        which use json_extract expressions.
+        """Translate a field name to its SQL access expression.
 
         Args:
-            field: The field name
-            context: The context for field access (default: "direct")
+            field: MongoDB dot-notation field path.
+            context: Field access context identifier. Defaults to
+                ``"direct"``.
 
         Returns:
-            SQL expression for accessing the field
+            str: SQL expression for reading ``field``.
         """
         return self.field_accessor.get_field_access(field, context)
 
@@ -1441,21 +1483,22 @@ class SQLTranslator:
         limit_value: int | None = None,
         context: str = "direct",
     ) -> tuple[str, str, str]:
-        """
-        Translate sort/skip/limit stages to SQL clauses.
+        """Translate sort, skip, and limit stages to SQL clause strings.
 
-        This method translates MongoDB sort, skip, and limit specifications into their
-        corresponding SQL clauses. It combines the functionality of translate_sort and
-        translate_skip_limit to generate ORDER BY, LIMIT, and OFFSET clauses in a single call.
+        Combines ``translate_sort()`` and ``translate_skip_limit()``; the third
+        tuple element is always ``""`` because ``LIMIT`` and ``OFFSET`` are
+        returned together in the second element.
 
         Args:
-            sort_spec: The $sort specification (default: None)
-            skip_value: The skip value (default: 0)
-            limit_value: The limit value (default: None)
-            context: The context for field access (default: "direct")
+            sort_spec: Optional ``$sort`` mapping of field names to directions.
+            skip_value: Number of leading rows to skip. Defaults to ``0``.
+            limit_value: Maximum number of rows to return, or ``None``.
+            context: Field access context identifier. Defaults to
+                ``"direct"``.
 
         Returns:
-            Tuple of (ORDER BY clause, LIMIT clause, OFFSET clause)
+            tuple[str, str, str]: Three-element tuple containing
+                ``(order_by_clause, limit_offset_clause, "")``.
         """
         # Build ORDER BY clause
         order_by = self.translate_sort(sort_spec, context) if sort_spec else ""

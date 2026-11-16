@@ -12,12 +12,35 @@ from .base import BaseSqlMixin
 
 
 class ConditionalMixin(BaseSqlMixin):
-    """$cond / $ifNull → SQL CASE / COALESCE."""
+    """SQL converter mixin for conditional operators.
+
+    Translates MongoDB ``$cond``, ``$ifNull``, and ``$switch`` operators into
+    equivalent SQL ``CASE`` and ``COALESCE`` expressions.
+    """
 
     def _convert_cond_operator(
         self, operands: dict[str, Any] | list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $cond operator (dict or 3-element array form) to SQL CASE."""
+        """Convert a ``$cond`` operator into a SQL ``CASE`` expression.
+
+        Accepts either a 3-element array ``[if, then, else]`` or a dictionary
+        with ``"if"``, ``"then"``, and optional ``"else"`` keys (defaulting
+        to SQL ``NULL`` when omitted). Non-dict ``"if"`` operands are wrapped
+        in a truthiness ``CASE`` check.
+
+        Args:
+            operands: Dictionary or 3-element list describing the condition,
+                truthy branch, and optional falsy branch.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql, params)`` tuple containing the
+                ``CASE WHEN ... THEN ... ELSE ... END`` expression and bound
+                parameters.
+
+        Raises:
+            ValueError: If ``operands`` is neither a valid dictionary with
+                ``"if"`` and ``"then"`` keys nor a 3-element list.
+        """
         if isinstance(operands, list):
             if len(operands) != 3:
                 raise ValueError(
@@ -56,7 +79,18 @@ class ConditionalMixin(BaseSqlMixin):
     def _convert_ifNull_operator(
         self, operands: list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $ifNull operator to SQL COALESCE."""
+        """Convert a ``$ifNull`` operator into a SQL ``COALESCE`` call.
+
+        Args:
+            operands: Two-element list ``[expr, replacement]``.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql, params)`` tuple containing the
+                ``COALESCE(...)`` SQL expression and its bound parameters.
+
+        Raises:
+            ValueError: If ``operands`` is not a 2-element list.
+        """
         if not isinstance(operands, list) or len(operands) != 2:
             raise ValueError("$ifNull requires exactly 2 operands")
 
@@ -71,24 +105,27 @@ class ConditionalMixin(BaseSqlMixin):
     def _convert_switch_operator(
         self, operands: dict[str, Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $switch operator to SQL CASE statement.
+        """Convert a ``$switch`` operator into a SQL ``CASE`` statement.
 
-        MongoDB syntax:
-            { $switch: {
-                branches: [
-                    { case: <expr>, then: <expr> },
-                    ...
-                ],
-                default: <expr>   // optional
-            } }
+        Translates MongoDB branch specifications ``{"branches": [{"case": ...,
+        "then": ...}, ...], "default": ...}`` into ``CASE WHEN ... THEN ...
+        ELSE ... END``, defaulting to ``ELSE NULL`` when ``"default"`` is
+        ``None`` or omitted.
 
-        SQL equivalent:
-            CASE
-                WHEN <case1> THEN <then1>
-                WHEN <case2> THEN <then2>
-                ...
-                ELSE <default>    // NULL if omitted
-            END
+        Args:
+            operands: Dictionary containing a non-empty ``"branches"`` list of
+                ``{"case": ..., "then": ...}`` dicts and an optional
+                ``"default"`` expression.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql, params)`` tuple containing the
+                ``CASE`` expression and collected parameters in evaluation
+                order.
+
+        Raises:
+            ValueError: If ``operands`` is not a dict, ``"branches"`` is
+                missing or empty, or any branch is not a dict with both
+                ``"case"`` and ``"then"`` expressions.
         """
         if not isinstance(operands, dict):
             raise ValueError("$switch requires a dictionary")

@@ -27,10 +27,12 @@ logger = logging.getLogger(__name__)
 
 
 class GridIn:
-    """
-    A file-like object for writing data to GridFS.
+    """A file-like object for writing data to GridFS.
 
-    This class provides a writable interface for storing files in GridFS.
+    Buffers incoming bytes, flushes fixed-size chunks to the chunks table,
+    lazily creates the file metadata document, and optionally computes an MD5
+    checksum. Supports context-manager usage that aborts partial uploads on
+    exception and commits finalized files on normal exit.
     """
 
     def __init__(
@@ -46,20 +48,19 @@ class GridIn:
         content_type: str | None = None,
         aliases: list[str] | None = None,
     ):
-        """
-        Initialize a new GridIn instance.
+        """Initialize a new ``GridIn`` writable stream.
 
         Args:
-            db: SQLite database connection
-            bucket_name: The bucket name for the GridFS files
-            chunk_size_bytes: The chunk size in bytes
-            filename: The name of the file
-            metadata: Optional metadata for the file
-            file_id: Optional custom file ID
-            disable_md5: Disable MD5 checksum calculation for performance
-            write_concern: Write concern settings (simulated for compatibility)
-            content_type: Optional MIME type of the file
-            aliases: Optional list of alternative names for the file
+            db: SQLite database connection.
+            bucket_name: Bucket name prefix for GridFS tables.
+            chunk_size_bytes: Maximum size of each chunk in bytes.
+            filename: Name of the stored file.
+            metadata: Optional metadata dictionary for the file.
+            file_id: Optional custom ``ObjectId`` or integer file ID.
+            disable_md5: If True, skip MD5 digest computation.
+            write_concern: Optional write concern settings for sync behavior.
+            content_type: Optional MIME content type of the file.
+            aliases: Optional list of alternative filenames.
         """
         self._db = db
         self._bucket_name = bucket_name
@@ -84,51 +85,47 @@ class GridIn:
         self._file_document_created = False
 
     def _serialize_aliases(self) -> str | None:
-        """
-        Serialize aliases to JSON string.
+        """Serialize file aliases to a JSON string.
 
         Returns:
-            JSON string representation or None
+            str | None: JSON-encoded aliases string, or None if unset.
         """
         return serialize_aliases(self._aliases)
 
     def _serialize_metadata(
         self, metadata: dict[str, Any] | None
     ) -> str | None:
-        """
-        Serialize metadata to JSON string.
+        """Serialize a metadata dictionary to a JSON string.
 
         Args:
-            metadata: Metadata dictionary to serialize
+            metadata: Metadata dictionary to serialize.
 
         Returns:
-            JSON string representation or None
+            str | None: JSON-encoded metadata string, or None if unset.
         """
         return serialize_metadata(metadata)
 
     def _deserialize_metadata(
         self, metadata_str: str | None
     ) -> dict[str, Any] | None:
-        """
-        Deserialize metadata from JSON string.
+        """Deserialize metadata from a JSON string.
 
         Args:
-            metadata_str: JSON string representation of metadata
+            metadata_str: JSON string representation of metadata.
 
         Returns:
-            Metadata dictionary or None
+            dict[str, Any] | None: Deserialized metadata dictionary, or None.
         """
         return deserialize_metadata(metadata_str)
 
     def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
-        """
-        Deserialize aliases from JSON string.
+        """Deserialize aliases from a JSON string.
 
         Args:
-            aliases_str: JSON string representation of aliases
+            aliases_str: JSON string representation of aliases.
 
         Returns:
-            List of alias strings or None
+            list[str] | None: List of alias strings, or None.
         """
         return deserialize_aliases(aliases_str)
 
@@ -137,14 +134,21 @@ class GridIn:
         force_sync_if_needed(self._db, self._write_concern)
 
     def write(self, data: bytes | bytearray) -> int:
-        """
-        Write data to the GridIn stream.
+        """Write bytes to the ``GridIn`` stream.
+
+        Buffers incoming bytes, updates the byte position and optional MD5
+        hasher, flushes complete chunks of ``_chunk_size_bytes``, and compacts
+        the consumed buffer prefix once it grows past four chunks.
 
         Args:
-            data: The data to write
+            data: Byte payload to append to the file stream.
 
         Returns:
-            The number of bytes written
+            int: Number of bytes written.
+
+        Raises:
+            ValueError: If the stream has already been closed.
+            TypeError: If ``data`` is not ``bytes`` or ``bytearray``.
         """
         if self._closed:
             raise ValueError("I/O operation on closed file")
@@ -171,13 +175,11 @@ class GridIn:
         return len(data)
 
     def _flush_chunk(self) -> None:
-        """
-        Flush a chunk from the buffer to the database.
+        """Flush a single complete chunk from the buffer to the database.
 
-        This method extracts a chunk of data from the internal buffer and writes it to the
-        chunks collection in the database. If this is the first chunk being written
-        and no file ID has been set, it creates the corresponding file document first.
-        The chunk is inserted with its sequence number and associated with the file ID.
+        Extracts ``_chunk_size_bytes`` from the unconsumed buffer prefix,
+        lazily creates the file document before chunk ``0``, inserts the chunk
+        into the chunks table, and increments ``_chunk_number``.
         """
         if (
             len(self._buffer) - getattr(self, "_buffer_start", 0)
@@ -206,14 +208,12 @@ class GridIn:
             self._chunk_number += 1
 
     def _create_file_document(self) -> None:
-        """
-        Create the file document in the files collection.
+        """Create the file document in the GridFS files table once.
 
-        This method creates a new file document in the GridFS files collection with the
-        necessary metadata. It handles both ObjectId and integer file IDs, storing them
-        appropriately in the database. The method stores the filename, chunk size,
-        upload date, and serialized metadata. If no file ID is provided, it generates
-        a new ObjectId for the file.
+        Records the UTC upload timestamp and inserts a row into the files
+        table, generating an ``ObjectId`` if ``_file_id`` is ``None`` or
+        handling explicit ``ObjectId`` and integer IDs. Caches the resulting
+        SQLite integer row ID in ``_int_file_id``.
         """
         if getattr(self, "_file_document_created", False):
             return
@@ -286,19 +286,17 @@ class GridIn:
                 self._int_file_id = cur.lastrowid
 
     def _get_file_id(self) -> int:
-        """
-        Get the file ID, creating the file document if necessary.
+        """Return the SQLite integer row ID for the file document.
 
-        This method returns the integer ID of the file, which is used internally for
-        database operations. If the file document hasn't been created yet, it creates
-        one first. The method handles both ObjectId and integer file IDs, looking up
-        the corresponding integer ID in the database when needed.
+        Lazily creates the file document if needed and returns the cached
+        ``_int_file_id``, or queries the files table by ``_id`` when not yet
+        cached.
 
         Returns:
-            int: The integer ID of the file for database operations
+            int: Integer row ID in the GridFS files table.
 
         Raises:
-            RuntimeError: If the file cannot be found in the database
+            RuntimeError: If the file document cannot be found in the table.
         """
         if not getattr(self, "_file_document_created", False):
             self._create_file_document()
@@ -337,14 +335,12 @@ class GridIn:
             return row[0]
 
     def close(self) -> None:
-        """
-        Close the GridIn stream and finalize the file storage.
+        """Close the ``GridIn`` stream and finalize file metadata.
 
-        This method flushes any remaining data in the buffer to the database,
-        completes the file document with final metadata including length and MD5 hash,
-        and ensures the file is properly stored in GridFS. If no chunks have been
-        written yet, it still creates the file document. The method also handles
-        database synchronization if required by the write concern settings.
+        Flushes any remaining buffered bytes as a final chunk (or ensures an
+        empty file document is created), updates ``length`` and ``md5`` on
+        the files row, triggers write-concern sync if needed, commits the
+        transaction, and marks the stream closed.
         """
         if self._closed:
             return
@@ -404,15 +400,24 @@ class GridIn:
         self._closed = True
 
     def __enter__(self) -> Self:
-        """Context manager entry."""
+        """Enter the ``GridIn`` context manager.
+
+        Returns:
+            Self: This ``GridIn`` instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit.
+        """Exit the ``GridIn`` context manager.
 
-        An exception inside the with-body aborts the upload: the partial
-        files document and chunks are removed instead of being committed
-        as a truncated-but-valid file (#127).
+        Aborts the upload when an exception occurred inside the ``with``
+        block so partial files and chunks are removed; otherwise closes and
+        commits the stream (#127).
+
+        Args:
+            exc_type: Exception type raised in the block, or None.
+            exc_val: Exception instance raised in the block, or None.
+            exc_tb: Traceback for the raised exception, or None.
         """
         if exc_type is not None:
             try:
@@ -423,7 +428,12 @@ class GridIn:
         self.close()
 
     def abort(self) -> None:
-        """Discard an in-progress upload: remove chunks and files rows."""
+        """Discard an in-progress upload by deleting its chunks and file row.
+
+        Skips deletion if the stream is already closed with zero chunks
+        written; otherwise removes rows from the chunks and files tables,
+        commits, and marks the stream closed.
+        """
         if self._closed and self._chunk_number == 0:
             return
         try:
@@ -442,10 +452,10 @@ class GridIn:
 
 
 class GridOut:
-    """
-    A file-like object for reading data from GridFS.
+    """A file-like object for reading files stored in GridFS.
 
-    This class provides a readable interface for retrieving files from GridFS.
+    Loads file metadata from the GridFS files table and streams chunked data
+    sequentially from the chunks table on demand.
     """
 
     def __init__(
@@ -454,13 +464,21 @@ class GridOut:
         bucket_name: str,
         file_id: ObjectId | int,
     ):
-        """
-        Initialize a new GridOut instance.
+        """Initialize a new ``GridOut`` readable stream.
+
+        Resolves ``file_id`` to an internal SQLite row ID, inspects optional
+        schema columns (``content_type``, ``aliases``) for backward
+        compatibility, loads the file document, and parses ``_id``, metadata,
+        and aliases.
 
         Args:
-            db: SQLite database connection
-            bucket_name: The bucket name for the GridFS files
-            file_id: The ID of the file to read (ObjectId or integer)
+            db: SQLite database connection.
+            bucket_name: Bucket name prefix for GridFS tables.
+            file_id: ``ObjectId`` or integer ID of the file to read.
+
+        Raises:
+            RuntimeError: If an ``ObjectId`` file ID is not found in DB.
+            NoFile: If no file row exists for the resolved integer ID.
         """
         self._db = db
         self._bucket_name = bucket_name
@@ -601,51 +619,62 @@ class GridOut:
 
     @property
     def _id(self):
-        """Get the file's actual ID, which may be an ObjectId or integer."""
+        """Get the file's actual ID.
+
+        Returns:
+            ObjectId | int | str: File identifier as ``ObjectId``, integer,
+                or fallback string.
+        """
         return self._actual_id
 
     @property
     def _file_id(self):
-        """Get the file's actual ID that represents what the user expects as the ID.
-        For compatibility with the original API, this returns the actual ID (ObjectId or int).
+        """Get the file's actual ID for API compatibility.
+
+        Returns:
+            ObjectId | int | str: File identifier matching user expectations
+                (``ObjectId``, integer, or string).
         """
         return self._actual_id
 
     def _deserialize_metadata(
         self, metadata_str: str | None
     ) -> dict[str, Any] | None:
-        """
-        Deserialize metadata from JSON string.
+        """Deserialize metadata from a JSON string.
 
         Args:
-            metadata_str: JSON string representation of metadata
+            metadata_str: JSON string representation of metadata.
 
         Returns:
-            Metadata dictionary or None
+            dict[str, Any] | None: Deserialized metadata dictionary, or None.
         """
         return deserialize_metadata(metadata_str)
 
     def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
-        """
-        Deserialize aliases from JSON string.
+        """Deserialize aliases from a JSON string.
 
         Args:
-            aliases_str: JSON string representation of aliases
+            aliases_str: JSON string representation of aliases.
 
         Returns:
-            List of alias strings or None
+            list[str] | None: List of alias strings, or None.
         """
         return deserialize_aliases(aliases_str)
 
     def read(self, size: int = -1) -> bytes:
-        """
-        Read data from the GridOut stream.
+        """Read bytes from the ``GridOut`` stream.
 
         Args:
-            size: The number of bytes to read (-1 for all remaining data)
+            size: Number of bytes to read, or ``-1`` to read all remaining
+                bytes in the file.
 
         Returns:
-            The data read from the stream
+            bytes: Bytes read from the file stream.
+
+        Raises:
+            ValueError: If the stream has already been closed.
+            CorruptGridFile: If ``size == -1`` on an unfinalized upload or if
+                a required chunk is missing.
         """
         if self._closed:
             raise ValueError("I/O operation on closed file")
@@ -698,7 +727,15 @@ class GridOut:
         return bytes(result)
 
     def _load_chunk(self) -> None:
-        """Load the chunk containing the current position."""
+        """Load the chunk containing the current stream position.
+
+        Skips querying if the target chunk is already buffered in memory, and
+        raises ``CorruptGridFile`` if the chunk row is missing (#147).
+
+        Raises:
+            CorruptGridFile: If the required chunk is missing from the chunks
+                table.
+        """
         chunk_index = self._position // self._chunk_size
 
         # If we already have the right chunk, we're done
@@ -728,42 +765,74 @@ class GridOut:
 
     @property
     def filename(self) -> str:
-        """Get the filename."""
+        """Get the filename.
+
+        Returns:
+            str: Stored filename.
+        """
         return self._filename
 
     @property
     def length(self) -> int:
-        """Get the length of the file in bytes."""
+        """Get the length of the file in bytes.
+
+        Returns:
+            int: File length in bytes.
+        """
         return self._length
 
     @property
     def chunk_size(self) -> int:
-        """Get the chunk size in bytes."""
+        """Get the chunk size in bytes.
+
+        Returns:
+            int: Chunk size in bytes.
+        """
         return self._chunk_size
 
     @property
     def upload_date(self) -> str:
-        """Get the upload date."""
+        """Get the upload date.
+
+        Returns:
+            str: ISO-formatted UTC upload timestamp.
+        """
         return self._upload_date
 
     @property
     def md5(self) -> str:
-        """Get the MD5 hash of the file."""
+        """Get the MD5 hash of the file.
+
+        Returns:
+            str: Hexadecimal MD5 digest of the file.
+        """
         return self._md5
 
     @property
     def metadata(self) -> dict[str, Any] | None:
-        """Get the metadata of the file."""
+        """Get the metadata of the file.
+
+        Returns:
+            dict[str, Any] | None: File metadata dictionary, or None.
+        """
         return self._metadata
 
     @property
     def content_type(self) -> str | None:
-        """Get the content type (MIME type) of the file."""
+        """Get the content type (MIME type) of the file.
+
+        Returns:
+            str | None: MIME content type of the file, or None.
+        """
         return self._content_type
 
     @property
     def aliases(self) -> list[str] | None:
-        """Get the aliases (alternative names) for the file."""
+        """Get the aliases (alternative names) for the file.
+
+        Returns:
+            list[str] | None: List of alternative filenames, or None.
+        """
         return self._aliases
 
     def close(self) -> None:
@@ -771,11 +840,21 @@ class GridOut:
         self._closed = True
 
     def __enter__(self) -> Self:
-        """Context manager entry."""
+        """Enter the ``GridOut`` context manager.
+
+        Returns:
+            Self: This ``GridOut`` instance.
+        """
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit."""
+        """Exit the ``GridOut`` context manager and close the stream.
+
+        Args:
+            exc_type: Exception type raised in the block, or None.
+            exc_val: Exception instance raised in the block, or None.
+            exc_tb: Traceback for the raised exception, or None.
+        """
         self.close()
 
 
@@ -819,7 +898,17 @@ def _mongo_dot_subpath_to_json_path(subpath: str) -> str | None:
 
 
 def _normalize_json_query_value(value: Any) -> Any:
-    """Normalize a query value for SQLite binding."""
+    """Normalize a query value for SQLite parameter binding.
+
+    Converts ``ObjectId`` instances to hex strings and ``datetime``/``date``
+    values to ISO 8601 strings; leaves all other types unchanged.
+
+    Args:
+        value: Raw query filter value to normalize.
+
+    Returns:
+        Any: SQLite-bindable scalar value.
+    """
     if isinstance(value, ObjectId):
         return str(value)
     if isinstance(value, datetime.datetime):
@@ -836,7 +925,19 @@ def _append_json_column_equality(
     where_conditions: list[str],
     params: list[Any],
 ) -> None:
-    """Append a direct-equality clause for a JSON column + path."""
+    """Append a direct-equality SQL clause for a JSON column and path.
+
+    Handles ``None`` (``IS NULL``), ``dict``/``list`` (``= json(?)``),
+    compiled ``re.Pattern`` (``LIKE ?``), and scalar values (matching either
+    the extracted value or any element when the target path is an array).
+
+    Args:
+        column: SQL column name containing JSON data (e.g. ``metadata``).
+        json_path_sql: SQL-quoted JSON path expression (e.g. ``'$.size'``).
+        value: Expected value or pattern to match.
+        where_conditions: List of SQL predicate strings to append to.
+        params: List of SQL bind parameters to extend.
+    """
     extract = f"json_extract({column}, {json_path_sql})"
     json_type = f"json_type({column}, {json_path_sql})"
     if value is None:
@@ -866,7 +967,21 @@ def _append_json_column_operators(
     where_conditions: list[str],
     params: list[Any],
 ) -> None:
-    """Append operator clauses (e.g. $gt, $in) for a JSON column + path."""
+    """Append operator clauses for a JSON column and path.
+
+    Translates MongoDB comparison, array, regex, and existence operators
+    (``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, ``$in``,
+    ``$nin``, ``$regex`` with ``$options``, ``$exists``, ``$size``, and
+    ``$all``) into SQL predicates using ``json_extract``/``json_each``.
+    Unsupported operators append ``1=0``.
+
+    Args:
+        column: SQL column name containing JSON data.
+        json_path_sql: SQL-quoted JSON path expression.
+        operators: Dictionary mapping MongoDB operator names to operands.
+        where_conditions: List of SQL predicate strings to append to.
+        params: List of SQL bind parameters to extend.
+    """
     extract = f"json_extract({column}, {json_path_sql})"
     json_type = f"json_type({column}, {json_path_sql})"
     each = f"json_each({column}, {json_path_sql})"
@@ -1076,7 +1191,18 @@ def _append_dotted_json_condition(
     where_conditions: list[str],
     params: list[Any],
 ) -> None:
-    """Append a dotted (e.g. ``metadata.size``) filter clause."""
+    """Append a dotted JSON path filter clause (e.g. ``metadata.size``).
+
+    Converts ``subpath`` to a SQLite JSON path and dispatches to operator or
+    direct-equality translation. Appends ``1=0`` if ``subpath`` is invalid.
+
+    Args:
+        column: JSON column name (e.g. ``metadata`` or ``aliases``).
+        subpath: Dotted subpath below ``column``.
+        value: Filter value or operator mapping to match at ``subpath``.
+        where_conditions: List of SQL predicate strings to append to.
+        params: List of SQL bind parameters to extend.
+    """
     json_path = _mongo_dot_subpath_to_json_path(subpath)
     if json_path is None:
         logger.debug(f"Invalid dotted GridFS filter path '{column}.{subpath}'")
@@ -1103,9 +1229,18 @@ def _append_dotted_json_condition(
 def build_gridfs_files_where(
     filter_dict: dict[str, Any] | None,
 ) -> tuple[str, list[Any]]:
-    """
-    Build WHERE clause and parameter list for GridFS files collection.
-    Shared by GridOutCursor and Collection._count_documents_as_gridfs.
+    """Build a SQL WHERE clause and parameters for the GridFS files table.
+
+    Shared by ``GridOutCursor`` and ``Collection._count_documents_as_gridfs``.
+    Supports logical operators (``$and``, ``$or``, ``$nor``), dotted paths
+    under ``metadata`` and ``aliases``, and standard GridFS file fields.
+
+    Args:
+        filter_dict: MongoDB-style filter dictionary, or None for all files.
+
+    Returns:
+        tuple[str, list[Any]]: Tuple of ``(where_clause, params)`` where
+            ``where_clause`` is ``""`` when no conditions are generated.
     """
     if not filter_dict:
         return "", []
@@ -1119,6 +1254,18 @@ def build_gridfs_files_where(
         conds: list[str],
         plist: list[Any],
     ) -> None:
+        """Append SQL WHERE predicates and params for a single filter entry.
+
+        Recursively handles ``$and``, ``$or``, and ``$nor``, dispatches dotted
+        ``metadata``/``aliases`` paths, and translates top-level GridFS file
+        fields. Unknown fields or unsupported operators append ``1=0``.
+
+        Args:
+            key: Filter field name, dotted path, or logical operator.
+            value: Filter operand or subfilter list.
+            conds: Predicate list to append SQL conditions to.
+            plist: Parameter list to extend with bound values.
+        """
         # Logical operators: never silently drop — build recursively.
         if key in ("$and", "$or", "$nor"):
             if not isinstance(value, (list, tuple)):
@@ -1377,7 +1524,18 @@ def build_gridfs_files_where(
 
 
 def _gridfs_sort_to_sql(sort_spec: list[tuple[str, Any]] | None) -> str:
-    """Translate sort specification for GridFS files to SQL ORDER BY clause."""
+    """Translate a GridFS sort specification into a SQL ORDER BY clause.
+
+    Maps standard GridFS columns and aliases (``upload_date``,
+    ``chunk_size``, ``contentType``) as well as ``metadata.<subpath>`` keys
+    via ``json_extract``. Unrecognized keys fall back to ``id``.
+
+    Args:
+        sort_spec: Sequence of ``(key, direction)`` pairs, or None.
+
+    Returns:
+        str: SQL ``ORDER BY ...`` clause, or ``""`` if ``sort_spec`` is empty.
+    """
     if not sort_spec:
         return ""
     order_parts: list[str] = []
@@ -1421,10 +1579,11 @@ def _gridfs_sort_to_sql(sort_spec: list[tuple[str, Any]] | None) -> str:
 
 
 class GridOutCursor:
-    """
-    A cursor for iterating over GridFS files.
+    """A lazy cursor for iterating over GridFS file documents.
 
-    This class provides an iterator interface for retrieving file documents from GridFS.
+    Supports ``sort``, ``skip``, ``limit``, ``batch_size``, ``clone``,
+    ``rewind``, and ``to_list``, executing the underlying SQL query on first
+    iteration and yielding ``GridOut`` instances.
     """
 
     def __init__(
@@ -1434,14 +1593,13 @@ class GridOutCursor:
         filter: dict[str, Any] | None = None,
         session: Any | None = None,
     ):
-        """
-        Initialize a new GridOutCursor instance.
+        """Initialize a new ``GridOutCursor`` instance.
 
         Args:
-            db: SQLite database connection
-            bucket_name: The bucket name for the GridFS files
-            filter: The filter to apply when searching for files
-            session: Optional ClientSession
+            db: SQLite database connection or wrapper with ``db`` attribute.
+            bucket_name: Bucket name prefix for GridFS tables.
+            filter: Optional filter dictionary restricting matched files.
+            session: Optional ``ClientSession`` associated with the cursor.
         """
         self._db = getattr(db, "db", db)
         self._bucket_name = bucket_name
@@ -1458,12 +1616,19 @@ class GridOutCursor:
         self._index: int = 0
 
     def sort(self, key_or_list: Any, direction: int | None = None) -> Self:
-        """
-        Sort the documents returned by the cursor.
+        """Sort the files returned by the cursor.
 
         Args:
-            key_or_list: A string or list of (key, direction) pairs
-            direction: Sort direction (1 for ascending, -1 for descending)
+            key_or_list: Field name, mapping of fields to directions, or list
+                of ``(key, direction)`` pairs.
+            direction: Optional sort direction when ``key_or_list`` is a
+                field name (1 for ascending, -1 for descending).
+
+        Returns:
+            Self: This ``GridOutCursor`` instance for method chaining.
+
+        Raises:
+            RuntimeError: If called after the cursor has started iterating.
         """
         if self._file_ids is not None:
             raise RuntimeError("cannot sort after cursor has started iterating")
@@ -1476,11 +1641,17 @@ class GridOutCursor:
         return self
 
     def skip(self, count: int) -> Self:
-        """
-        Skip the first count documents returned by the cursor.
+        """Skip the first ``count`` files matched by the cursor.
 
         Args:
-            count: Number of documents to skip
+            count: Non-negative number of files to skip.
+
+        Returns:
+            Self: This ``GridOutCursor`` instance for method chaining.
+
+        Raises:
+            RuntimeError: If called after the cursor has started iterating.
+            ValueError: If ``count`` is not a non-negative integer.
         """
         if self._file_ids is not None:
             raise RuntimeError("cannot skip after cursor has started iterating")
@@ -1490,11 +1661,18 @@ class GridOutCursor:
         return self
 
     def limit(self, count: int) -> Self:
-        """
-        Limit the number of documents returned by the cursor.
+        """Limit the maximum number of files returned by the cursor.
 
         Args:
-            count: Maximum number of documents to return
+            count: Non-negative maximum number of files to return (0 for
+                unlimited).
+
+        Returns:
+            Self: This ``GridOutCursor`` instance for method chaining.
+
+        Raises:
+            RuntimeError: If called after the cursor has started iterating.
+            ValueError: If ``count`` is not a non-negative integer.
         """
         if self._file_ids is not None:
             raise RuntimeError(
@@ -1506,11 +1684,16 @@ class GridOutCursor:
         return self
 
     def batch_size(self, size: int) -> Self:
-        """
-        Set the batch size for the cursor.
+        """Set the batch size for the cursor.
 
         Args:
-            size: Number of documents per batch
+            size: Positive integer number of documents per batch.
+
+        Returns:
+            Self: This ``GridOutCursor`` instance for method chaining.
+
+        Raises:
+            ValueError: If ``size`` is not a positive integer.
         """
         if not isinstance(size, int) or size <= 0:
             raise ValueError("batch_size must be a positive integer")
@@ -1518,7 +1701,11 @@ class GridOutCursor:
         return self
 
     def clone(self) -> Self:
-        """Create a clone of this cursor in unexecuted state."""
+        """Create an unexecuted copy of this cursor.
+
+        Returns:
+            Self: New ``GridOutCursor`` with copied filter and modifiers.
+        """
         cloned = self.__class__(
             self._db, self._bucket_name, deepcopy(self._filter), self._session
         )
@@ -1529,13 +1716,21 @@ class GridOutCursor:
         return cloned
 
     def rewind(self) -> Self:
-        """Reset the cursor to its initial unexecuted state."""
+        """Reset the cursor to its initial unexecuted state.
+
+        Returns:
+            Self: This ``GridOutCursor`` instance for method chaining.
+        """
         self._file_ids = None
         self._index = 0
         return self
 
     def _ensure_executed(self) -> None:
-        """Execute the query lazily if not already executed."""
+        """Execute the underlying files query lazily if not yet executed.
+
+        Builds the ``WHERE``, ``ORDER BY``, and ``LIMIT``/``OFFSET`` clauses
+        and caches matching row IDs in ``_file_ids``.
+        """
         if self._file_ids is not None:
             return
 
@@ -1559,11 +1754,17 @@ class GridOutCursor:
         self._index = 0
 
     def to_list(self, length: int | None = None) -> list[GridOut]:
-        """
-        Retrieve all documents as a list.
+        """Retrieve matched files as a list of ``GridOut`` objects.
 
         Args:
-            length: Optional maximum number of documents to return
+            length: Optional non-negative maximum number of files to return.
+
+        Returns:
+            list[GridOut]: List of ``GridOut`` instances for matched files.
+
+        Raises:
+            ValueError: If ``length`` is provided and is not a non-negative
+                integer.
         """
         self._ensure_executed()
         assert self._file_ids is not None
@@ -1578,12 +1779,23 @@ class GridOutCursor:
         ]
 
     def __iter__(self) -> Self:
-        """Return the iterator object."""
+        """Return this cursor as an iterator after executing the query.
+
+        Returns:
+            Self: This ``GridOutCursor`` iterator instance.
+        """
         self._ensure_executed()
         return self
 
     def __next__(self) -> GridOut:
-        """Get the next GridOut object."""
+        """Return the next ``GridOut`` file object from the cursor.
+
+        Returns:
+            GridOut: Next matched GridFS file stream.
+
+        Raises:
+            StopIteration: When all matched files have been yielded.
+        """
         self._ensure_executed()
         assert self._file_ids is not None
         if self._index >= len(self._file_ids):

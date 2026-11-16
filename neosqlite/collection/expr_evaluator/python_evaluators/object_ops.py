@@ -13,12 +13,38 @@ from .base import BasePythonMixin
 
 
 class ObjectPythonMixin(BasePythonMixin):
-    """Object field operators and data size operators."""
+    """Python evaluators for object, variable, literal, and size operators.
+
+    Implements Python-tier evaluation for MongoDB aggregation object
+    operators (``$mergeObjects``, ``$getField``, ``$setField``,
+    ``$unsetField``, ``$objectToArray``), binding/utility operators
+    (``$let``, ``$literal``, ``$rand``), and data-size operators
+    (``$binarySize``, ``$bsonSize``). Nested operand and expression evaluation
+    is delegated to ``BasePythonMixin`` helpers.
+    """
 
     def _evaluate_object_python(
         self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
-        """Evaluate object operators in Python."""
+        """Evaluate object, variable, and utility operators in Python.
+
+        Handles ``$mergeObjects``, ``$getField``, ``$setField``,
+        ``$unsetField``, ``$objectToArray``, ``$let``, ``$literal``, and
+        ``$rand`` against an in-memory document dictionary.
+
+        Args:
+            operator: MongoDB aggregation operator name.
+            operands: Raw operator operand list, dict, or literal value.
+            document: Current document dictionary used as context.
+
+        Returns:
+            Any: Result produced by the evaluated aggregation operator.
+
+        Raises:
+            ValueError: If ``operands`` lacks required fields or has an
+                invalid type for the operator.
+            NotImplementedError: If ``operator`` is not supported here.
+        """
         match operator:
             case "$mergeObjects":
                 if not isinstance(operands, list):
@@ -117,7 +143,25 @@ class ObjectPythonMixin(BasePythonMixin):
     def _evaluate_data_size_python(
         self, operator: str, operands: Any, document: dict[str, Any]
     ) -> int:
-        """Evaluate data size operators ($binarySize, $bsonSize) in Python."""
+        """Evaluate data size operators ($binarySize, $bsonSize) in Python.
+
+        For ``$binarySize``, measures raw bytes-like values or decodes stored
+        NeoSQLite binary dicts. For ``$bsonSize``, approximates BSON size
+        via UTF-8 JSON encoding with a string fallback.
+
+        Args:
+            operator: Either ``"$binarySize"`` or ``"$bsonSize"``.
+            operands: Single expression or one-element list to measure.
+            document: Current document dictionary used as context.
+
+        Returns:
+            int: Byte length of the binary or serialized value.
+
+        Raises:
+            ValueError: If ``operands`` does not have exactly one element.
+            TypeError: If ``$binarySize`` evaluates to a non-binary value.
+            NotImplementedError: If ``operator`` is not supported.
+        """
         if not isinstance(operands, list):
             operands = [operands]
 

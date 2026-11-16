@@ -35,7 +35,21 @@ logger = logging.getLogger(__name__)
 def _resolve_target_collection(
     query_engine: QueryEngine, coll_name: str, db_name: str | None = None
 ) -> Any:
-    """Resolve a target Collection for $merge/$out within NeoSQLite."""
+    """Resolve a target Collection for ``$merge``/``$out`` within NeoSQLite.
+
+    When ``db_name`` is provided and ``query_engine.collection._database`` has
+    a distinct ``client`` object, resolves the named database on that client
+    before indexing ``coll_name``; otherwise falls back to the current
+    database.
+
+    Args:
+        query_engine: ``QueryEngine`` executing the aggregation stage.
+        coll_name: Name of the target collection.
+        db_name: Optional target database name. Defaults to None.
+
+    Returns:
+        Any: Target collection object resolved from the database or client.
+    """
     db = query_engine.collection._database
     if db_name:
         client = getattr(db, "client", None)
@@ -52,7 +66,22 @@ def _compute_bucket_output(
     bucket_docs: list[dict[str, Any]],
     output_spec: dict[str, Any],
 ) -> dict[str, Any]:
-    """Compute the output document for a single $bucket / $bucketAuto bucket."""
+    """Compute output for a single ``$bucket`` or ``$bucketAuto`` bucket.
+
+    Supports ``$sum``, ``$avg``, ``$count``, ``$min``, ``$max``, ``$push``, and
+    ``$addToSet`` accumulators over ``bucket_docs`` (defaulting any other
+    accumulator specification to the bucket document count).
+
+    Args:
+        query_engine: ``QueryEngine`` providing field-value extraction.
+        bucket_id: Identifier value assigned to the output ``_id`` field.
+        bucket_docs: Documents grouped into this bucket.
+        output_spec: Mapping of output field names to accumulator specs.
+
+    Returns:
+        dict[str, Any]: Output document containing ``_id`` and each computed
+        accumulator field.
+    """
     output_doc: dict[str, Any] = {"_id": bucket_id}
     for field_name, accumulator in output_spec.items():
         if "$sum" in accumulator:
@@ -121,17 +150,26 @@ def execute_python_aggregation(
     session: Any = None,
     initial_docs: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Execute *pipeline* entirely in Python (Tier-3 fallback).
+    """Execute an aggregation pipeline entirely in Python (Tier-3 fallback).
+
+    Wraps each input document with ``__doc__`` and a deep-copied ``__root__``
+    context for ``$$ROOT`` variable resolution, applies each pipeline stage
+    sequentially (raising ``MalformedQueryException`` on empty or unsupported
+    stages), and strips internal ``_textScore`` metadata if not originally
+    present in ``__root__``.
 
     Args:
-    query_engine: The ``QueryEngine`` instance that owns this pipeline.
-    pipeline: List of aggregation stage dicts.
-    session: Optional client session (currently unused by Tier 3).
-    initial_docs: Optional pre-loaded documents (e.g., for nested $facet
-                  sub-pipelines running purely in Python).
+        query_engine: The ``QueryEngine`` instance that owns this pipeline.
+        pipeline: List of aggregation stage dictionaries to execute in order.
+        session: Optional client session forwarded when querying collections.
+            Defaults to None.
+        initial_docs: Optional pre-loaded documents (e.g., for nested
+            ``$facet`` sub-pipelines running purely in Python). Defaults to
+            None.
 
     Returns:
-    List of result documents after applying all pipeline stages.
+        list[dict[str, Any]]: Resulting documents after applying all pipeline
+        stages.
     """
     docs: list[dict[str, Any]] = (
         initial_docs
@@ -167,7 +205,29 @@ def execute_python_aggregation(
                     if is_text_score:
 
                         def make_text_score_key(k=key):
+                            """Build a text-score sort key function.
+
+                            Args:
+                                k: Sort field name used as a fallback key when
+                                    ``_textScore`` is absent.
+
+                            Returns:
+                                Callable[[dict[str, Any]], float]: Key
+                                extractor returning the float text score for a
+                                document context.
+                            """
+
                             def score_sort_key(dc: dict[str, Any]) -> Any:
+                                """Extract float text score from doc.
+
+                                Args:
+                                    dc: Document context wrapping
+                                        ``__doc__`` and ``__root__``.
+
+                                Returns:
+                                    float: Text search score, defaulting to
+                                    ``0.0``.
+                                """
                                 doc = dc["__doc__"]
                                 return float(
                                     doc.get("_textScore", doc.get(k, 0.0))
@@ -182,13 +242,30 @@ def execute_python_aggregation(
                         continue
 
                     def make_sort_key(key, dir):
-                        """
-                        Create a sort key function for the given key and direction.
+                        """Create a sort key function for the given field.
+
+                        Args:
+                            key: Dot-separated field name to extract from each
+                                document.
+                            dir: Sort direction specification (kept for
+                                signature compatibility; ordering is applied by
+                                the caller).
+
+                        Returns:
+                            Callable[[dict[str, Any]], Any]: Key function
+                            returning a BSON-comparable sort key.
                         """
 
                         def sort_key(dc):
-                            """
-                            Extract sort key from document context.
+                            """Extract BSON-ordered sort key from doc context.
+
+                            Args:
+                                dc: Document context dict containing
+                                    ``__doc__``.
+
+                            Returns:
+                                Any: BSON sort key produced by
+                                ``bson_sort_key()``.
                             """
                             # BSON-ordered key: missing/null sorts first
                             # ascending (last when reversed), mixed types
@@ -452,6 +529,20 @@ def execute_python_aggregation(
 
                 # Element-wise local values (arrays expand like MongoDB)
                 def _local_candidates(doc: dict[str, Any]) -> list[Any]:
+                    """Collect join candidate values for ``local_field``.
+
+                    Walks ``local_field`` across nested dicts and arrays,
+                    flattening non-None array elements per MongoDB
+                    ``$lookup`` semantics.
+
+                    Args:
+                        doc: Input document from the local pipeline.
+
+                    Returns:
+                        list[Any]: Non-None scalar or object candidate values
+                        resolved at ``local_field``, or an empty list if the
+                        path does not exist.
+                    """
                     parts = local_field.split(".")
                     current: list[Any] = [doc]
                     for part in parts:
@@ -693,6 +784,21 @@ def execute_python_aggregation(
                     buckets[bucket_key].append(doc)
 
                 def _bucket_sort_key(item: tuple[Any, Any]) -> tuple[int, Any]:
+                    """Compute a type-tagged sort key for bucket entries.
+
+                    Orders ``None`` first, then numbers, strings, and finally
+                    other values by string form so mixed bucket identifiers
+                    (such as numeric bounds and ``default`` labels) sort
+                    cleanly.
+
+                    Args:
+                        item: ``(bucket_id, bucket_docs)`` tuple from
+                            ``buckets.items()``.
+
+                    Returns:
+                        tuple[int, Any]: ``(type_rank, sortable_value)``
+                        comparison tuple.
+                    """
                     key = item[0]
                     if key is None:
                         return (0, "")
@@ -729,14 +835,14 @@ def execute_python_aggregation(
 
                 # Sort documents by groupBy field
                 def get_group_val(dc):
-                    """
-                    Extract the value to group by for a given document.
+                    """Extract the value to group by for a given document.
 
                     Args:
                         dc: Document with context from the aggregation stage.
 
                     Returns:
-                        The value to group by or 0 if not found.
+                        Any: The value to group by, or ``0`` if not found or
+                        falsy.
                     """
                     return (
                         query_engine.collection._get_val(
@@ -984,7 +1090,21 @@ def execute_python_aggregation(
                 )
 
                 def apply_redact(doc, spec, root):
-                    """Recursively apply redaction to a document."""
+                    """Recursively apply redaction to a document.
+
+                    Evaluates ``spec`` via ``evaluate_redact_condition()`` for
+                    each key/value pair and handles ``$$KEEP``, ``$$DESCEND``
+                    (recursing into nested dicts and lists), and ``$$PRUNE``.
+
+                    Args:
+                        doc: Current document or subdocument being redacted.
+                        spec: ``$redact`` expression specification.
+                        root: Original root document (bound to ``$$ROOT``).
+
+                    Returns:
+                        Any: Redacted copy of ``doc``, or ``doc`` unchanged if
+                        it is not a dict.
+                    """
                     if not isinstance(doc, dict):
                         return doc
 
@@ -1020,7 +1140,22 @@ def execute_python_aggregation(
                     return result
 
                 def evaluate_redact_condition(spec, doc, root):
-                    """Evaluate the redact condition and return KEEP/DESCEND/PRUNE."""
+                    """Evaluate the redact condition for a document.
+
+                    Binds ``$$ROOT``, ``$$CURRENT``, ``$$KEEP``, ``$$DESCEND``,
+                    and ``$$PRUNE`` and evaluates ``spec`` with
+                    ``ExprEvaluator``. Falls back to ``"$$DESCEND"`` if
+                    evaluation fails or returns an unrecognized value.
+
+                    Args:
+                        spec: ``$redact`` expression specification.
+                        doc: Current document context (``$$CURRENT``).
+                        root: Original root document (``$$ROOT``).
+
+                    Returns:
+                        str: One of ``"$$KEEP"``, ``"$$DESCEND"``, or
+                        ``"$$PRUNE"``.
+                    """
                     eval_doc = {
                         **doc,
                         "$$ROOT": root,

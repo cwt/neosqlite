@@ -12,12 +12,37 @@ from .base import BaseSqlMixin
 
 
 class LogicalMixin(BaseSqlMixin):
-    """$and / $or / $not / $nor → SQL."""
+    """Mixin converting MongoDB logical operators to SQL expressions.
+
+    Translates ``$and``, ``$or``, ``$not``, and ``$nor`` expressions inside
+    ``$expr`` into SQL boolean clauses by delegating each operand to
+    ``_convert_expr_to_sql`` and combining the resulting fragments and
+    bound parameters.
+    """
 
     def _convert_logical_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert logical operators ($and, $or, $not, $nor) to SQL."""
+        """Convert a MongoDB logical operator to a SQL boolean expression.
+
+        Handles ``$and``, ``$or``, ``$not``, and ``$nor``. For ``$not``,
+        normalizes a single non-list expression into a one-element list and
+        returns ``NOT (<expr>)``. For ``$and``, ``$or``, and ``$nor``,
+        requires at least two operand expressions.
+
+        Args:
+            operator: Logical operator name (``$and``, ``$or``, ``$not``,
+                or ``$nor``).
+            operands: List of operand expressions, or a single expression
+                dict when ``operator`` is ``"$not"``.
+
+        Returns:
+            tuple[str, list[Any]]: A ``(sql_expression, parameters)`` pair.
+
+        Raises:
+            ValueError: If ``operands`` has an invalid type or arity, or if
+                ``operator`` is unrecognized.
+        """
         # Normalize operands for $not to handle both formats:
         # {$not: {expression}} and {$not: [expression]}
         if operator == "$not" and not isinstance(operands, list):

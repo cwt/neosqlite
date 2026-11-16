@@ -1,5 +1,5 @@
-"""
-SQL Compiler for JSON Schema validation.
+"""SQL Compiler for JSON Schema validation.
+
 Translates MongoDB $jsonSchema rules into native SQLite SQL expressions.
 """
 
@@ -12,15 +12,34 @@ from ..jsonb_support import json_function
 def compile_schema_to_sql(
     schema: dict[str, Any], data_column: str = "data", jsonb: bool = False
 ) -> str:
-    """
-    Compile a JSON Schema into a SQL expression for use in a CHECK constraint.
+    """Compile a JSON Schema into a SQLite ``CHECK`` constraint expression.
+
+    Args:
+        schema: JSON Schema dictionary describing validation rules.
+        data_column: Name of the SQLite JSON column to validate. Defaults to
+            ``"data"``.
+        jsonb: Whether to emit ``jsonb_extract`` instead of ``json_extract``.
+            Defaults to ``False``.
+
+    Returns:
+        str: SQL boolean expression (or ``"1"`` when unconstrained).
     """
     json_func = json_function("extract", jsonb)
     return _compile_node(schema, data_column, json_func)
 
 
 def _safe_json_path(path: str) -> str:
-    """Escape a dotted path for embedding in a SQL string literal (#123)."""
+    """Escape a dotted JSON path for embedding inside a SQL string literal.
+
+    Strips a leading ``"$."`` prefix and delegates to ``parse_json_path`` so
+    single quotes in field names are doubled for SQLite safety (#123).
+
+    Args:
+        path: JSON path string (e.g., ``"$"`` or ``"$.user.name"``).
+
+    Returns:
+        str: SQL-safe JSON path string starting with ``"$"``.
+    """
     from ..json_path_utils import parse_json_path
 
     rel = path.removeprefix("$.")
@@ -28,7 +47,18 @@ def _safe_json_path(path: str) -> str:
 
 
 def _numeric_literal(value: Any, name: str) -> str:
-    """Validate and render a numeric schema bound (#123)."""
+    """Validate and format a numeric JSON Schema bound as a SQL float literal.
+
+    Args:
+        value: Candidate bound value from a schema keyword.
+        name: Schema keyword name used in error reporting.
+
+    Returns:
+        str: ``repr(float(value))`` suitable for embedding in SQL.
+
+    Raises:
+        ValueError: If ``value`` is a ``bool`` or not an ``int`` or ``float``.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(
             f"JSON schema '{name}' must be a number, got {value!r}"
@@ -39,7 +69,21 @@ def _numeric_literal(value: Any, name: str) -> str:
 def _compile_node(
     schema: Any, data_column: str, json_func: str, path: str = "$"
 ) -> str:
-    """Recursively compile schema nodes into SQL."""
+    """Recursively compile a ``CHECK``-constraint schema node into SQL.
+
+    Supports ``required``, ``properties``, ``bsonType``/``type``, and numeric
+    bounds (``minimum``, ``maximum``, ``exclusiveMinimum``,
+    ``exclusiveMaximum``).
+
+    Args:
+        schema: Schema dictionary (non-dicts return ``"1"``).
+        data_column: SQLite column or expression holding the JSON document.
+        json_func: SQLite JSON extract function name.
+        path: Current JSON path relative to root. Defaults to ``"$"``.
+
+    Returns:
+        str: ``AND``-joined SQL expression, or ``"1"`` if no clauses apply.
+    """
     if not isinstance(schema, dict):
         return "1"  # Always true
 
@@ -107,7 +151,19 @@ def _compile_node(
 def _compile_type_check(
     data_column: str, path: str, target_type: Any, json_func: str
 ) -> str | None:
-    """Compile type checks into SQL using json_type."""
+    """Compile a legacy ``CHECK``-constraint type check using ``json_type``.
+
+    Args:
+        data_column: SQLite column or expression holding the JSON document.
+        path: JSON path at which to inspect the value type.
+        target_type: Schema ``type`` or ``bsonType`` string or list of strings.
+        json_func: Unused JSON extract function name kept for signature
+            compatibility.
+
+    Returns:
+        str | None: SQL ``IN (...)`` predicate on ``json_type(...)``, or
+            ``None`` if no supported SQLite types are matched.
+    """
     # json_type(data, path)
     type_expr = f"json_type({data_column}, '{_safe_json_path(path)}')"
 
@@ -178,8 +234,22 @@ def compile_query_schema_to_sql(
 
     Returns ``(sql_condition, params)`` when every constraint in ``schema`` has
     an exact SQLite equivalent matching Python ``matches_json_schema``.
-    Returns ``None`` for empty schemas, non-dicts, ``_id`` rules, or any
-    unsupported keyword/type so callers fall back to Python evaluation.
+    Returns ``None`` for empty schemas, non-dicts, trivial ``"1"`` predicates,
+    ``_id`` rules, or any unsupported keyword/type so callers fall back to
+    Python evaluation.
+
+    Args:
+        schema: MongoDB ``$jsonSchema`` specification object.
+        data_column: SQLite column or expression containing the JSON document.
+            Defaults to ``"data"``.
+        jsonb: Whether to use ``jsonb_extract`` instead of ``json_extract``.
+            Defaults to ``False``.
+        json_each_function: Table-valued JSON array function name (e.g.,
+            ``"json_each"`` or ``"jsonb_each"``). Defaults to ``"json_each"``.
+
+    Returns:
+        tuple[str, list[Any]] | None: Parameterized ``(sql_condition, params)``
+            tuple, or ``None`` when SQL compilation is not possible or trivial.
     """
     if not isinstance(schema, dict) or not schema:
         return None
@@ -213,7 +283,26 @@ def _compile_query_type_check(
     type_expr_override: str | None = None,
     val_expr_override: str | None = None,
 ) -> str | None:
-    """Compile schema type/bsonType check into SQLite JSON type predicate."""
+    """Compile schema ``type``/``bsonType`` into a SQLite JSON type predicate.
+
+    Handles ``string``, ``integer``/``int``/``long``,
+    ``number``/``double``/``decimal``, ``array``, ``bool``/``boolean``,
+    ``null``, ``object`` (excluding encoded NeoSQLite ObjectId/Binary/$date
+    wrappers), and ``objectId`` (sentinel objects or 24-character hex strings).
+
+    Args:
+        data_expr: SQL expression yielding the JSON document or sub-value.
+        safe_path: SQL-safe JSON path within ``data_expr``.
+        target_type: Expected type name or list of type names.
+        type_expr_override: Optional precomputed SQL ``json_type`` expression.
+            Defaults to ``None``.
+        val_expr_override: Optional precomputed SQL value expression used when
+            checking iterated array elements. Defaults to ``None``.
+
+    Returns:
+        str | None: SQL predicate expression, ``"0"`` for an empty type list,
+            or ``None`` if any entry is non-string or unsupported.
+    """
     type_expr = type_expr_override or f"json_type({data_expr}, '{safe_path}')"
     types = target_type if isinstance(target_type, list) else [target_type]
     if not types:
@@ -303,7 +392,21 @@ def _compile_query_enum_check(
     type_expr: str,
     val_expr: str,
 ) -> tuple[str, list[Any]] | None:
-    """Compile scalar schema ``enum`` checks into typed SQL predicates."""
+    """Compile scalar schema ``enum`` checks into typed SQL predicates.
+
+    Supports boolean, numeric (matching Python ``1 == 1.0`` equality while
+    excluding booleans), string, and ``None`` enum members.
+
+    Args:
+        enum_vals: Candidate list of allowed enum values.
+        type_expr: SQL expression evaluating to the JSON value's ``json_type``.
+        val_expr: SQL expression evaluating to the extracted JSON value.
+
+    Returns:
+        tuple[str, list[Any]] | None: ``(sql_predicate, params)``,
+            ``("0", [])`` for an empty list, or ``None`` if ``enum_vals`` is
+            not a list or contains non-scalar items.
+    """
     if not isinstance(enum_vals, list):
         return None
     if not enum_vals:
@@ -342,7 +445,30 @@ def _compile_query_node(
     type_override: str | None,
     val_override: str | None,
 ) -> tuple[str, list[Any]] | None:
-    """Recursively compile a ``$jsonSchema`` node into parameterized SQL."""
+    """Recursively compile a ``$jsonSchema`` node into parameterized SQL.
+
+    Compiles supported keywords in ``_SUPPORTED_QUERY_SCHEMA_KEYS`` and falls
+    back by returning ``None`` on unsupported keywords, invalid operands,
+    non-compilable regexes, or root ``_id`` constraints.
+
+    Args:
+        schema: Current ``$jsonSchema`` sub-schema object.
+        data_expr: SQL expression producing the JSON document or element.
+        path: JSON path relative to ``data_expr``.
+        json_func: SQLite JSON extract function name.
+        each_func: Table-valued JSON iteration function name.
+        is_root: Whether ``schema`` sits at the document root.
+        aux_counter: Single-element mutable list used to allocate unique
+            table aliases for nested ``items`` subqueries.
+        type_override: Optional SQL expression supplying the node's JSON type
+            when ``path == "$"`` (used for ``items`` element checks).
+        val_override: Optional SQL expression supplying the node's value when
+            ``path == "$"`` (used for ``items`` element checks).
+
+    Returns:
+        tuple[str, list[Any]] | None: Parameterized ``(sql, params)`` pair
+            (``("1", [])`` when unconstrained), or ``None`` on fallback.
+    """
     if not isinstance(schema, dict):
         return "1", []
 
@@ -636,7 +762,18 @@ def _compile_query_node(
 
 
 def match_has_uncompilable_schema(match_spec: Any) -> bool:
-    """Return True if ``match_spec`` has any ``$jsonSchema`` SQL cannot compile."""
+    """Return whether ``match_spec`` contains an uncompilable ``$jsonSchema``.
+
+    Recursively inspects ``$jsonSchema`` keys at top level and within logical
+    combinators ``$and``, ``$or``, ``$nor``, and ``$not``.
+
+    Args:
+        match_spec: ``$match`` stage filter dictionary or arbitrary value.
+
+    Returns:
+        bool: ``True`` if any embedded ``$jsonSchema`` cannot be compiled to
+            SQL by ``compile_query_schema_to_sql``, else ``False``.
+    """
     if not isinstance(match_spec, dict):
         return False
     if "$jsonSchema" in match_spec:

@@ -37,17 +37,27 @@ __all__ = [
 
 
 class TemporaryTableAggregationProcessor(OperatorsMixin):
+    """Execute multi-stage aggregation pipelines using SQLite temp tables.
+
+    Coordinates deterministic temporary table creation via
+    ``aggregation_pipeline_context``, groups compatible consecutive stages
+    (such as ``$unwind`` runs and ``$sort``/``$skip``/``$limit`` windows), and
+    delegates individual stage compilation to methods inherited from
+    ``OperatorsMixin``.
+    """
+
     def __init__(self, collection, query_engine=None):
-        """
-        Initialize the TemporaryTableAggregationProcessor with a collection.
+        """Initialize the processor with a target collection and helpers.
+
+        Sets up the expression evaluator, JSONB capability context, unified
+        SQL translator, and per-pipeline execution tracking flags.
 
         Args:
-            collection: The NeoSQLite collection to process aggregation pipelines
-                        on. This collection provides the database connection and
-                        document loading functionality needed for pipeline processing.
-            query_engine: Optional QueryEngine instance for accessing helpers.
-                          If not provided, text search in match stages will use
-                          simplified processing.
+            collection: NeoSQLite collection on which aggregation pipelines
+                are executed.
+            query_engine: Optional ``QueryEngine`` instance providing shared
+                query helpers; when omitted, ``$match`` text search uses
+                simplified processing.
         """
         self.collection = collection
         self.db = collection.db
@@ -79,37 +89,38 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
         count_field: str | None = None,
         batch_size: int = 101,
     ) -> list[dict[str, Any]]:
-        """
-        Process an aggregation pipeline using temporary tables for intermediate results.
+        """Process an aggregation pipeline using SQLite temporary tables.
 
-        This method implements a temporary table approach for processing complex
-        aggregation pipelines that cannot be optimized into a single SQL query by
-        the current NeoSQLite implementation. It works by:
+        Executes stages atomically inside ``aggregation_pipeline_context``
+        using a deterministic pipeline hash, grouping consecutive ``$unwind``
+        stages and consecutive ``$sort``/``$skip``/``$limit`` windows, and
+        optimizing a trailing ``$count`` stage via recursive SQL counting.
 
-        1. Generating a deterministic pipeline ID based on the pipeline content
-        2. Using the aggregation_pipeline_context for atomicity and cleanup
-        3. Creating temporary tables for each stage or group of compatible stages
-        4. Processing pipeline stages in an optimized order (grouping compatible stages)
-        5. Returning the final results from the last temporary table
-
-        The method supports these pipeline stages:
-        - $match: For filtering documents
-        - $unwind: For deconstructing array fields
-        - $lookup: For joining documents from different collections
-        - $sort, $skip, $limit: For sorting and pagination
-        - $addFields: For adding fields to documents
-        - $count: For counting documents (optimized to use SQL COUNT)
+        Supported stages include ``$match``, ``$unwind``, ``$lookup``,
+        ``$sort``, ``$skip``, ``$limit``, ``$addFields``, ``$project``,
+        ``$replaceRoot``, ``$replaceWith``, ``$group``, ``$setWindowFields``,
+        ``$graphLookup``, ``$fill``, ``$sample``, ``$unset``, ``$bucket``,
+        ``$bucketAuto``, ``$unionWith``, ``$merge``, ``$out``, ``$redact``,
+        ``$densify``, ``$facet``, and ``$count``.
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages
-                                             to process
+            pipeline: List of aggregation pipeline stage dictionaries to run.
+            is_count: Whether to return a single count document instead of
+                materializing stage rows.
+            count_field: Output field name for the count document when
+                ``is_count`` is ``True``.
+            batch_size: Number of rows fetched per batch when reading results
+                from the final temporary table.
 
         Returns:
-            list[dict[str, Any]]: A list of result documents after processing the
-                                  pipeline
+            list[dict[str, Any]]: Resulting documents produced by the final
+            pipeline stage.
 
         Raises:
-            NotImplementedError: If the pipeline contains unsupported stages
+            ValueError: If a ``$limit`` stage specifies a non-integer, boolean,
+                or negative value.
+            NotImplementedError: If a ``$count`` field name is invalid or the
+                pipeline contains an unsupported stage.
         """
         # Reset sort stage tracking for this pipeline
         self._has_sort_stage = False
@@ -187,11 +198,30 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                         def _apply_skip(
                             cur_skip: int, cur_lim: int | None, n: int
                         ) -> int:
+                            """Accumulate consecutive $skip counts.
+
+                            Args:
+                                cur_skip: Current skip offset.
+                                cur_lim: Current limit (unused).
+                                n: Additional documents to skip.
+
+                            Returns:
+                                int: Updated total skip offset.
+                            """
                             return cur_skip + n
 
                         def _apply_limit(
                             cur_lim: int | None, n: int
                         ) -> int | None:
+                            """Cap the window limit with a new $limit.
+
+                            Args:
+                                cur_lim: Current limit or None.
+                                n: New non-negative limit value.
+
+                            Returns:
+                                int | None: Smaller of the limits.
+                            """
                             if cur_lim is None or n < cur_lim:
                                 return n
                             return cur_lim

@@ -1,6 +1,4 @@
-"""
-Python implementation of MongoDB $setWindowFields operators.
-"""
+"""Python implementation of MongoDB ``$setWindowFields`` operators."""
 
 from __future__ import annotations
 
@@ -22,8 +20,26 @@ def process_set_window_fields(
     collection: Collection,
     evaluator: ExprEvaluator,
 ) -> list[dict[str, Any]]:
-    """
-    Python fallback implementation of $setWindowFields.
+    """Evaluate MongoDB ``$setWindowFields`` stage in Python.
+
+    Partitions ``docs_with_context`` according to ``spec["partitionBy"]``,
+    sorts each partition by ``spec["sortBy"]`` using BSON ordering, computes
+    each requested window output field (``$rank``, ``$denseRank``, or
+    frame-based window operators), and mutates a deep copy of each
+    document before returning the concatenated partition results.
+
+    Args:
+        docs_with_context: List of pipeline wrapper dicts containing
+            ``"__doc__"`` keys.
+        spec: ``$setWindowFields`` stage specification dict with optional
+            ``partitionBy`` and ``sortBy`` keys and required ``output`` map.
+        collection: Target ``Collection`` used for field access and setters.
+        evaluator: ``ExprEvaluator`` instance for evaluating expressions in
+            Python.
+
+    Returns:
+        list[dict[str, Any]]: Processed document-with-context dicts ordered
+        by sorted partition key and per-partition sort order.
     """
     partition_by = spec.get("partitionBy")
     sort_by: dict[str, int] = spec.get("sortBy", {})
@@ -58,6 +74,14 @@ def process_set_window_fields(
                 is_desc = direction == -1
 
                 def get_sort_val(dc):
+                    """Compute BSON sort key for the current field.
+
+                    Args:
+                        dc: Document-with-context dictionary.
+
+                    Returns:
+                        tuple: BSON-ordered sort key tuple.
+                    """
                     # BSON-ordered key: safe on mixed/missing values (#102)
                     return bson_sort_key(
                         collection._get_val(dc["__doc__"], field)
@@ -125,6 +149,28 @@ def _get_window_frame(
     sort_by: dict[str, int] | None = None,
     collection: Any | None = None,
 ) -> list[int]:
+    """Compute partition document indices belonging to a window frame.
+
+    Supports ``documents`` frames (positional offsets with ``"unbounded"``
+    or ``"current"`` bounds) and numeric ``range`` frames (using the first
+    field in ``sort_by`` when ``unit`` is unset). Returns all partition
+    indices when ``window_spec`` is omitted or has no matching frame mode.
+
+    Args:
+        current_idx: Zero-based index of the current document in
+            ``partition_docs``.
+        partition_docs: Ordered list of document-with-context dicts in the
+            partition.
+        window_spec: Optional ``window`` specification dict from an output
+            operator, or ``None`` for the full partition.
+        sort_by: Optional ``sortBy`` mapping from ``$setWindowFields``.
+        collection: Optional ``Collection`` used for nested field lookup
+            in ``range`` frames.
+
+    Returns:
+        list[int]: Partition indices included in the frame for
+        ``current_idx``.
+    """
     if not window_spec:
         return list(range(len(partition_docs)))
 
@@ -161,6 +207,16 @@ def _get_window_frame(
             return [current_idx]
 
         def resolve_offset(bound: Any) -> float | None:
+            """Resolve a range window boundary to a numeric offset.
+
+            Args:
+                bound: Window bound (``"unbounded"``, ``"current"``, or
+                    numeric offset).
+
+            Returns:
+                float | None: Numeric offset relative to current value,
+                or ``None`` when unbounded.
+            """
             if bound == "unbounded":
                 return None
             if bound == "current":
@@ -199,6 +255,34 @@ def _apply_window_operator(
     collection: Collection,
     sort_by: dict[str, int],
 ) -> Any:
+    """Evaluate a single ``$setWindowFields`` output operator in Python.
+
+    Supports ``$documentNumber``, ``$shift``, ``$covariancePop``,
+    ``$covarianceSamp``, ``$expMovingAvg``, ``$derivative``,
+    ``$integral``, ``$top``, ``$topN``, ``$bottom``, ``$bottomN``,
+    ``$count``, and standard accumulators (``$sum``, ``$avg``, ``$min``,
+    ``$max``, ``$push``, ``$addToSet``, ``$first``, ``$last``,
+    ``$firstN``, ``$lastN``, ``$minN``, ``$maxN``, ``$stdDevPop``,
+    ``$stdDevSamp``).
+
+    Args:
+        op_name: MongoDB window operator name (e.g., ``"$sum"``,
+            ``"$shift"``).
+        op_val: Operator operand or specification dictionary.
+        current_idx: Zero-based index of the current document within
+            ``partition_docs``.
+        partition_docs: Ordered document-with-context dicts for the active
+            partition.
+        frame_indices: Partition indices included in the current window
+            frame.
+        evaluator: ``ExprEvaluator`` instance for Python operand evaluation.
+        collection: Target ``Collection`` used for field lookup.
+        sort_by: Stage-level ``sortBy`` specification mapping.
+
+    Returns:
+        Any: Computed operator value for the current document, or ``None``
+        when the frame lacks valid inputs or the operator is unsupported.
+    """
     # 1. Operators that don't use frames or use documents directly
     if op_name == "$documentNumber":
         return current_idx + 1
@@ -338,6 +422,14 @@ def _apply_window_operator(
                 is_desc = direction == -1
 
                 def get_sort_val(dc):
+                    """Compute BSON sort key for the current field.
+
+                    Args:
+                        dc: Document-with-context dictionary.
+
+                    Returns:
+                        tuple: BSON-ordered sort key tuple.
+                    """
                     # BSON-ordered key: safe on mixed/missing values (#102)
                     return bson_sort_key(
                         collection._get_val(dc["__doc__"], field)
@@ -483,6 +575,16 @@ def _apply_window_operator(
 def _get_sort_key(
     doc: dict[str, Any], sort_by: dict[str, int], collection: Collection
 ) -> tuple:
+    """Extract a tuple of field values from ``doc`` for tie comparison.
+
+    Args:
+        doc: Document dictionary to read field values from.
+        sort_by: Ordered mapping of field paths to sort directions.
+        collection: ``Collection`` instance providing ``_get_val``.
+
+    Returns:
+        tuple: Tuple of extracted field values ordered by ``sort_by``.
+    """
     return tuple(collection._get_val(doc, field) for field in sort_by)
 
 
@@ -491,6 +593,21 @@ def _calculate_all_ranks(
     sort_by: dict[str, int],
     collection: Collection,
 ) -> list[int]:
+    """Calculate 1-based standard competition ranks (``$rank``) in a partition.
+
+    Documents sharing identical ``sort_by`` key tuples receive the same
+    rank, and the next distinct key tuple advances to its 1-based position
+    (leaving gaps after ties).
+
+    Args:
+        partition_docs: Sorted partition entries containing ``"__doc__"``.
+        sort_by: Mapping of sort fields to directions.
+        collection: ``Collection`` instance used for field extraction.
+
+    Returns:
+        list[int]: One-based rank integer for each document in
+        ``partition_docs``.
+    """
     ranks: list[int] = []
     current_rank = 1
     for i in range(len(partition_docs)):
@@ -510,6 +627,21 @@ def _calculate_all_dense_ranks(
     sort_by: dict[str, int],
     collection: Collection,
 ) -> list[int]:
+    """Calculate 1-based dense ranks (``$denseRank``) in a partition.
+
+    Documents sharing identical ``sort_by`` key tuples receive the same
+    rank, and each subsequent distinct key tuple increments the rank by 1
+    with no gaps.
+
+    Args:
+        partition_docs: Sorted partition entries containing ``"__doc__"``.
+        sort_by: Mapping of sort fields to directions.
+        collection: ``Collection`` instance used for field extraction.
+
+    Returns:
+        list[int]: One-based dense rank integer for each document in
+        ``partition_docs``.
+    """
     ranks: list[int] = []
     current_rank = 1
     for i in range(len(partition_docs)):

@@ -1,6 +1,6 @@
-"""
-Native JSON Schema validator for NeoSQLite.
-Provides MongoDB-compatible $jsonSchema evaluation.
+"""Native JSON Schema validator for NeoSQLite.
+
+Provides MongoDB-compatible ``$jsonSchema`` evaluation in Python.
 """
 
 import logging
@@ -17,21 +17,37 @@ logger = logging.getLogger(__name__)
 def matches_json_schema(
     document: dict[str, Any], schema: dict[str, Any]
 ) -> bool:
-    """
-    Check if a document matches the provided JSON Schema.
+    """Check if a document matches the provided JSON Schema.
 
     Args:
-        document: The document to validate
-        schema: The JSON Schema specification
+        document: The document dictionary to validate.
+        schema: The JSON Schema specification dictionary.
 
     Returns:
-        True if the document matches the schema, False otherwise.
+        bool: True if the document matches the schema, False otherwise.
     """
     return _validate_node(document, schema)
 
 
 def _validate_node(data: Any, schema: Any) -> bool:
-    """Recursively validate a data node against a schema node."""
+    """Recursively validate a data node against a schema node.
+
+    Evaluates ``bsonType`` (checked before ``type``), ``required``,
+    ``properties``, numeric bounds (``minimum``, ``maximum``,
+    ``exclusiveMinimum``, ``exclusiveMaximum``), string constraints
+    (``minLength``, ``maxLength``, ``pattern``), array constraints
+    (``minItems``, ``maxItems``, ``items``), ``enum``, and logical
+    combinators (``anyOf``, ``allOf``, ``oneOf``, ``not``). Non-dict
+    schema nodes trivially pass validation.
+
+    Args:
+        data: Value or nested document node being validated.
+        schema: JSON Schema rule dictionary (or non-dict pass-through).
+
+    Returns:
+        bool: True if ``data`` satisfies all schema constraints, False
+            otherwise.
+    """
     if not isinstance(schema, dict):
         return True
 
@@ -112,14 +128,37 @@ def _validate_node(data: Any, schema: Any) -> bool:
 
 
 def _check_type(data: Any, type_spec: Any) -> bool:
-    """Check if data matches the specified type or list of types."""
+    """Check if data matches the specified type or list of types.
+
+    Args:
+        data: Value whose type is being validated.
+        type_spec: Single type name string or list of allowed type names.
+
+    Returns:
+        bool: True if ``data`` matches any specified type, False otherwise.
+    """
     if isinstance(type_spec, list):
         return any(_check_single_type(data, t) for t in type_spec)
     return _check_single_type(data, type_spec)
 
 
 def _check_single_type(data: Any, t: str) -> bool:
-    """Check a single type string (supports both JSON Schema and BSON types)."""
+    """Check a single type string across JSON Schema and BSON type names.
+
+    Supports ``"string"``, ``"number"``, ``"integer"``/``"int"``/``"long"``,
+    ``"double"``/``"decimal"``, ``"object"``, ``"array"``,
+    ``"bool"``/``"boolean"``, ``"null"``, ``"objectId"`` (``ObjectId``,
+    serialized ``__neosqlite_objectid__`` dicts, or 24-char hex strings),
+    ``"binData"``, and ``"date"``. Unrecognized type strings return ``True``.
+
+    Args:
+        data: Value to inspect.
+        t: JSON Schema or BSON type identifier.
+
+    Returns:
+        bool: True if ``data`` matches type ``t`` (or ``t`` is unknown),
+            False otherwise.
+    """
     # Map MongoDB/BSON types to Python types
     match t:
         case "string":

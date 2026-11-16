@@ -12,15 +12,29 @@ from .base import BaseSqlMixin
 
 
 class TypeConvertersMixin(BaseSqlMixin):
-    """$toString / $toInt / $toBool / $type / $isNumber / $convert → SQL."""
+    """Mixin converting MongoDB type and conversion operators to SQL.
+
+    Provides SQL translation for ``$toString``, ``$toInt``, ``$toDouble``,
+    ``$toLong``, ``$toBool``, ``$isNumber``, and ``$type``, along with BSON
+    type inference helpers for operators and literals. Operators without
+    direct SQLite equivalents (``$toDecimal``, ``$toObjectId``, and
+    ``$convert``) raise ``NotImplementedError`` to trigger Python fallback.
+    """
 
     def _get_operator_return_type(self, operator: str) -> str | None:
-        """
-        Infer the BSON return type of a MongoDB operator.
+        """Infer the BSON return type of a MongoDB operator.
+
+        Maps known MongoDB aggregation operators to the BSON type family they
+        always return so downstream converters such as ``$toBool``,
+        ``$isNumber``, and ``$type`` can evaluate expressions in SQL.
+
+        Args:
+            operator: MongoDB aggregation operator name starting with ``$``.
 
         Returns:
-            BSON type name (e.g., 'number', 'bool', 'string', 'array', 'object')
-            or None if the return type is ambiguous or unknown.
+            str | None: BSON type category (``'number'``, ``'bool'``,
+                ``'string'``, ``'array'``, or ``'object'``), or ``None`` if
+                the return type is ambiguous or unknown.
         """
         match operator:
             # Operators returning numbers
@@ -147,7 +161,20 @@ class TypeConvertersMixin(BaseSqlMixin):
                 return None
 
     def _get_literal_bson_type(self, value: Any) -> str | None:
-        """Get the BSON type name for a literal value."""
+        """Get the BSON type name for a literal Python value.
+
+        Distinguishes ``bool`` from ``int``/``float``, and returns ``None``
+        for field references (strings starting with ``$``), single-key
+        operator expression dicts, or unrecognized Python types.
+
+        Args:
+            value: Literal value or expression node to classify.
+
+        Returns:
+            str | None: One of ``'null'``, ``'bool'``, ``'number'``,
+                ``'string'``, ``'array'``, or ``'object'``, or ``None`` if
+                ``value`` is a field reference, expression, or unknown type.
+        """
         if value is None:
             return "null"
         if isinstance(value, bool):
@@ -171,7 +198,31 @@ class TypeConvertersMixin(BaseSqlMixin):
     def _convert_type_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
-        """Convert type conversion operators to SQL."""
+        """Convert MongoDB type inspection and conversion operators to SQL.
+
+        Supports ``$toString``, ``$toInt``, ``$toDouble``, ``$toLong``,
+        ``$toBool``, ``$isNumber``, and ``$type`` for single-operand inputs
+        (wrapped in a 1-element list or passed directly). Non-numeric strings
+        in ``$toInt``/``$toDouble``/``$toLong`` yield SQL ``NULL`` to avoid
+        SQLite's default coercion to ``0``.
+
+        Args:
+            operator: Type operator name (e.g., ``'$toInt'``, ``'$type'``).
+            operands: Single operand or one-element list containing the
+                operand expression.
+
+        Returns:
+            tuple[str, list[Any]]: SQL expression fragment and its positional
+                bind parameters.
+
+        Raises:
+            ValueError: If ``operands`` does not resolve to exactly one
+                operand.
+            NotImplementedError: If ``operator`` is unsupported in the SQL
+                tier (e.g., ``$toDecimal``, ``$toObjectId``, ``$convert``),
+                inspects ``$_id`` directly, or has an ambiguous ``$isNumber``
+                operand type.
+        """
         # Normalize operands to handle both single values and lists
         # MongoDB allows both: {$isNumber: "$field"} and {$isNumber: ["$field"]}
         if not isinstance(operands, list):

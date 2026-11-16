@@ -22,7 +22,16 @@ from .base import QueryEngineProtocol
 
 
 def _collect_distinct_values(val: Any, results: set[Any]) -> None:
-    """Collect distinct scalar/canonical JSON values into results set."""
+    """Collect distinct scalar or canonical JSON values into a result set.
+
+    Ignores ``None``. Flattens top-level lists element-wise per MongoDB
+    ``distinct`` semantics and canonicalizes nested dicts or lists with
+    ``neosqlite_json_dumps(..., sort_keys=True)`` so they are hashable.
+
+    Args:
+        val: Extracted field value to add to ``results``.
+        results: Mutable set accumulating distinct values.
+    """
     if val is None:
         return
     match val:
@@ -41,7 +50,19 @@ def _collect_distinct_values(val: Any, results: set[Any]) -> None:
 
 
 def _extract_distinct_field_values(doc: Any, key: str) -> list[Any]:
-    """Extract values for a dotted field path, traversing dicts and arrays."""
+    """Extract values for a dotted field path, traversing dicts and arrays.
+
+    Resolves each dot-separated segment across dictionaries, integer list
+    indices, and arrays of subdocuments.
+
+    Args:
+        doc: Source document or nested value to traverse.
+        key: Field name or dot-separated path (e.g., ``"a.b.0.c"``).
+
+    Returns:
+        list[Any]: All matched values along the path, or an empty list if
+        the path is not found.
+    """
     current_values: list[Any] = [doc]
     for part in key.split("."):
         next_values: list[Any] = []
@@ -67,20 +88,30 @@ def _extract_distinct_field_values(doc: Any, key: str) -> list[Any]:
 
 
 class QueryMethodsMixin(QueryEngineProtocol):
-    """Mixin class providing query methods for QueryEngine."""
+    """Mixin class providing query methods for QueryEngine.
+
+    Implements document counting and distinct value queries using Tier-1
+    SQL translation when possible, falling back to Python execution when
+    forced or when a filter cannot be translated to SQL.
+    """
 
     def count_documents(
         self, filter: dict[str, Any], session: ClientSession | None = None
     ) -> int:
-        """
-        Return the count of documents that match the given filter.
+        """Return the count of documents that match the given filter.
+
+        Normalizes ``_id``/``id`` predicates and attempts Tier-1 SQL
+        ``SELECT COUNT(id)`` execution unless fallback is forced or the
+        filter cannot be translated, in which case it counts results from
+        ``self.find()``.
 
         Args:
-            filter (dict[str, Any]): A dictionary specifying the query filter.
-            session (ClientSession, optional): A ClientSession for transactions.
+            filter: Dictionary specifying the query filter.
+            session: Optional ``ClientSession`` for transaction validation.
+                Defaults to None.
 
         Returns:
-            int: The number of documents matching the filter.
+            int: Number of documents matching ``filter``.
         """
         validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
@@ -98,14 +129,17 @@ class QueryMethodsMixin(QueryEngineProtocol):
     def estimated_document_count(
         self, session: ClientSession | None = None
     ) -> int:
-        """
-        Return the estimated number of documents in the collection.
+        """Return the estimated number of documents in the collection.
+
+        Uses ``SELECT COUNT(1)`` in Tier-1 SQL mode, or iterates
+        ``self.find()`` when fallback is forced.
 
         Args:
-            session (ClientSession, optional): A ClientSession for transactions.
+            session: Optional ``ClientSession`` for transaction validation.
+                Defaults to None.
 
         Returns:
-            int: The estimated number of documents.
+            int: Estimated number of documents in the collection.
         """
         validate_session(session, self.collection._database)
         if get_force_fallback():
@@ -122,17 +156,22 @@ class QueryMethodsMixin(QueryEngineProtocol):
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ) -> list[Any]:
-        """
-        Return a list of distinct values from the specified key in the documents
-        of this collection, optionally filtered by a query.
+        """Return a list of distinct values for a field across matching docs.
+
+        Uses SQLite ``SELECT DISTINCT json_extract(...)`` in Tier-1 SQL mode
+        (always using ``json_*`` functions to avoid binary JSONB output
+        issues), or delegates to ``_distinct_python()`` when fallback is
+        forced or the filter cannot be translated to SQL.
 
         Args:
-            key (str): The field name to extract distinct values from.
-            filter (dict[str, Any] | None): An optional query filter to apply to the documents.
-            session (ClientSession, optional): A ClientSession for transactions.
+            key: Field name or dotted path to collect distinct values from.
+            filter: Optional query filter to restrict examined documents.
+                Defaults to None.
+            session: Optional ``ClientSession`` for transaction validation.
+                Defaults to None.
 
         Returns:
-            list[Any]: A list containing the distinct values from the specified key.
+            list[Any]: List of distinct values found for ``key``.
         """
         validate_session(session, self.collection._database)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
@@ -196,7 +235,21 @@ class QueryMethodsMixin(QueryEngineProtocol):
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
     ) -> list[Any]:
-        """Execute distinct in Python Tier 3 as the authoritative reference."""
+        """Execute distinct in Python Tier 3 as the authoritative reference.
+
+        Iterates documents from ``self.find()``, extracts values via
+        ``_extract_distinct_field_values()``, and collects unique values
+        with ``_collect_distinct_values()``.
+
+        Args:
+            key: Field name or dotted path to collect distinct values from.
+            filter: Optional query filter dictionary. Defaults to None.
+            session: Optional ``ClientSession`` passed to ``self.find()``.
+                Defaults to None.
+
+        Returns:
+            list[Any]: List of distinct values found for ``key``.
+        """
         results: set[Any] = set()
         for doc in self.find(filter or {}, session=session):
             for val in _extract_distinct_field_values(doc, key):

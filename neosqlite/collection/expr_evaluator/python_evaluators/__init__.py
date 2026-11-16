@@ -26,12 +26,17 @@ class PythonEvaluatorsMixin(
     TypePythonMixin,
     CorePythonMixin,
 ):
-    """
-    Mixin class providing Python evaluation methods for $expr expressions.
+    """Mixin class providing Python evaluation methods for ``$expr``.
 
-    This mixin provides fallback evaluation capabilities when SQL-based
+    Combines ``MathPythonMixin``, ``ArrayPythonMixin``, ``StringPythonMixin``,
+    ``DatePythonMixin``, ``ObjectPythonMixin``, ``TypePythonMixin``, and
+    ``CorePythonMixin`` to provide fallback evaluation when SQL-based
     evaluation (Tier 1 and Tier 2) is not possible or when the kill switch
     is activated.
+
+    Attributes:
+        _log2_warned: Flag tracking whether the ``$log2`` warning has been
+            emitted.
     """
 
     _log2_warned: bool

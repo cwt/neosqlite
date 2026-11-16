@@ -12,16 +12,17 @@ logger = logging.getLogger(__name__)
 
 
 def _sanitize_params(params: list[Any] | None) -> list[Any] | None:
-    """
-    Sanitize SQL parameters by converting ObjectId instances to strings.
+    """Sanitize SQL parameters by converting ``ObjectId`` instances to strings.
 
-    SQLite doesn't know how to bind ObjectId types, so we convert them to strings.
+    SQLite does not support binding ``ObjectId`` objects directly, so any
+    ``ObjectId`` entries in ``params`` are converted via ``str()``.
 
     Args:
-        params: List of parameters or None
+        params: Sequence of SQL bind parameters, or ``None``.
 
     Returns:
-        Sanitized parameters with ObjectId converted to strings
+        list[Any] | None: Parameter list with ``ObjectId`` values converted to
+            strings, or ``None`` if ``params`` is ``None``.
     """
     if params is None:
         return None
@@ -41,20 +42,24 @@ def _json_extract_field_with_objectid_support(
     is_local_field: bool = True,
     data_column: str = "data",
 ) -> str:
-    """
-    Generate SQL expression to extract a field value with ObjectId support.
+    """Generate a SQL expression extracting a field with ``ObjectId`` support.
 
-    When a field contains an ObjectId (stored as {"__neosqlite_objectid__":true,"id":"..."}),
-    this extracts just the ID string instead of the full JSON object.
+    Returns ``"_id"`` directly when ``field_name`` is ``"_id"``. Otherwise
+    builds a ``CASE`` expression that returns ``NULL`` when the field is
+    absent, extracts ``.id`` when stored as
+    ``{"__neosqlite_objectid__": true, "id": "..."}``, and otherwise casts the
+    extracted value to ``TEXT``.
 
     Args:
-        json_function_prefix: The JSON function prefix (json or jsonb)
-        field_name: The field name to extract
-        is_local_field: Whether this is a local field (True) or foreign field (False)
-        data_column: The column or qualified column reference containing the JSON data
+        json_function_prefix: JSON function prefix (``"json"`` or ``"jsonb"``).
+        field_name: Document field path to extract.
+        is_local_field: Flag distinguishing local vs. foreign lookup fields
+            (retained for signature compatibility).
+        data_column: Column or qualified column expression containing JSON
+            data.
 
     Returns:
-        SQL expression string
+        str: SQL expression string evaluating to the extracted field value.
     """
     if field_name == "_id":
         return "_id" if is_local_field else "_id"
@@ -81,16 +86,16 @@ def _json_extract_field_with_objectid_support(
 
 
 def _contains_text_search(match_spec: dict[str, Any]) -> bool:
-    """
-    Check if a match specification contains text search operations.
+    """Check whether a ``$match`` specification contains a ``$text`` query.
 
-    This function delegates to the centralized _contains_text_operator function
-    to ensure consistent text search detection across all NeoSQLite components.
+    Delegates to ``_contains_text_operator`` from ``jsonb_support``
+    for consistent detection across aggregation components.
 
     Args:
-        match_spec (dict[str, Any]): The match specification to check for text search operations
+        match_spec: MongoDB ``$match`` query specification dictionary.
 
     Returns:
-        bool: True if the match specification contains text search operations, False otherwise
+        bool: ``True`` if ``match_spec`` contains a ``$text`` operator,
+            ``False`` otherwise.
     """
     return _contains_text_operator(match_spec)

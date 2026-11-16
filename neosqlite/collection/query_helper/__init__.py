@@ -53,29 +53,29 @@ class QueryHelper(
     AggregationMixin,
     QueryOptimizerMixin,
 ):
-    """
-    A helper class for the QueryEngine that provides methods for building queries,
-    performing updates, and processing aggregation pipelines.
+    """Helper for QueryEngine that builds SQL and drives aggregations.
 
-    This class contains the core logic for translating MongoDB-like queries and
-    operations into SQL statements that can be executed against the SQLite database.
-    It handles both simple operations that can be done directly with SQL JSON
-    functions and complex operations that require Python-based processing.
+    Translates MongoDB-like queries, updates, and aggregation pipelines into
+    SQL statements executed against SQLite. Supports direct SQL JSON
+    operations as well as temporary-table evaluation and Python fallbacks.
 
-    The class is composed of several mixins:
-    - CRUDOperationsMixin: Insert, replace, delete operations
-    - UpdateOperationsMixin: Update operations (SQL and Python-based)
-    - QueryBuilderMixin: WHERE clause building and query application
-    - AggregationMixin: Aggregation pipeline processing
-    - QueryOptimizerMixin: Query optimization and cost estimation
+    Composed of the following mixins:
+    - CRUDOperationsMixin: Insert, replace, and delete operations.
+    - UpdateOperationsMixin: SQL- and Python-based update operations.
+    - QueryBuilderMixin: WHERE clause construction and query application.
+    - AggregationMixin: Aggregation pipeline processing.
+    - QueryOptimizerMixin: Query optimization and cost estimation.
     """
 
     def __init__(self, collection):
-        """
-        Initialize the QueryHelper with a collection.
+        """Initialize the QueryHelper with a target collection.
+
+        Sets up the debug flag, ``JSONBContext``, and the Tier-2
+        ``TempTableExprEvaluator`` using the collection's database connection
+        and configured translation cache size.
 
         Args:
-            collection: The collection instance this QueryHelper will operate on.
+            collection: The collection instance this QueryHelper operates on.
         """
         self.collection = collection
         # Access debug flag from the database connection if available
@@ -108,78 +108,85 @@ class QueryHelper(
         )
 
     def cleanup(self) -> None:
-        """Clean up resources used by the QueryHelper."""
+        """Clean up resources used by the QueryHelper.
+
+        Drops any temporary tables tracked by ``self.tier2_evaluator`` if it
+        has been initialized.
+        """
         if hasattr(self, "tier2_evaluator"):
             self.tier2_evaluator.cleanup_temp_tables()
 
     def _normalize_id_query(self, query: dict[str, Any]) -> dict[str, Any]:
-        """
-        Normalize ID types in a query dictionary to correct common mismatches.
+        """Normalize ID types in a query dictionary.
 
-        This method delegates to the centralized normalize_id_query_for_db function
-        to ensure consistent ID handling across all NeoSQLite components.
+        Delegates to ``normalize_id_query_for_db()`` to ensure consistent
+        handling of ``_id`` types across NeoSQLite components.
 
         Args:
-            query: The query dictionary to process
+            query: The query dictionary to process.
 
         Returns:
-            A new query dictionary with corrected ID types
+            dict[str, Any]: Query dictionary with normalized ID types.
         """
         return normalize_id_query_for_db(query)
 
     def _get_integer_id_for_oid(self, oid: Any) -> int:
-        """
-        Get the integer ID for a given ObjectId or other ID type.
+        """Get the integer row ID for a given ObjectId or other ID value.
 
         Args:
-            oid: The ID value (can be ObjectId, int, str, etc.)
+            oid: The ID value (such as ``ObjectId``, ``int``, or ``str``).
 
         Returns:
-            int: The integer ID from the database
+            int: The corresponding integer row ID from the database.
         """
         return _get_integer_id_for_oid(self.collection, oid)
 
     def _validate_json_document(self, json_str: str) -> bool:
-        """
-        Validate JSON document using SQLite's json_valid function.
+        """Validate a JSON string using SQLite's ``json_valid()`` function.
 
         Args:
-            json_str: The JSON string to validate
+            json_str: The JSON string to validate.
 
         Returns:
-            bool: True if valid, False otherwise
+            bool: True if ``json_str`` is valid JSON, False otherwise.
         """
         return _validate_json_document(self.collection.db, json_str)
 
     def _get_json_error_position(self, json_str: str) -> int:
-        """
-        Get position of JSON error using json_error_position().
+        """Get the byte/character position of a JSON syntax error.
+
+        Uses SQLite's ``json_error_position()`` on ``self.collection.db``.
 
         Args:
-            json_str: The JSON string to check
+            json_str: The JSON string to inspect.
 
         Returns:
-            int: Position of error, or -1 if valid/not supported
+            int: Error position reported by SQLite, or -1 if valid or
+                unsupported.
         """
         return _get_json_error_position(self.collection.db, json_str)
 
     def _build_expr_where_clause(
         self, query: dict[str, Any]
     ) -> tuple[str, list[Any], list[str]] | None:
-        """
-        Build a SQL WHERE clause for $expr queries using the 3-tier approach.
-        Also handles other query fields combined with $expr.
+        """Build a SQL WHERE clause for ``$expr`` queries using three tiers.
 
-        Tier Selection Logic:
-        - Tier 1 (Simple): Direct SQL WHERE with json_extract/jsonb_extract
-        - Tier 2 (Complex): Temporary tables with pre-computed field extractions
-        - Tier 3 (Fallback): Python evaluation for unsupported operations
+        Tier selection logic:
+
+        - Tier 1: Direct SQL ``WHERE`` via ``ExprEvaluator``.
+        - Tier 2: Temporary tables for standalone ``$expr`` with complexity
+          3 through 8.
+        - Tier 3: Python fallback (returns ``None``) when forced or
+          unsupported.
 
         Args:
-            query: Query dictionary containing $expr and potentially other fields
+            query: Query dictionary with ``$expr`` and optional extra filter
+                fields.
 
         Returns:
-            Tuple of (SQL WHERE clause, parameters, tables) or None for Python fallback
+            tuple[str, list[Any], list[str]] | None: Tuple of
+                ``(sql_clause_or_query, params, temp_tables)``, or None when
+                evaluation must fall back to Python.
         """
         if "$expr" not in query:
             return None
@@ -241,27 +248,20 @@ class QueryHelper(
         )
 
     def _analyze_expr_complexity(self, expr: dict[str, Any]) -> int:
-        """
-        Analyze expression complexity to determine appropriate tier.
+        """Analyze ``$expr`` complexity to guide tier selection.
 
-        Complexity scoring:
-        - Base expression: 1 point
-        - Each nested operator: +1 point
-        - Arithmetic operators: +1 point each
-        - Conditional operators: +2 points each
-        - Array operators: +2 points each
-        - Type conversion: +1 point each
-
-        Tier thresholds:
-        - 1-2: Tier 1 (simple SQL WHERE)
-        - 3-8: Tier 2 (temporary tables)
-        - 9+: Tier 3 (Python fallback)
+        Computes a recursive score starting at 1 for each single-key expression
+        dict (0 for invalid shapes) and adding operator weights (+1 for
+        arithmetic, string, math, date arithmetic, ``$cmp``, and type
+        conversion; +2 for conditionals, array accessors, and regex finders;
+        +3 for ``$filter``, ``$map``, and ``$reduce``).
 
         Args:
-            expr: The $expr expression
+            expr: The ``$expr`` expression dictionary to score.
 
         Returns:
-            int: Complexity score
+            int: Computed complexity score (0 if ``expr`` is not a single-key
+                dictionary).
         """
         if not isinstance(expr, dict) or len(expr) != 1:
             return 0
@@ -313,17 +313,22 @@ class QueryHelper(
         query: dict[str, Any],
         expr: dict[str, Any],
     ) -> tuple[str, list[Any], list[str]] | None:
-        """
-        Combine $expr SQL with other query fields.
+        """Combine a ``$expr`` SQL predicate with other query fields.
+
+        Wraps ``sql_expr`` with ``expr_truthiness_sql()`` and appends SQL
+        clauses for logical operators and regular field filters in ``query``.
 
         Args:
-            sql_expr: The $expr SQL expression
-            params: SQL parameters
-            query: Full query dictionary
-            expr: The $expr expression
+            sql_expr: The SQL expression compiled for ``$expr``.
+            params: Bound SQL parameters for ``sql_expr``.
+            query: Full query dictionary including ``$expr`` and other fields.
+            expr: The ``$expr`` expression dictionary (kept for signature
+                consistency).
 
         Returns:
-            Tuple of (WHERE clause, parameters, tables) or None for Python fallback
+            tuple[str, list[Any], list[str]] | None: Tuple of
+                ``(where_clause, params, [])``, or None if any additional
+                field requires Python fallback.
         """
         from ..type_utils import expr_truthiness_sql
 

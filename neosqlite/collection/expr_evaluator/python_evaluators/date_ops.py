@@ -13,16 +13,41 @@ from .base import BasePythonMixin
 
 
 class DatePythonMixin(BasePythonMixin):
-    """Date component extraction and date arithmetic operators."""
+    """Mixin providing Python evaluators for MongoDB date operators.
+
+    Implements date component extraction operators (such as ``$year``,
+    ``$month``, ``$dayOfWeek``, and ``$isoWeek``) as well as date arithmetic,
+    parsing, formatting, and truncation operators (``$dateAdd``,
+    ``$dateSubtract``, ``$dateDiff``, ``$dateFromString``, ``$dateToString``,
+    ``$dateFromParts``, ``$dateToParts``, and ``$dateTrunc``).
+    """
 
     def _evaluate_date_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> int | None:
-        """Evaluate date operators in Python.
+        """Evaluate date component extraction operators in Python.
 
-        MongoDB compatibility: Date operators require the field to be stored as
-        BSON Date/datetime type. String dates are NOT automatically converted,
-        matching MongoDB's behavior.
+        MongoDB compatibility: date operators require the operand to evaluate
+        to a ``datetime`` object. ISO date strings are rejected with
+        ``ValueError`` rather than implicitly parsed, and non-datetime
+        non-string values return ``None``.
+
+        Args:
+            operator: Date extraction operator name (e.g., ``"$year"``,
+                ``"$month"``, ``"$dayOfMonth"``, ``"$dayOfWeek"``).
+            operands: Single-element list (or single operand) evaluating to a
+                ``datetime`` value.
+            document: Document dictionary being evaluated.
+
+        Returns:
+            int | None: Extracted integer date component, or ``None`` if the
+                operand evaluates to ``None`` or a non-date/non-string value.
+
+        Raises:
+            ValueError: If operand count is not 1 or the evaluated value is a
+                string.
+            NotImplementedError: If ``operator`` is not a supported date
+                extraction operator.
         """
 
         # Handle both list and single operand formats
@@ -85,7 +110,29 @@ class DatePythonMixin(BasePythonMixin):
     def _evaluate_date_arithmetic_python(
         self, operator: str, operands: list[Any], document: dict[str, Any]
     ) -> Any:
-        """Evaluate $dateAdd, $dateSubtract, $dateDiff operators in Python."""
+        """Evaluate date arithmetic and conversion operators in Python.
+
+        Supports ``$dateAdd``, ``$dateSubtract``, ``$dateDiff``,
+        ``$dateFromString``, ``$dateToString``, ``$dateFromParts``,
+        ``$dateToParts``, and ``$dateTrunc`` using either positional operand
+        lists or MongoDB-style specification dictionaries.
+
+        Args:
+            operator: Date arithmetic or conversion operator name.
+            operands: Positional operand list or MongoDB operator argument
+                dictionary for ``operator``.
+            document: Document dictionary being evaluated.
+
+        Returns:
+            Any: Computed ``datetime``, integer difference, formatted string,
+                parts dictionary, fallback value (``onNull``/``onError``), or
+                ``None`` when inputs are missing or invalid.
+
+        Raises:
+            ValueError: If required operands are missing or have an invalid
+                structure.
+            NotImplementedError: If ``operator`` is not supported.
+        """
         match operator:
             case "$dateAdd" | "$dateSubtract":
                 # Handle MongoDB dict format: {startDate, amount, unit}

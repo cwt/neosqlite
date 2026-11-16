@@ -23,7 +23,18 @@ logger = logging.getLogger("nx_27017")
 
 
 def write_pid_file(pid_file: str) -> bool:
-    """Write PID to file. Returns False if already running."""
+    """Write the current process PID to ``pid_file``.
+
+    Checks whether an existing daemon process is already active first; if so,
+    logs an error and returns ``False`` without overwriting the PID file.
+
+    Args:
+        pid_file: Filesystem path to the PID file to write.
+
+    Returns:
+        bool: ``True`` if the PID was written, ``False`` if the daemon is
+            already running or an ``OSError`` occurred.
+    """
     if is_running(pid_file):
         pid = get_pid(pid_file)
         logger.error(f"NX-27017 is already running (PID: {pid})")
@@ -39,7 +50,14 @@ def write_pid_file(pid_file: str) -> bool:
 
 
 def remove_pid_file(pid_file: str):
-    """Remove PID file on shutdown."""
+    """Remove the daemon PID file on shutdown if it exists.
+
+    Suppresses ``OSError`` if the file cannot be deleted or was already
+    removed.
+
+    Args:
+        pid_file: Filesystem path to the PID file to remove.
+    """
     try:
         if os.path.exists(pid_file):
             os.remove(pid_file)
@@ -48,7 +66,18 @@ def remove_pid_file(pid_file: str):
 
 
 def is_running(pid_file: str) -> bool:
-    """Check if daemon is already running."""
+    """Check whether a daemon referenced by ``pid_file`` is alive.
+
+    Parses the PID from ``pid_file`` and probes the process via
+    ``os.kill(pid, 0)``.
+
+    Args:
+        pid_file: Filesystem path to the PID file to inspect.
+
+    Returns:
+        bool: ``True`` if the PID file exists, parses cleanly, and the
+            process responds to signal ``0``; ``False`` otherwise.
+    """
     if not os.path.exists(pid_file):
         return False
 
@@ -64,7 +93,15 @@ def is_running(pid_file: str) -> bool:
 
 
 def get_pid(pid_file: str) -> int | None:
-    """Get PID from file."""
+    """Read and parse the integer PID from ``pid_file``.
+
+    Args:
+        pid_file: Filesystem path to the PID file.
+
+    Returns:
+        int | None: Parsed process ID, or ``None`` if reading or integer
+            parsing fails.
+    """
     try:
         with open(pid_file) as f:
             return int(f.read().strip())
@@ -73,7 +110,19 @@ def get_pid(pid_file: str) -> int | None:
 
 
 def stop_daemon(pid_file: str) -> int:
-    """Stop the running daemon."""
+    """Stop a running NX-27017 daemon referenced by ``pid_file``.
+
+    Sends ``SIGTERM`` and polls up to ``SHUTDOWN_RETRY_COUNT`` intervals of
+    ``SHUTDOWN_POLL_INTERVAL`` seconds; escalates to ``SIGKILL`` and deletes
+    ``pid_file`` if the process does not exit in time.
+
+    Args:
+        pid_file: Filesystem path to the daemon's PID file.
+
+    Returns:
+        int: ``0`` if the daemon stopped (or was forcefully killed), ``1`` if
+            not running, the PID file is invalid, or permission is denied.
+    """
     if not os.path.exists(pid_file):
         print("NX-27017 is not running (no PID file found)")
         return 1
@@ -109,7 +158,14 @@ def stop_daemon(pid_file: str) -> int:
 
 
 def check_status(pid_file: str) -> int:
-    """Check daemon status."""
+    """Check whether the NX-27017 daemon is running and print its status.
+
+    Args:
+        pid_file: Filesystem path to the daemon's PID file.
+
+    Returns:
+        int: ``0`` if the daemon is running, ``1`` otherwise.
+    """
     if is_running(pid_file):
         pid = get_pid(pid_file)
         print(f"NX-27017 is running (PID: {pid})")
@@ -120,7 +176,12 @@ def check_status(pid_file: str) -> int:
 
 
 def daemonize():
-    """Perform Unix daemonization (double-fork)."""
+    """Detach the current process via Unix double-fork daemonization.
+
+    Forks once and exits the parent, changes working directory to ``/`` and
+    starts a new session via ``os.setsid()``, forks a second time so the
+    daemon cannot reacquire a controlling terminal, and flushes stdio streams.
+    """
     try:
         pid = os.fork()
         if pid > 0:
@@ -145,12 +206,28 @@ def daemonize():
 
 
 def _signal_exit_handler(signum: int, frame: Any) -> None:
-    """Handle termination signals by exiting cleanly."""
+    """Handle termination signals by exiting cleanly.
+
+    Args:
+        signum: Signal number received by the process.
+        frame: Current stack frame at the time the signal was delivered.
+    """
     sys.exit(0)
 
 
 def run_as_daemon(args: argparse.Namespace):
-    """Run the server as a background daemon."""
+    """Run the NX-27017 server as a background daemon process.
+
+    Verifies no instance is running, resolves relative database, data, and
+    FTS5 tokenizer paths to absolute paths before daemonizing, redirects
+    ``stdout`` and ``stderr`` to ``args.log_file``, writes ``args.pid_file``,
+    installs ``SIGTERM``/``SIGINT`` handlers, runs :func:`run_server_sync`,
+    and cleans up the PID file on exit.
+
+    Args:
+        args: Parsed CLI namespace containing ``pid_file``, ``log_file``,
+            ``db_path``, ``data_dir``, ``fts5_tokenizers``, and server options.
+    """
     if is_running(args.pid_file):
         pid = get_pid(args.pid_file)
         logger.error(f"NX-27017 is already running (PID: {pid})")
@@ -189,7 +266,17 @@ def run_as_daemon(args: argparse.Namespace):
 
 
 def run_foreground(args: argparse.Namespace):
-    """Run the server in the foreground."""
+    """Run the NX-27017 server in the foreground with file logging.
+
+    Writes ``args.pid_file``, registers ``SIGTERM``/``SIGINT`` handlers,
+    attaches a ``FileHandler`` to the root logger at ``DEBUG`` or ``INFO``
+    level depending on ``args.verbose``, executes :func:`run_server_sync`,
+    and removes the PID file when finished.
+
+    Args:
+        args: Parsed CLI namespace containing ``pid_file``, ``log_file``,
+            ``verbose``, and server options.
+    """
     if not write_pid_file(args.pid_file):
         sys.exit(1)
 
@@ -213,7 +300,17 @@ def run_foreground(args: argparse.Namespace):
 
 
 def run_server_sync(args: argparse.Namespace):
-    """Run the server synchronously."""
+    """Configure the NeoSQLite handler and run the wire-protocol server.
+
+    Maps ``"memory"`` to ``":memory:"``, logs startup configuration, constructs
+    :class:`NeoSQLiteHandler`, and starts :func:`run_server_threaded` until
+    interrupted via ``KeyboardInterrupt``.
+
+    Args:
+        args: Parsed CLI namespace containing ``db_path``, ``host``, ``port``,
+            ``journal_mode``, ``fts5_tokenizers``, ``threaded``, and optional
+            ``data_dir`` and ``single_db_compat`` attributes.
+    """
     db_path = args.db_path
     if db_path == "memory":
         db_path = ":memory:"

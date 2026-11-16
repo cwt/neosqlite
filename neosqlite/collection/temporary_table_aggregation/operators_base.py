@@ -7,7 +7,14 @@ if TYPE_CHECKING:
 
 
 class OperatorsBaseMixin:
-    """Shared base for temporary-table aggregation stage operators."""
+    """Shared base for temporary-table aggregation stage operators.
+
+    Declares shared attribute annotations supplied by
+    ``TemporaryTableAggregationProcessor.__init__`` (including ``collection``,
+    ``db``, ``query_engine``, ``expr_evaluator``, ``sql_translator``,
+    ``jsonb``, and pipeline state flags) and cross-mixin stub signatures so
+    type checkers resolve MRO calls across operator mixins.
+    """
 
     # Attribute annotations for state supplied by
     # TemporaryTableAggregationProcessor.__init__. Declared on the shared base so every
@@ -25,4 +32,21 @@ class OperatorsBaseMixin:
     # Stub for the single method called across mixin boundaries
     # (_process_match_stage -> _process_text_search_stage). The real implementation lives
     # in OperatorsTextMixin; declaring it here lets static analysis resolve the call via MRO.
-    def _process_text_search_stage(self, *args: Any, **kwargs: Any) -> Any: ...
+    def _process_text_search_stage(self, *args: Any, **kwargs: Any) -> Any:
+        """Process a ``$text`` search stage on a temporary aggregation table.
+
+        Cross-mixin stub resolved at runtime by
+        ``OperatorsTextMixin._process_text_search_stage``.
+
+        Args:
+            *args: Positional arguments forwarded to the concrete
+                implementation (``create_temp``, ``current_table``,
+                ``match_spec``).
+            **kwargs: Keyword arguments forwarded to the concrete
+                implementation.
+
+        Returns:
+            Any: Name of the newly created temporary table containing matching
+                documents.
+        """
+        ...

@@ -1,3 +1,5 @@
+"""Legacy PyMongo-compatible GridFS interface backed by SQLite."""
+
 import io
 import logging
 from typing import Any
@@ -14,11 +16,11 @@ logger = logging.getLogger(__name__)
 
 
 class GridFS:
-    """
-    A legacy GridFS interface for storing and retrieving files in SQLite.
+    """Legacy GridFS interface for storing and retrieving files in SQLite.
 
-    This class provides the legacy PyMongo-compatible GridFS interface,
-    which is simpler to use than the GridFSBucket API but less flexible.
+    Provides the legacy PyMongo-compatible ``GridFS`` wrapper over
+    ``GridFSBucket``, offering simpler one-shot file helpers than the bucket
+    stream API.
     """
 
     def __init__(
@@ -26,12 +28,12 @@ class GridFS:
         db: sqlite3.Connection,
         collection_name: str = "fs",
     ):
-        """
-        Initialize a new GridFS instance.
+        """Initialize a new GridFS instance.
 
         Args:
-            db: SQLite database connection
-            collection_name: The collection name for the GridFS files (default: "fs")
+            db: SQLite database connection.
+            collection_name: Base collection name for the GridFS files and
+                chunks. Defaults to ``"fs"``.
         """
         self._db = db
         self._bucket = GridFSBucket(db, bucket_name=collection_name)
@@ -42,16 +44,20 @@ class GridFS:
         filename: str | None = None,
         **kwargs: Any,
     ) -> ObjectId:
-        """
-        Put data into GridFS.
+        """Put data into GridFS.
+
+        Extracts optional metadata fields from ``kwargs`` (excluding
+        ``"encoding"``), resolves a filename fallback (from ``kwargs`` or
+        ``"file"``), and uploads the payload via ``upload_from_stream``.
 
         Args:
-            data: The data to store (bytes or file-like object)
-            filename: The filename to use (optional)
-            **kwargs: Additional metadata fields
+            data: File payload as ``bytes`` or a readable file-like object.
+            filename: Optional filename to store on the file document.
+                Defaults to ``None``.
+            **kwargs: Additional metadata fields (and optional ``filename``).
 
         Returns:
-            The ObjectId of the stored file document
+            ObjectId: The ``ObjectId`` of the stored file document.
         """
         # Extract metadata from kwargs
         metadata = {
@@ -72,48 +78,50 @@ class GridFS:
         )
 
     def get(self, file_id: ObjectId | str | int) -> GridOut:
-        """
-        Get a file from GridFS by its _id.
+        """Get a file from GridFS by its ``_id``.
 
         Args:
-            file_id: The _id of the file to retrieve (ObjectId, hex string, or integer ID)
+            file_id: The ``_id`` of the file to retrieve (``ObjectId``, hex
+                string, or integer ID).
 
         Returns:
-            A GridOut instance for reading the file
+            GridOut: A stream instance for reading the file.
         """
         return self._bucket.open_download_stream(file_id)
 
     def get_version(self, filename: str, version: int = -1) -> GridOut:
-        """
-        Get a file from GridFS by filename and version.
+        """Get a file from GridFS by filename and revision number.
 
         Args:
-            filename: The name of the file to retrieve
-            version: The version number (-1 for latest, 0 for first, etc.)
+            filename: Name of the file to retrieve.
+            version: Revision index (``-1`` for latest, ``0`` for first, etc.).
+                Defaults to ``-1``.
 
         Returns:
-            A GridOut instance for reading the file
+            GridOut: A stream instance for reading the file.
         """
         return self._bucket.open_download_stream_by_name(filename, version)
 
     def get_last_version(self, filename: str) -> GridOut:
-        """
-        Get the most recent version of a file from GridFS by filename.
+        """Get the most recent version of a file from GridFS by filename.
 
         Args:
-            filename: The name of the file to retrieve
+            filename: Name of the file to retrieve.
 
         Returns:
-            A GridOut instance for reading the file
+            GridOut: A stream instance for reading the latest revision.
         """
         return self._bucket.open_download_stream_by_name(filename, -1)
 
     def delete(self, file_id: ObjectId | str | int) -> None:
-        """
-        Delete a file from GridFS by its _id.
+        """Delete a file from GridFS by its ``_id``.
+
+        Matches legacy PyMongo ``GridFS.delete`` semantics by ignoring
+        ``NoFile`` when the target file does not exist.
 
         Args:
-            file_id: The _id of the file to delete (ObjectId, hex string, or integer ID)
+            file_id: The ``_id`` of the file to delete (``ObjectId``, hex
+                string, or integer ID).
         """
         try:
             self._bucket.delete(file_id)
@@ -125,11 +133,10 @@ class GridFS:
             pass
 
     def list(self) -> list:
-        """
-        List all filenames in GridFS.
+        """List all unique filenames in GridFS in encounter order.
 
         Returns:
-            A list of filenames
+            list: Distinct filenames stored in GridFS.
         """
         cursor = self._bucket.find({})
         filenames = []
@@ -139,26 +146,27 @@ class GridFS:
         return filenames
 
     def find(self, filter: dict[str, Any] | None = None) -> GridOutCursor:
-        """
-        Find files in GridFS that match the filter.
+        """Find files in GridFS that match the filter.
 
         Args:
-            filter: The filter to apply when searching for files
+            filter: Optional query filter dictionary applied to the files
+                collection. Defaults to ``None``.
 
         Returns:
-            A GridOutCursor instance
+            GridOutCursor: Cursor over matching ``GridOut`` file streams.
         """
         return self._bucket.find(filter or {})
 
     def find_one(self, filter: dict[str, Any] | None = None) -> GridOut | None:
-        """
-        Find a single file in GridFS that matches the filter.
+        """Find a single file in GridFS that matches the filter.
 
         Args:
-            filter: The filter to apply when searching for files
+            filter: Optional query filter dictionary applied to the files
+                collection. Defaults to ``None``.
 
         Returns:
-            A GridOut instance for reading the file, or None if not found
+            GridOut | None: The first matching ``GridOut`` stream, or ``None``
+                if no file matches.
         """
         cursor = self._bucket.find(filter or {})
         try:
@@ -169,15 +177,16 @@ class GridFS:
     def exists(
         self, file_id: ObjectId | str | int | None = None, **kwargs: Any
     ) -> bool:
-        """
-        Check if a file exists in GridFS.
+        """Check if a file exists in GridFS by ID or filter criteria.
 
         Args:
-            file_id: The _id of the file to check (ObjectId, hex string, or integer ID)
-            **kwargs: Additional filter criteria (e.g., filename="test.txt")
+            file_id: Optional ``_id`` of the file to check (``ObjectId``, hex
+                string, or integer ID). Defaults to ``None``.
+            **kwargs: Additional filter criteria (for example,
+                ``filename="test.txt"``) used when ``file_id`` is ``None``.
 
         Returns:
-            True if the file exists, False otherwise
+            bool: ``True`` if a matching file exists, ``False`` otherwise.
         """
         if file_id is not None:
             try:
@@ -198,14 +207,18 @@ class GridFS:
             return False
 
     def new_file(self, **kwargs: Any) -> GridIn:
-        """
-        Create a new file in GridFS and return a GridIn instance to which data can be written.
+        """Create a new file in GridFS and return a writable GridIn stream.
+
+        Uses ``filename`` (defaulting to ``"file"``), ``metadata`` (or any
+        remaining keyword arguments), and optional ``_id`` to open either a
+        custom-ID or auto-ID upload stream.
 
         Args:
-            **kwargs: Arguments to pass to the GridIn constructor (e.g., filename, metadata)
+            **kwargs: File attributes and upload options such as
+                ``filename``, ``metadata``, and ``_id``.
 
         Returns:
-            A GridIn instance for writing the file contents
+            GridIn: Writable stream for writing the new file's contents.
         """
         # Extract parameters from kwargs
         filename = kwargs.pop("filename", "file")

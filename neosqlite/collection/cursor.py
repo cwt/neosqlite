@@ -24,9 +24,12 @@ DESCENDING = -1
 
 
 class Cursor:
-    """
-    Class representing a cursor for iterating over documents in a collection with
-    applied filters, projections, sorting, and pagination.
+    """Cursor for iterating over query results in a NeoSQLite collection.
+
+    Provides a PyMongo-compatible interface supporting query filtering,
+    field projection, sorting, skip/limit pagination, index hints, min/max
+    index bounds, collation, Python predicate filtering, query plan
+    inspection, and automatic temporary-table/generator cleanup.
     """
 
     def __init__(
@@ -38,16 +41,16 @@ class Cursor:
         session: ClientSession | None = None,
         tables_to_cleanup: list[str] | None = None,
     ):
-        """
-        Initialize a new cursor instance.
+        """Initialize a new cursor instance and validate its session.
 
         Args:
-            collection (Collection): The collection to operate on.
-            filter (dict[str, Any], optional): Filter criteria to apply to the documents.
-            projection (dict[str, Any], optional): Projection criteria to specify which fields to include.
-            hint (str, optional): Hint for the database to improve query performance.
-            session (ClientSession, optional): A ClientSession for transactions.
-            tables_to_cleanup (list[str], optional): List of temporary tables to drop when closed.
+            collection: The collection to query.
+            filter: Optional MongoDB-style filter criteria dictionary.
+            projection: Optional projection specification dictionary.
+            hint: Optional index hint name or specification.
+            session: Optional ``ClientSession`` for transaction validation.
+            tables_to_cleanup: Optional list of temporary table names to drop
+                when the cursor is closed.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -74,27 +77,26 @@ class Cursor:
         validate_session(session, collection._database)
 
     def max_await_time_ms(self, max_await_time_ms: int | None) -> Self:
-        """
-        Set the maximum time to wait for new documents (for tailable cursors).
+        """Set the maximum time to wait for new documents.
 
         Args:
-            max_await_time_ms (int, optional): The maximum time to wait in milliseconds.
+            max_await_time_ms: Maximum await duration in milliseconds, or
+                ``None`` to clear the setting.
 
         Returns:
-            Cursor: The cursor object with the max_await_time_ms applied.
+            Self: This cursor instance for method chaining.
         """
         self._max_await_time_ms = max_await_time_ms
         return self
 
     def add_option(self, mask: int) -> Self:
-        """
-        Set query flags (bitmask) for this cursor.
+        """Set query option flags using a bitmask.
 
         Args:
-            mask (int): The bitmask of options to set.
+            mask: Bitmask of query flags to enable on this cursor.
 
         Returns:
-            Cursor: The cursor object with the options applied.
+            Self: This cursor instance for method chaining.
         """
         if not hasattr(self, "_options"):
             self._options = 0
@@ -102,14 +104,13 @@ class Cursor:
         return self
 
     def remove_option(self, mask: int) -> Self:
-        """
-        Unset query flags (bitmask) for this cursor.
+        """Unset query option flags using a bitmask.
 
         Args:
-            mask (int): The bitmask of options to unset.
+            mask: Bitmask of query flags to clear from this cursor.
 
         Returns:
-            Cursor: The cursor object with the options removed.
+            Self: This cursor instance for method chaining.
         """
         if not hasattr(self, "_options"):
             self._options = 0
@@ -118,56 +119,51 @@ class Cursor:
 
     @property
     def session(self) -> Any | None:
-        """
-        Get the ClientSession associated with this cursor.
+        """Get the ``ClientSession`` associated with this cursor.
 
         Returns:
-            Any | None: The ClientSession, or None if no session is associated.
+            Any | None: Associated ``ClientSession``, or ``None`` if unset.
         """
         return getattr(self, "_session", None)
 
     @property
     def cursor_id(self) -> int:
-        """
-        Get the ID of this cursor.
+        """Get the numeric identifier for this cursor.
 
         Returns:
-            int: The cursor ID (always 0 for NeoSQLite).
+            int: The cursor identifier (always ``0`` in NeoSQLite).
         """
         return 0
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
-        """
-        Return an iterator over the documents in the cursor.
+        """Return an iterator over documents matching the cursor query.
 
         Returns:
-            Iterator[dict[str, Any]]: An iterator yielding documents that match the filter,
-                                      projection, sorting, and pagination criteria.
+            Iterator[dict[str, Any]]: Iterator yielding documents after
+                filtering, sorting, pagination, and projection.
         """
         return self._execute_query()
 
     def limit(self, limit: int) -> Self:
-        """
-        Limit the number of documents returned by the cursor.
+        """Limit the maximum number of documents returned by this cursor.
 
         Args:
-            limit (int): The maximum number of documents to return.
+            limit: Maximum number of documents to return (``0`` for unlimited).
 
         Returns:
-            Cursor: The cursor object with the limit applied.
+            Self: This cursor instance for method chaining.
         """
         self._limit = limit
         return self
 
     def skip(self, skip: int) -> Self:
-        """
-        Skip the specified number of documents when iterating over the cursor.
+        """Skip leading documents when iterating over this cursor.
 
         Args:
-            skip (int): The number of documents to skip.
+            skip: Number of matching documents to skip.
 
         Returns:
-            Cursor: The cursor object with the skip applied.
+            Self: This cursor instance for method chaining.
         """
         self._skip = skip
         return self
@@ -177,16 +173,16 @@ class Cursor:
         key_or_list: str | list[tuple],
         direction: int | None = None,
     ) -> Self:
-        """
-        Sort the documents returned by the cursor.
+        """Set the sort order for documents returned by this cursor.
 
         Args:
-            key_or_list (str | list[tuple]): The key or list of keys to sort by.
-            direction (int, optional): The sorting direction (ASCENDING or DESCENDING).
-                                       Defaults to ASCENDING if None.
+            key_or_list: Field name string or sequence of ``(key, direction)``
+                tuples.
+            direction: Sort direction (``ASCENDING`` or ``DESCENDING``) when
+                ``key_or_list`` is a string; defaults to ``ASCENDING``.
 
         Returns:
-            Cursor: The cursor object with the sorting applied.
+            Self: This cursor instance for method chaining.
         """
         if isinstance(key_or_list, str):
             self._sort = {key_or_list: direction or ASCENDING}
@@ -195,17 +191,16 @@ class Cursor:
         return self
 
     def batch_size(self, size: int) -> Self:
-        """
-        Set the batch size for the cursor.
-
-        MongoDB-compatible batchSize parameter for controlling memory usage.
-        Results are fetched from the database in batches of the specified size.
+        """Set the number of SQLite rows fetched per internal batch.
 
         Args:
-            size (int): The batch size (default: 101, matches MongoDB)
+            size: Positive integer batch size (default is ``101``).
 
         Returns:
-            Cursor: The cursor object for chaining
+            Self: This cursor instance for method chaining.
+
+        Raises:
+            ValueError: If ``size`` is less than ``1``.
 
         Example:
             >>> cursor = collection.find().batch_size(50)
@@ -216,38 +211,37 @@ class Cursor:
         return self
 
     def hint(self, hint: str | list[tuple[str, int]]) -> Self:
-        """
-        Set the index hint for the cursor.
+        """Set the index hint for query execution.
 
         Args:
-            hint: The index name (str) or list of (field, direction) tuples
+            hint: Index name string or list of ``(field, direction)`` tuples.
 
         Returns:
-            Cursor: The cursor object with the hint applied
+            Self: This cursor instance for method chaining.
         """
         self._hint = hint  # type: ignore[assignment]
         return self
 
     def min(self, min_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Self:
-        """
-        Set the minimum bound for index queries.
+        """Set the inclusive lower bound for index queries.
 
-        This method sets a lower bound on the index values to be scanned.
-        Only documents with index values greater than or equal to the
-        specified minimum will be returned.
+        Restricts results to documents whose specified field values are
+        greater than or equal to the given bounds.
 
         Args:
-            min_spec: A list of (field, value) tuples specifying the
-                      inclusive lower bound, e.g., [("age", 18)]
+            min_spec: Sequence of ``(field, value)`` pairs defining the
+                inclusive lower bound, e.g., ``[("age", 18)]``.
 
         Returns:
-            Cursor: The cursor object with the minimum bound applied
+            Self: This cursor instance for method chaining.
 
         Raises:
-            TypeError: If min_spec is not a list or tuple
+            TypeError: If ``min_spec`` is not a ``list`` or ``tuple``.
 
         Example:
-            >>> cursor = collection.find({"age": {"$gte": 18}}).min([("age", 18)])
+            >>> cursor = collection.find({"age": {"$gte": 18}}).min(
+            ...     [("age", 18)]
+            ... )
         """
         if not isinstance(min_spec, (list, tuple)):
             raise TypeError(
@@ -257,25 +251,25 @@ class Cursor:
         return self
 
     def max(self, max_spec: list[tuple[str, Any]] | tuple[str, Any]) -> Self:
-        """
-        Set the maximum bound for index queries.
+        """Set the exclusive upper bound for index queries.
 
-        This method sets an upper bound on the index values to be scanned.
-        Only documents with index values less than the specified maximum
-        will be returned.
+        Restricts results to documents whose specified field values are
+        strictly less than the given bounds.
 
         Args:
-            max_spec: A list of (field, value) tuples specifying the
-                      exclusive upper bound, e.g., [("age", 65)]
+            max_spec: Sequence of ``(field, value)`` pairs defining the
+                exclusive upper bound, e.g., ``[("age", 65)]``.
 
         Returns:
-            Cursor: The cursor object with the maximum bound applied
+            Self: This cursor instance for method chaining.
 
         Raises:
-            TypeError: If max_spec is not a list or tuple
+            TypeError: If ``max_spec`` is not a ``list`` or ``tuple``.
 
         Example:
-            >>> cursor = collection.find({"age": {"$lte": 65}}).max([("age", 65)])
+            >>> cursor = collection.find({"age": {"$lte": 65}}).max(
+            ...     [("age", 65)]
+            ... )
         """
         if not isinstance(max_spec, (list, tuple)):
             raise TypeError(
@@ -285,24 +279,18 @@ class Cursor:
         return self
 
     def collation(self, collation: dict[str, Any]) -> Self:
-        """
-        Set the collation for the cursor.
+        """Set the string collation configuration for this cursor.
 
-        Collation allows users to specify language-specific rules for string
-        comparison, such as rules for lettercase and accent marks.
+        Allows specifying locale and comparison strength options for string
+        comparisons and sorting.
 
         Args:
-            collation (dict[str, Any]): A dictionary specifying collation options:
-                - locale (str): Language locale (e.g., "en_US", "fr_FR", "de_DE")
-                - caseLevel (bool): Whether to include case comparison
-                - caseFirst (str): "upper", "lower", or "off"
-                - strength (int): Comparison strength (1-5)
-                - numericOrdering (bool): Compare numbers numerically
-                - alternate (str): "shifted" or "non-ignorable"
-                - backwards (bool): Sort backwards (for French)
+            collation: Collation specification dictionary (e.g., ``locale``,
+                ``caseLevel``, ``caseFirst``, ``strength``,
+                ``numericOrdering``, ``alternate``, ``backwards``).
 
         Returns:
-            Cursor: The cursor object with the collation applied
+            Self: This cursor instance for method chaining.
 
         Example:
             >>> cursor = collection.find({"name": {"$gte": "A"}}).collation(
@@ -310,74 +298,62 @@ class Cursor:
             ... )
 
         Note:
-            NeoSQLite maps common locales to SQLite collations:
-            - Default/unknown: BINARY (case-sensitive)
-            - Locales with case-insensitive: NOCASE
-            - Custom collations can be registered via Connection tokenizers
+            NeoSQLite maps default/unknown locales to ``BINARY``,
+            case-insensitive settings to ``NOCASE``, and supports custom
+            collations registered on the connection.
         """
         self._collation = collation
         return self
 
     def where(self, predicate: Callable[[dict[str, Any]], bool]) -> Self:
-        """
-        Filter cursor results using a Python predicate function.
+        """Filter cursor results using a Python predicate callable.
 
-        This is a Tier-3 (Python fallback) method that applies a Python
-        function to filter documents after they are retrieved from the database.
+        Applies ``predicate`` in Python (Tier-3) after documents are retrieved
+        from SQLite, disabling SQL-level pagination so all candidates are
+        evaluated first.
 
         Args:
-            predicate (Callable[[dict[str, Any]], bool]): A function that takes a document and returns
-                                 True if the document should be included.
+            predicate: Callable receiving a document dictionary and returning
+                ``True`` if the document should be kept.
 
         Returns:
-            Cursor: The cursor object with the predicate applied
+            Self: This cursor instance for method chaining.
 
         Example:
             >>> def is_high_value(doc):
-            ...     return doc.get('value', 0) > 10
+            ...     return doc.get("value", 0) > 10
             >>> cursor = collection.find({}).where(is_high_value)
-
-        Note:
-            This method uses Python-based filtering (Tier-3), which means all
-            matching documents are retrieved from the database first, then
-            filtered in Python. For better performance, use MongoDB-style
-            query operators in the find() filter when possible.
         """
         self._where_predicate = predicate
         return self
 
     def comment(self, comment: str) -> Self:
-        """
-        Add a comment to the query for debugging and profiling.
-
-        The comment is injected as a SQL comment in the generated query,
-        which can be useful for query profiling and debugging.
+        """Attach a SQL comment string to the generated query for profiling.
 
         Args:
-            comment (str): The comment text to add to the query
+            comment: Comment text sanitized and prepended as ``/* ... */``
+                to executed SQL queries.
 
         Returns:
-            Cursor: The cursor object with the comment applied
+            Self: This cursor instance for method chaining.
 
         Example:
-            >>> cursor = collection.find({"age": {"$gte": 18}}).comment("find adults")
+            >>> cursor = collection.find({"age": {"$gte": 18}}).comment(
+            ...     "find adults"
+            ... )
         """
         self._comment = comment
         return self
 
     def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
-        """
-        Convert the cursor to a list of documents.
-
-        This method efficiently converts the cursor contents to a list.
-        If length is specified, returns at most that many documents.
+        """Materialize documents from the cursor into a list.
 
         Args:
-            length (int, optional): Maximum number of documents to return.
-                                   If None, returns all documents.
+            length: Maximum number of documents to collect. If ``None``, all
+                matching documents are returned; negative values yield ``[]``.
 
         Returns:
-            list[dict[str, Any]]: List of documents in the cursor
+            list[dict[str, Any]]: Collected matching documents.
 
         Example:
             >>> cursor = collection.find({"age": {"$gte": 18}})
@@ -390,15 +366,14 @@ class Cursor:
         return list(islice(self, max(length, 0)))
 
     def clone(self) -> Self:
-        """
-        Create a clone of this cursor with the same options.
+        """Create an unevaluated copy of this cursor with identical options.
 
-        Returns a new cursor with the same filter, projection, hint,
-        sort, skip, and limit settings. The clone is unevaluated and
-        can be iterated independently.
+        Deep-copies filter, sort, min, max, and collation settings while
+        preserving projection, hint, skip, limit, comment, session, and
+        ``_where_predicate`` with ``retrieved`` reset to ``0``.
 
         Returns:
-            Cursor: A new cursor with the same settings
+            Self: New cursor instance with the same query configuration.
 
         Example:
             >>> cursor = collection.find({"age": {"$gte": 18}}).limit(10)
@@ -430,45 +405,20 @@ class Cursor:
 
     @property
     def retrieved(self) -> int:
-        """
-        Return the number of documents retrieved from the cursor.
-
-        This property tracks how many documents have been iterated over
-        since the cursor was created or last reset.
+        """Return the number of documents yielded by this cursor so far.
 
         Returns:
-            int: The number of documents retrieved so far
-
-        Example:
-            >>> cursor = collection.find({}).limit(10)
-            >>> docs = list(cursor)
-            >>> cursor.retrieved
-            10
+            int: Count of documents retrieved during iteration.
         """
         return self._retrieved
 
     @property
     def alive(self) -> bool:
-        """
-        Check if the cursor has more documents to iterate.
-
-        In NeoSQLite, a cursor is considered alive if it hasn't been fully exhausted.
-        This is a simplified implementation for PyMongo API compatibility.
+        """Check whether the cursor may still have documents to yield.
 
         Returns:
-            bool: True if the cursor may have more documents, False if exhausted
-
-        Note:
-            NeoSQLite cursors are re-iterable, so this property tracks whether
-            the current iteration has been completed.
-
-        Example:
-            >>> cursor = collection.find({}).limit(10)
-            >>> cursor.alive
-            True
-            >>> list(cursor)
-            >>> cursor.alive
-            False
+            bool: ``False`` once iteration completes or ``_limit`` documents
+                have been retrieved; ``True`` otherwise.
         """
         # Cursor is alive if we haven't retrieved any documents yet
         # or if we haven't reached the limit
@@ -480,47 +430,21 @@ class Cursor:
 
     @property
     def collection(self):
-        """
-        Return a reference to the collection this cursor is iterating over.
+        """Return the collection this cursor queries.
 
         Returns:
-            Collection: The collection associated with this cursor
-
-        Example:
-            >>> cursor = collection.find({})
-            >>> cursor.collection
-            Collection(database, "collection_name")
-            >>> cursor.collection.name
-            'collection_name'
+            Collection: The collection associated with this cursor.
         """
         return self._collection
 
     @property
     def address(self) -> tuple | None:
-        """
-        Return the address of the database.
-
-        For NeoSQLite, this returns a tuple representing the database connection.
-        This is a simplified implementation for PyMongo API compatibility.
+        """Return the SQLite database address tuple after iteration begins.
 
         Returns:
-            tuple | None: A tuple of (database_path, 0) after iteration starts,
-                         None before the cursor has been executed.
-                         - For file databases: ('sqlite:///path/to/file.db', 0)
-                         - For memory databases: ('sqlite::memory:', 0)
-
-        Note:
-            SQLite is an embedded database without a server, so this returns
-            the database path instead of a network address. Returns None until
-            the cursor has been iterated, matching PyMongo behavior.
-
-        Example:
-            >>> cursor = collection.find({})
-            >>> cursor.address  # Before iteration
-            None
-            >>> list(cursor)
-            >>> cursor.address  # After iteration
-            ('sqlite::memory:', 0)  # or ('sqlite:///path/to/file.db', 0)
+            tuple | None: ``None`` before iteration starts; otherwise
+                ``("sqlite::memory:", 0)`` for in-memory databases or
+                ``("sqlite://<path>", 0)`` for file-backed databases.
         """
         # Match PyMongo behavior: None before iteration, tuple after
         if self._retrieved == 0 and not hasattr(self, "_iterated"):
@@ -536,7 +460,19 @@ class Cursor:
             return (f"sqlite://{db_name}", 0)
 
     def _parse_mongo_index_name(self, name: str) -> list[str] | None:
-        """Parse a MongoDB-style index name (e.g. ``age_1`` or ``a_1_b_-1``) into field keys."""
+        """Parse a MongoDB-style index name into its component field keys.
+
+        Handles ``"_id_"`` as ``["_id"]`` and names formatted like
+        ``"age_1"`` or ``"a_1_b_-1"`` (preserving underscores inside field
+        names).
+
+        Args:
+            name: MongoDB index name string.
+
+        Returns:
+            list[str] | None: List of indexed field names, or ``None`` if
+                ``name`` is empty or malformed.
+        """
         if not name or name == "_id_":
             return ["_id"] if name == "_id_" else None
         tokens = name.split("_")
@@ -557,7 +493,17 @@ class Cursor:
         return keys
 
     def _resolve_hint_index(self) -> str | None:
-        """Resolve cursor._hint to an existing SQLite index name if possible."""
+        """Resolve ``self._hint`` to an existing SQLite index name.
+
+        Inspects ``sqlite_master`` for non-autoindex indexes on the collection
+        table and matches raw index names, ``"_id_"``, MongoDB-style index
+        names, or lists of ``(field, direction)`` tuples via stored index
+        metadata or naming convention.
+
+        Returns:
+            str | None: Matching SQLite index name, or ``None`` if no hint is
+                set, fallback is forced, or no matching index exists.
+        """
         from .query_helper.utils import get_force_fallback
 
         if self._hint is None or get_force_fallback():
@@ -623,7 +569,21 @@ class Cursor:
     def _build_sql_projection_expr(
         self, sql_sorted: bool, data_col: str = "data"
     ) -> str | None:
-        """Build a SQL SELECT expression for simple projections, or None."""
+        """Build a SQL ``SELECT`` expression for simple top-level projections.
+
+        Handles pure inclusion or pure exclusion projections of up to 40
+        non-``_id`` top-level fields without dotted paths, ``$`` operators, or
+        unsafe characters, when fallback mode, ``_where_predicate``, and
+        Python-only sorting do not prevent SQL projection.
+
+        Args:
+            sql_sorted: Whether sorting (if any) was handled in SQL.
+            data_col: SQL column or expression containing the JSON document.
+
+        Returns:
+            str | None: SQL expression yielding the projected JSON text, or
+                ``None`` if Python projection is required.
+        """
         from .query_helper.utils import get_force_fallback
 
         if (
@@ -700,7 +660,24 @@ class Cursor:
         cmd_without_hint: str,
         params: list[Any] | tuple[Any, ...],
     ) -> Any:
-        """Execute SQL with optional INDEXED BY, falling back if unusable."""
+        """Execute a SQL query with an optional ``INDEXED BY`` fallback.
+
+        Attempts ``cmd_with_hint`` first and retries ``cmd_without_hint`` if
+        SQLite raises ``OperationalError`` indicating the hinted index cannot
+        be used.
+
+        Args:
+            cmd_with_hint: SQL query containing an ``INDEXED BY`` hint clause.
+            cmd_without_hint: Equivalent SQL query without ``INDEXED BY``.
+            params: Positional parameter sequence for the SQL statement.
+
+        Returns:
+            Any: Executed SQLite cursor object.
+
+        Raises:
+            sqlite3.OperationalError: Re-raised when the error is unrelated to
+                index hint usability or no fallback SQL differs.
+        """
         try:
             return self._collection.db.execute(cmd_with_hint, params)
         except sqlite3.OperationalError as e:
@@ -714,30 +691,24 @@ class Cursor:
             raise
 
     def explain(self, verbosity: str = "queryPlanner") -> dict[str, Any]:
-        """
-        Return the query execution plan.
+        """Return the SQLite query execution plan for this cursor.
 
-        Uses SQLite's EXPLAIN QUERY PLAN to provide information about
-        how the query will be executed, including index usage.
+        Uses SQLite's ``EXPLAIN QUERY PLAN`` to inspect query stages and index
+        usage, optionally running the query to populate ``executionStats``.
 
         Args:
-            verbosity (str): Verbosity level - "executionStats" or "queryPlanner"
-                           (kept for PyMongo compatibility, SQLite always returns full plan)
-                           Defaults to "queryPlanner".
+            verbosity: Plan verbosity level, either ``"queryPlanner"`` or
+                ``"executionStats"``. Defaults to ``"queryPlanner"``.
 
         Returns:
-            dict[str, Any]: Query execution plan with the following structure:
-                - queryPlanner: Information about the query plan
-                    - winningPlan: List of plan stages
-                    - indexUsage: Information about index usage
-                - executionStats: Execution statistics (if verbosity="executionStats")
-                    - nReturned: Number of documents returned
-                    - executionTimeMillis: Execution time in milliseconds
+            dict[str, Any]: Plan dictionary containing ``queryPlanner`` (with
+                ``winningPlan`` and ``indexUsage``), ``executionStats`` when
+                ``verbosity == "executionStats"``, or ``error`` on failure.
 
         Example:
             >>> cursor = collection.find({"age": {"$gte": 18}})
             >>> plan = cursor.explain()
-            >>> print(plan['queryPlanner']['winningPlan'])
+            >>> print(plan["queryPlanner"]["winningPlan"])
         """
         # Build the SQL query that would be executed
         if self._query_helpers._is_text_search_query(self._filter):
@@ -891,12 +862,15 @@ class Cursor:
             }
 
     def _execute_query(self) -> Iterator[dict[str, Any]]:
-        """
-        Execute the query and yield the results after applying filters, sorting,
-        pagination, and projection.
+        """Execute the cursor query and yield processed documents.
+
+        Validates the session, fetches filtered documents, applies Python
+        sorting, pagination, and projection for any stage not handled by SQL,
+        strips transient ``_textScore`` fields unless projected, increments
+        ``_retrieved``, and marks the cursor exhausted when done.
 
         Yields:
-            dict[str, Any]: A dictionary representing each document in the result set.
+            dict[str, Any]: Each matching document dictionary.
         """
         validate_session(self._session, self._collection._database)
 
@@ -936,14 +910,17 @@ class Cursor:
         self._exhausted = True
 
     def _get_filtered_documents(self) -> Iterable[dict[str, Any]]:
-        """
-        Retrieve documents based on the filter criteria, applying SQL-based filtering
-        where possible, or falling back to Python-based filtering for complex queries.
-        For datetime queries, use the specialized datetime query processor.
+        """Retrieve documents matching ``self._filter`` using optimal tiers.
+
+        Dispatches to ``DateTimeQueryProcessor`` for datetime queries,
+        ``_handle_expr_query`` for ``$expr``, FTS5 queries for ``$text``,
+        SQL ``WHERE``/sort/pagination/projection queries when translatable, or
+        ``_handle_python_fallback`` otherwise. Applies ``_where_predicate``
+        and notifies the query engine of the selected execution tier.
 
         Returns:
-            Iterable[dict[str, Any]]: An iterable of dictionaries representing
-                                      the documents that match the filter criteria.
+            Iterable[dict[str, Any]]: Iterable of documents matching the query
+                filter (and optional ``_where_predicate``).
         """
         # Check if this is a datetime query that should use the specialized processor
         if self._contains_datetime_operations(self._filter):
@@ -1006,6 +983,11 @@ class Cursor:
                 db_cursor = self._collection.db.execute(cmd, params)
 
                 def doc_generator():
+                    """Stream FTS query results in batches and close cursor.
+
+                    Yields:
+                        dict[str, Any]: Loaded document dictionaries.
+                    """
                     try:
                         while True:
                             rows = db_cursor.fetchmany(self._batch_size)
@@ -1107,6 +1089,11 @@ class Cursor:
             )
 
             def doc_generator():
+                """Stream SQL query results in batches and close cursor.
+
+                Yields:
+                    dict[str, Any]: Loaded document dictionaries.
+                """
                 try:
                     while True:
                         rows = db_cursor.fetchmany(self._batch_size)
@@ -1138,7 +1125,15 @@ class Cursor:
         return docs
 
     def _handle_python_fallback(self) -> Iterable[dict[str, Any]]:
-        """Handle complex queries by filtering all documents in Python."""
+        """Filter collection documents in Python for complex queries.
+
+        Fetches rows in batches (using SQL sort and min/max bounds unless
+        ``get_force_fallback()`` is active) and yields each decoded document
+        satisfying ``_apply_query`` and any Python-side min/max bounds.
+
+        Yields:
+            dict[str, Any]: Matching document dictionaries.
+        """
         from .query_helper.utils import get_force_fallback
 
         force_fallback = get_force_fallback()
@@ -1208,11 +1203,16 @@ class Cursor:
                     yield doc
 
     def _handle_expr_query(self) -> Iterable[dict[str, Any]]:
-        """
-        Handle $expr queries with SQL evaluation when possible, Python fallback otherwise.
+        """Execute ``$expr`` queries via SQL tiers or Python fallback.
 
-        This method uses the query helper's _build_expr_where_clause to attempt SQL
-        evaluation (Tiers 1 and 2), and falls back to Python evaluation (Tier 3) if needed.
+        Attempts SQL evaluation using ``_build_expr_where_clause`` (Tier 2
+        ``SELECT`` with temporary tables or Tier 1 ``WHERE`` clause). When
+        not translatable, falls back to Tier 3 Python evaluation over fetched
+        documents.
+
+        Returns:
+            Iterable[dict[str, Any]]: List or filtered iterator of documents
+                matching the ``$expr`` filter and min/max bounds.
         """
         # Try to build SQL query/WHERE clause with query helper
         # This handles Tier 1 (WHERE) and Tier 2 (Full SELECT with temp tables)
@@ -1388,15 +1388,14 @@ class Cursor:
             has_minmax = bool(self._min or self._max)
 
             def expr_filter(doc: dict[str, Any]) -> bool:
-                """
-                Evaluate the full filter (including $expr, sibling fields, and
-                min/max bounds) for a given document.
+                """Evaluate the full ``$expr`` filter and bounds on a document.
 
                 Args:
-                    doc: The document to evaluate.
+                    doc: The document dictionary to evaluate.
 
                 Returns:
-                    True if the document satisfies all conditions, False otherwise.
+                    bool: ``True`` if ``doc`` satisfies ``self._filter`` and
+                        min/max bounds, ``False`` otherwise or on error.
                 """
                 try:
                     if not self._query_helpers._apply_query(self._filter, doc):
@@ -1409,7 +1408,15 @@ class Cursor:
             return filter(expr_filter, all_docs)  # type: ignore[arg-type]
 
     def _matches_minmax(self, doc: dict[str, Any]) -> bool:
-        """Check cursor min (>=) and max (<) bounds against a document in Python."""
+        """Check cursor ``min`` (>=) and ``max`` (<) bounds in Python.
+
+        Args:
+            doc: Document dictionary to test against configured bounds.
+
+        Returns:
+            bool: ``True`` if ``doc`` satisfies all ``_min`` and ``_max``
+                bounds using BSON sort ordering, ``False`` otherwise.
+        """
         if self._min:
             for field, bound in self._min.items():
                 val = self._collection._get_val(doc, field)
@@ -1429,17 +1436,16 @@ class Cursor:
         min_spec: dict[str, Any] | None,
         max_spec: dict[str, Any] | None,
     ) -> tuple:
-        """
-        Build SQL clause for min/max index bounds.
+        """Build an augmented SQL ``WHERE`` clause for min/max index bounds.
 
         Args:
-            where_clause: Existing WHERE clause (may be empty)
-            params: Existing parameters
-            min_spec: Minimum bound specification
-            max_spec: Maximum bound specification
+            where_clause: Existing ``WHERE`` clause string (may be empty).
+            params: Existing SQL parameter tuple.
+            min_spec: Inclusive minimum bound mapping, or ``None``.
+            max_spec: Exclusive maximum bound mapping, or ``None``.
 
         Returns:
-            Tuple of (new WHERE clause, new parameters)
+            tuple: Pair of ``(new_where_clause, new_params_tuple)``.
         """
         additional_conditions = []
         additional_params = list(params)
@@ -1486,14 +1492,18 @@ class Cursor:
         return where_clause, params
 
     def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
-        """
-        Check if a query contains datetime operations that should use the datetime processor.
+        """Check if a query contains datetime-related filter conditions.
+
+        Recursively inspects logical operators (``$and``, ``$or``, ``$nor``,
+        ``$not``) and comparison, membership, ``$type``, and ``$regex``
+        operators for datetime values or patterns.
 
         Args:
-            query: MongoDB-style query dictionary
+            query: MongoDB-style query dictionary.
 
         Returns:
-            True if query contains datetime operations, False otherwise
+            bool: ``True`` if ``query`` contains datetime operations,
+                ``False`` otherwise.
         """
         # Quick check for obvious datetime patterns in query
         if not isinstance(query, dict):
@@ -1545,42 +1555,46 @@ class Cursor:
         return False
 
     def _is_datetime_value(self, value: Any) -> bool:
-        """
-        Check if a value is a datetime object or datetime string.
+        """Check if a value is a datetime object or datetime string.
 
         Args:
-            value: Value to check
+            value: Value to check.
 
         Returns:
-            True if value is datetime-related, False otherwise
+            bool: ``True`` if ``value`` is datetime-related, ``False``
+                otherwise.
         """
         from .datetime_utils import is_datetime_value
 
         return is_datetime_value(value)
 
     def _is_datetime_regex(self, pattern: str) -> bool:
-        """
-        Check if a regex pattern is likely to be for datetime matching.
+        """Check if a regex pattern appears intended for datetime matching.
 
         Args:
-            pattern: Regex pattern string
+            pattern: Regex pattern string to inspect.
 
         Returns:
-            True if pattern is likely datetime-related, False otherwise
+            bool: ``True`` if ``pattern`` is likely datetime-related,
+                ``False`` otherwise.
         """
         from .datetime_utils import is_datetime_regex
 
         return is_datetime_regex(pattern)
 
     def _load_documents(self, rows) -> Iterable[dict[str, Any]]:
-        """
-        Load documents from rows returned by the database query, including handling both id and _id.
+        """Decode SQLite result rows into document dictionaries.
+
+        Reconstructs each document via ``_load_with_stored_id``, removes
+        ``_id`` when excluded by a SQL-handled projection, and attaches
+        ``_textScore`` when a fourth score column is present.
 
         Args:
-            rows: Database result rows containing id, _id, and data
+            rows: Iterable of SQLite rows containing ``(id, _id, data)`` and
+                an optional fourth FTS score column.
 
-        Returns:
-            Iterable[dict[str, Any]]: An iterable of loaded documents
+        Yields:
+            dict[str, Any]: Loaded document dictionary for each row.
         """
         for row in rows:
             id_val = row[0]
@@ -1603,15 +1617,18 @@ class Cursor:
     def _apply_sorting(
         self, docs: Iterable[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """
-        Sort the documents based on the specified sorting criteria.
+        """Sort documents in Python according to ``self._sort``.
+
+        Applies multi-key stable sorting in reverse key priority order,
+        supporting ``$meta: "textScore"`` sorting, collation case folding, and
+        BSON type sort order via ``bson_sort_key``.
 
         Args:
-            docs (Iterable[dict[str, Any]]): The iterable of documents to sort.
+            docs: Iterable of document dictionaries to sort.
 
         Returns:
-            list[dict[str, Any]]: A list of dictionaries representing the documents
-                                  sorted by the specified criteria.
+            list[dict[str, Any]]: Sorted list of documents (or materialized
+                list if ``self._sort`` is unset).
         """
         if not self._sort:
             return list(docs)
@@ -1639,7 +1656,22 @@ class Cursor:
                 reverse = True
 
                 def make_score_key():
+                    """Create a sort key callable for FTS text scores.
+
+                    Returns:
+                        Callable[[dict[str, Any]], float]: Key function
+                            extracting the document's text score.
+                    """
+
                     def score_key_func(doc: dict[str, Any]) -> Any:
+                        """Extract the numeric text score for ``doc``.
+
+                        Args:
+                            doc: Document dictionary to score.
+
+                        Returns:
+                            float: ``_textScore`` or field value as float.
+                        """
                         return float(doc.get("_textScore", doc.get(key, 0.0)))
 
                     return score_key_func
@@ -1653,13 +1685,24 @@ class Cursor:
             if case_insensitive:
                 # Use case-insensitive sorting
                 def make_key(gv=get_val):
-                    """
-                    Create a case-insensitive key function.
+                    """Create a case-insensitive BSON sort key callable.
+
+                    Args:
+                        gv: Field-value accessor bound to the current sort key.
+
+                    Returns:
+                        Callable[[dict[str, Any]], Any]: Key function returning
+                            a ``bson_sort_key`` tuple.
                     """
 
                     def key_func(doc):
-                        """
-                        Extract value and convert to lowercase if it's a string.
+                        """Extract and lowercase string values for sorting.
+
+                        Args:
+                            doc: Document dictionary to inspect.
+
+                        Returns:
+                            Any: BSON sort key for the normalized field value.
                         """
                         val = gv(doc)
                         if isinstance(val, str):
@@ -1672,7 +1715,25 @@ class Cursor:
             else:
 
                 def make_default_key(gv=get_val):
+                    """Create a standard BSON sort key callable.
+
+                    Args:
+                        gv: Field-value accessor bound to the current sort key.
+
+                    Returns:
+                        Callable[[dict[str, Any]], Any]: Key function returning
+                            a ``bson_sort_key`` tuple.
+                    """
+
                     def key_func(doc):
+                        """Extract field value and return its BSON sort key.
+
+                        Args:
+                            doc: Document dictionary to inspect.
+
+                        Returns:
+                            Any: BSON sort key for the field value.
+                        """
                         return bson_sort_key(gv(doc))
 
                     return key_func
@@ -1686,15 +1747,13 @@ class Cursor:
     def _apply_pagination(
         self, docs: Iterable[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """
-        Apply skip and limit to the documents.
+        """Apply ``self._skip`` and ``self._limit`` in Python via ``islice``.
 
         Args:
-            docs (Iterable[dict[str, Any]]): The iterable of documents to apply pagination to.
+            docs: Iterable of document dictionaries to paginate.
 
         Returns:
-            list[dict[str, Any]]: A list of dictionaries representing the documents
-                                  after applying skip and limit.
+            list[dict[str, Any]]: Paginated list of documents.
         """
         # Use islice for memory-efficient skip without loading all docs first
         skipped = islice(docs, self._skip, None)
@@ -1707,15 +1766,13 @@ class Cursor:
     def _apply_projection(
         self, docs: Iterable[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """
-        Apply projection to the documents.
+        """Apply ``self._projection`` to each document in Python.
 
         Args:
-            docs (Iterable[dict[str, Any]]): The iterable of documents to apply projection to.
+            docs: Iterable of document dictionaries to project.
 
         Returns:
-            list[dict[str, Any]]: A list of dictionaries representing the documents
-                                  after applying the projection.
+            list[dict[str, Any]]: List of projected document dictionaries.
         """
         project = partial(
             self._query_helpers._apply_projection, self._projection
@@ -1723,9 +1780,7 @@ class Cursor:
         return list(map(project, docs))
 
     def close(self) -> None:
-        """
-        Close the cursor and release any resources.
-        """
+        """Close the cursor, stop active generators, and drop temp tables."""
         if self._closed:
             return
         # Signal any active generator to stop and release its sqlite
@@ -1742,9 +1797,7 @@ class Cursor:
         self._closed = True
 
     def __del__(self) -> None:
-        """
-        Ensure resources are cleaned up when the cursor is garbage collected.
-        """
+        """Clean up cursor resources when garbage collected."""
         try:
             self.close()
         except Exception as e:
@@ -1753,29 +1806,25 @@ class Cursor:
             pass
 
     def __enter__(self) -> Self:
-        """
-        Enter the context manager.
+        """Enter the cursor context manager.
 
         Returns:
-            Cursor: The cursor itself.
+            Self: This cursor instance.
         """
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """
-        Exit the context manager and close the cursor.
+        """Exit the context manager and close the cursor.
 
         Args:
-            exc_type: The exception type if an exception was raised.
-            exc_val: The exception value if an exception was raised.
-            exc_tb: The exception traceback if an exception was raised.
+            exc_type: Exception class if raised inside the ``with`` block.
+            exc_val: Exception instance if raised inside the ``with`` block.
+            exc_tb: Exception traceback if raised inside the ``with`` block.
         """
         self.close()
 
     def _cleanup_tables(self) -> None:
-        """
-        Drop any temporary tables created for this cursor.
-        """
+        """Drop any temporary SQLite tables registered on this cursor."""
         if not self._tables_to_cleanup:
             return
 

@@ -20,21 +20,36 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class BulkOperation(ABC):
-    """Base class for bulk operations."""
+    """Abstract base class for queued bulk write operations.
+
+    Subclasses represent individual insert, update, replace, and delete
+    operations accumulated by ``BulkOperationExecutor`` prior to execution.
+    """
 
     pass
 
 
 @dataclass(slots=True)
 class InsertOperation(BulkOperation):
-    """Represents an insert operation in a bulk operation."""
+    """Represents a document insertion in a bulk write batch.
+
+    Attributes:
+        document: Document dictionary to insert into the collection.
+    """
 
     document: dict[str, Any]
 
 
 @dataclass(slots=True)
 class UpdateOperation(BulkOperation):
-    """Represents an update operation in a bulk operation."""
+    """Represents a single- or multi-document update in a bulk write batch.
+
+    Attributes:
+        filter: Query filter dictionary matching documents to update.
+        update: Update specification dictionary applied to matched documents.
+        upsert: Whether to insert a new document when no document matches.
+        multi: Whether to update all matching documents or only the first.
+    """
 
     filter: dict[str, Any]
     update: dict[str, Any]
@@ -44,7 +59,13 @@ class UpdateOperation(BulkOperation):
 
 @dataclass(slots=True)
 class ReplaceOperation(BulkOperation):
-    """Represents a replace operation in a bulk operation."""
+    """Represents a document replacement operation in a bulk write batch.
+
+    Attributes:
+        filter: Query filter dictionary matching the document to replace.
+        replacement: Replacement document dictionary without ``_id``.
+        upsert: Whether to insert the replacement when no document matches.
+    """
 
     filter: dict[str, Any]
     replacement: dict[str, Any]
@@ -53,55 +74,62 @@ class ReplaceOperation(BulkOperation):
 
 @dataclass(slots=True)
 class DeleteOperation(BulkOperation):
-    """Represents a delete operation in a bulk operation."""
+    """Represents a single- or multi-document deletion in a bulk write batch.
+
+    Attributes:
+        filter: Query filter dictionary matching documents to delete.
+        multi: Whether to delete all matching documents or only the first.
+    """
 
     filter: dict[str, Any]
     multi: bool = False
 
 
 class BulkOperationContext:
-    """Context for bulk operations that supports find/update/delete operations."""
+    """Fluent query-scoped builder context for bulk write operations.
+
+    Holds the shared filter dictionary and transient upsert flag for chaining
+    update, replace, and delete operations started from ``find()``.
+    """
 
     def __init__(
         self, bulk_operations: list[BulkOperation], filter: dict[str, Any]
     ):
-        """
-        Initializes the BulkOperationContext.
+        """Initialize the BulkOperationContext.
 
         Args:
-            bulk_operations: A list to which bulk operations will be added.
-            filter: The filter to be used for the operations.
+            bulk_operations: Shared list where built operations are appended.
+            filter: Query filter dictionary applied to operations from this
+                context.
         """
         self._bulk_operations = bulk_operations
         self._filter = filter
         self._upsert = False
 
     def upsert(self) -> Self:
-        """
-        Set the upsert flag for the next operation.
+        """Set the upsert flag for the next operation.
 
-        This method sets the upsert flag, which determines whether the next
-        operation should insert a new document if no matching document is found.
+        Sets the upsert flag so the next update or replace operation inserts a
+        new document if no matching document is found.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            Self: The current context object for chaining further operations.
         """
         self._upsert = True
         return self
 
     def update_one(self, update: dict[str, Any]) -> Self:
-        """
-        Add an update one operation to the bulk operations list.
+        """Add an update-one operation to the bulk operations list.
 
-        This method appends an update one operation to the bulk operations list.
-        The operation will update a single document that matches the filter with
-        the specified update and handle the upsert flag.
+        Appends an ``UpdateOperation`` targeting a single matching document
+        using the current filter and upsert flag, then resets ``_upsert``.
 
         Args:
-            update (dict[str, Any]): The update dictionary containing the fields to be updated.
+            update: Update specification dictionary containing fields or
+                update operators to apply.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            Self: The current context object for chaining further operations.
         """
         self._bulk_operations.append(
             UpdateOperation(
@@ -115,18 +143,17 @@ class BulkOperationContext:
         return self
 
     def update_many(self, update: dict[str, Any]) -> Self:
-        """
-        Add an update many operation to the bulk operations list.
+        """Add an update-many operation to the bulk operations list.
 
-        This method appends an update many operation to the bulk operations list.
-        The operation will update all documents that match the filter with the
-        specified update and handle the upsert flag.
+        Appends an ``UpdateOperation`` targeting all matching documents using
+        the current filter and upsert flag, then resets ``_upsert``.
 
         Args:
-            update (dict[str, Any]): The update dictionary containing the fields to be updated.
+            update: Update specification dictionary containing fields or
+                update operators to apply.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            Self: The current context object for chaining further operations.
         """
         self._bulk_operations.append(
             UpdateOperation(
@@ -140,14 +167,13 @@ class BulkOperationContext:
         return self
 
     def delete_one(self) -> Self:
-        """
-        Add a delete one operation to the bulk operations list.
+        """Add a delete-one operation to the bulk operations list.
 
-        This method appends a delete one operation to the bulk operations list.
-        The operation will delete a single document that matches the filter.
+        Appends a ``DeleteOperation`` that removes a single document matching
+        the context filter.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            Self: The current context object for chaining further operations.
         """
         self._bulk_operations.append(
             DeleteOperation(filter=self._filter, multi=False)
@@ -155,14 +181,13 @@ class BulkOperationContext:
         return self
 
     def delete_many(self) -> Self:
-        """
-        Add a delete many operation to the bulk operations list.
+        """Add a delete-many operation to the bulk operations list.
 
-        This method appends a delete many operation to the bulk operations list.
-        The operation will delete all documents that match the filter.
+        Appends a ``DeleteOperation`` that removes all documents matching the
+        context filter.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            Self: The current context object for chaining further operations.
         """
         self._bulk_operations.append(
             DeleteOperation(filter=self._filter, multi=True)
@@ -170,19 +195,18 @@ class BulkOperationContext:
         return self
 
     def replace_one(self, replacement: dict[str, Any]) -> Self:
-        """
-        Add a replace one operation to the bulk operations list.
+        """Add a replace-one operation to the bulk operations list.
 
-        This method appends a replace one operation to the bulk operations list.
-        The operation will replace a single document that matches the filter with
-        the specified replacement.
+        Appends a ``ReplaceOperation`` targeting a single document matching the
+        context filter, stripping ``_id`` from ``replacement`` when it is a
+        dictionary, and resets ``_upsert``.
 
-        The replacement dictionary should contain the fields to be updated.
-        The method will exclude the `_id` field from the replacement to prevent
-        replacing the document's identifier.
+        Args:
+            replacement: Replacement document dictionary containing the new
+                document fields.
 
         Returns:
-            BulkOperationContext: The current context object for chaining further operations.
+            Self: The current context object for chaining further operations.
         """
         replacement_doc = (
             {k: v for k, v in replacement.items() if k != "_id"}
@@ -201,20 +225,23 @@ class BulkOperationContext:
 
 
 class BulkOperationExecutor:
-    """Executor for bulk operations."""
+    """Executor that accumulates and runs bulk write operations.
+
+    Supports both PyMongo-style request objects via ``add()`` and fluent
+    builder methods via ``insert()`` and ``find()``, running queued operations
+    either in order or continuing past individual failures when unordered.
+    """
 
     def __init__(self, collection: neosqlite.Collection, ordered: bool = True):
-        """
-        Initialize the BulkOperationExecutor.
+        """Initialize the BulkOperationExecutor.
 
-        This method initializes a new BulkOperationExecutor with the given collection
-        and ordering flag. The executor will execute operations in the order they
-        are added if the ordered flag is True. Otherwise, the executor may execute
-        operations in any order.
+        Creates an executor bound to ``collection`` with either ordered or
+        unordered execution semantics and an isolated savepoint identifier.
 
         Args:
-            collection (neosqlite.Collection): The collection to perform operations on.
-            ordered (bool, optional): Whether to execute operations in order. Defaults to True.
+            collection: Target collection on which operations are executed.
+            ordered: Whether to execute operations strictly in insertion order
+                and stop on the first error. Defaults to ``True``.
         """
         self._collection = collection
         self._ordered = ordered
@@ -224,17 +251,17 @@ class BulkOperationExecutor:
         self._operations: list[BulkOperation] = []
 
     def add(self, operation: Any) -> Self:
-        """
-        Add an operation to the bulk operations list.
+        """Add an operation to the bulk operations list.
 
-        For PyMongo API compatibility, accepts InsertOne, UpdateOne, DeleteOne,
-        ReplaceOne, UpdateMany, DeleteMany, and duck-typed operations.
+        For PyMongo API compatibility, accepts ``InsertOne``, ``UpdateOne``,
+        ``DeleteOne``, ``ReplaceOne``, ``UpdateMany``, ``DeleteMany``, and
+        duck-typed operations parsed via ``_parse_bulk_request``.
 
         Args:
-            operation: The operation to add (InsertOne, UpdateOne, DeleteOne, etc.)
+            operation: Write request object to parse and enqueue.
 
         Returns:
-            BulkOperationExecutor: The current executor for chaining
+            Self: The current executor for chaining further operations.
         """
         op_type, kwargs = _parse_bulk_request(operation)
         if op_type == "insert_one":
@@ -284,49 +311,47 @@ class BulkOperationExecutor:
         return self
 
     def insert(self, document: dict[str, Any]) -> Self:
-        """
-        Add an insert operation to the bulk operations list.
+        """Add an insert operation to the bulk operations list.
 
-        This method appends an insert operation to the bulk operations list.
-        The operation will insert the specified document into the collection.
+        Appends an ``InsertOperation`` for ``document`` to the queued
+        operations list.
 
         Args:
-            document (dict[str, Any]): The document to be inserted.
+            document: Document dictionary to insert into the collection.
 
         Returns:
-            BulkOperationExecutor: The current executor for chaining further operations.
+            Self: The current executor for chaining further operations.
         """
         self._operations.append(InsertOperation(document=document))
         return self
 
     def find(self, filter: dict[str, Any]):
-        """
-        Create a context for find-based operations.
+        """Create a context for filter-scoped bulk operations.
 
-        This method creates a new BulkOperationContext for find-based operations
-        with the given filter.
+        Returns a ``BulkOperationContext`` bound to this executor's operation
+        queue and the given query filter.
 
         Args:
-            filter (dict[str, Any]): The filter to be used for find operations.
+            filter: Query filter dictionary for subsequent chained operations.
 
         Returns:
-            BulkOperationContext: A new BulkOperationContext object for chaining find operations.
+            BulkOperationContext: Context object for chaining update, replace,
+                or delete operations.
         """
         return BulkOperationContext(self._operations, filter)
 
     def execute(self, session: ClientSession | None = None) -> BulkWriteResult:
-        """
-        Execute all bulk operations.
+        """Execute all queued bulk operations.
 
-        This method executes all bulk operations in the current context. If ordered
-        is True, operations are executed in the order they were added. Otherwise,
-        operations may be executed in any order.
+        Runs operations sequentially via ``_execute_ordered`` when
+        ``ordered`` is ``True``, or via ``_execute_unordered`` otherwise.
 
         Args:
-            session (ClientSession, optional): A ClientSession for transactions.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
+            BulkWriteResult: Result containing counts of inserted, matched,
+                modified, deleted, and upserted documents.
         """
         if self._ordered:
             return self._execute_ordered(session=session)
@@ -336,6 +361,24 @@ class BulkOperationExecutor:
     def _execute(
         self, ordered: bool, session: ClientSession | None = None
     ) -> BulkWriteResult:
+        """Execute queued operations with optional stop-on-error behavior.
+
+        Dispatches each queued operation to the collection, accumulating
+        operation counts and ``upserted_ids``. Exceptions are captured as
+        write errors (mapping unique constraint failures to code 11000 and
+        others to code 8); when ``ordered`` is ``True``, execution stops at
+        the first failure.
+
+        Args:
+            ordered: Whether to abort on the first failing operation.
+            session: Optional ``ClientSession`` passed to collection calls.
+
+        Returns:
+            BulkWriteResult: Aggregated write counts and upserted ID mapping.
+
+        Raises:
+            BulkWriteError: If one or more operations fail during execution.
+        """
         inserted_count = 0
         matched_count = 0
         modified_count = 0
@@ -432,30 +475,30 @@ class BulkOperationExecutor:
     def _execute_ordered(
         self, session: ClientSession | None = None
     ) -> BulkWriteResult:
-        """
-        Execute operations in order.
+        """Execute queued bulk operations in strict order.
 
         Args:
-            session (ClientSession, optional): A ClientSession for transactions.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
+            BulkWriteResult: Result containing counts of inserted, matched,
+                modified, deleted, and upserted documents.
         """
         return self._execute(ordered=True, session=session)
 
     def _execute_unordered(
         self, session: ClientSession | None = None
     ) -> BulkWriteResult:
-        """
-        Execute operations in any order, continuing on individual failures.
+        """Execute queued operations, continuing past individual failures.
 
         Unlike ordered execution, a failure in one operation does not prevent
         subsequent operations from being attempted.
 
         Args:
-            session (ClientSession, optional): A ClientSession for transactions.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            BulkWriteResult: A result object containing the counts of inserted, matched, modified, deleted, and upserted documents.
+            BulkWriteResult: Result containing counts of inserted, matched,
+                modified, deleted, and upserted documents.
         """
         return self._execute(ordered=False, session=session)

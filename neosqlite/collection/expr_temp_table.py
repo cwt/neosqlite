@@ -1,15 +1,14 @@
-"""
-Tier 2: Temporary table-based expression evaluation for complex $expr queries.
+"""Tier 2 temporary table-based expression evaluation for ``$expr`` queries.
 
-This module implements the second tier of the 3-tier $expr evaluation architecture:
-- Uses temporary tables for complex expressions that can't be evaluated in a single query
-- Leverages SQLite JSON/JSONB native functions for optimal performance
-- Ensures data is converted to JSON format when moving to Python space
+Implements the second tier of the 3-tier ``$expr`` evaluation architecture:
 
-Tier 2 is used when:
-- Expressions are too complex for Tier 1 (single SQL WHERE clause)
-- Multiple intermediate calculations are needed
-- Aggregation or grouping is required within the expression
+- Creates temporary tables for complex expressions that benefit from
+  materializing extracted JSON field values.
+- Leverages SQLite JSON/JSONB native functions for query execution.
+- Converts JSONB data back to JSON text when returning rows to Python.
+
+Tier 2 handles expressions whose complexity score falls between 2 and 10 and
+that do not trigger Tier 2 semantic-hazard checks.
 """
 
 from __future__ import annotations
@@ -27,13 +26,12 @@ from .query_helper.translation_cache import TranslationCache
 
 
 class TempTableExprEvaluator:
-    """
-    Tier 2 evaluator using temporary tables for complex $expr expressions.
+    """Tier 2 evaluator using temporary tables for complex ``$expr`` queries.
 
-    This evaluator:
-    1. Creates temporary tables to store intermediate results
-    2. Uses SQLite JSON/JSONB functions for efficient processing
-    3. Converts to JSON format when exporting to Python space
+    Materializes referenced document fields into a SQLite temporary table,
+    evaluates the expression against those columns using SQLite JSON/JSONB
+    functions, and caches compiled ``WHERE`` templates when no extra filter
+    expression is supplied.
     """
 
     def __init__(
@@ -42,13 +40,15 @@ class TempTableExprEvaluator:
         data_column: str = "data",
         translation_cache_size: int | None = 100,
     ):
-        """
-        Initialize the temporary table evaluator.
+        """Initialize the temporary table evaluator.
 
         Args:
-            db_connection: SQLite database connection
-            data_column: Name of the column containing JSON data (default: "data")
-            translation_cache_size: Size of translation cache (None=default, 0=disabled)
+            db_connection: SQLite database connection.
+            data_column: Name of the column containing JSON data. Defaults to
+                ``"data"``.
+            translation_cache_size: Maximum number of entries in the
+                translation cache. ``None`` defaults to 100; ``0`` disables
+                caching.
         """
         self.db = db_connection
         self.data_column = data_column
@@ -62,15 +62,28 @@ class TempTableExprEvaluator:
 
     @property
     def json_function_prefix(self) -> str:
-        """Get the appropriate JSON function prefix (json or jsonb)."""
+        """Get the active JSON function prefix for the connection.
+
+        Returns:
+            str: ``"jsonb"`` when JSONB is supported, otherwise ``"json"``.
+        """
         return self.jsonb.json_function_prefix
 
     def is_cache_enabled(self) -> bool:
-        """Check if translation cache is enabled."""
+        """Check whether the expression translation cache is enabled.
+
+        Returns:
+            bool: ``True`` if the cache maximum size is greater than zero.
+        """
         return self._translation_cache.is_enabled()
 
     def get_cache_stats(self) -> dict:
-        """Get cache statistics."""
+        """Get translation cache statistics and entry metadata.
+
+        Returns:
+            dict: Dictionary containing cache size, hits, misses, hit rate,
+                and entry previews.
+        """
         return self._translation_cache.get_stats()
 
     def clear_cache(self) -> None:
@@ -78,25 +91,51 @@ class TempTableExprEvaluator:
         self._translation_cache.clear()
 
     def cache_size(self) -> int:
-        """Get current cache size."""
+        """Get the number of entries currently stored in the cache.
+
+        Returns:
+            int: Current translation cache entry count.
+        """
         return len(self._translation_cache)
 
     def cache_contains(self, expr: dict) -> bool:
-        """Check if expression is in cache."""
+        """Check whether a compiled translation for ``expr`` is cached.
+
+        Args:
+            expr: ``$expr`` expression dictionary to look up.
+
+        Returns:
+            bool: ``True`` if the expression key exists in the cache.
+        """
         key = self._make_expr_key(expr)
         return self._translation_cache.contains(key)
 
     def evict_from_cache(self, expr: dict) -> bool:
-        """Evict expression from cache."""
+        """Evict a cached translation for ``expr`` if present.
+
+        Args:
+            expr: ``$expr`` expression dictionary whose entry to remove.
+
+        Returns:
+            bool: ``True`` if an entry was evicted, ``False`` otherwise.
+        """
         key = self._make_expr_key(expr)
         return self._translation_cache.evict(key)
 
     def resize_cache(self, new_size: int) -> None:
-        """Resize the cache."""
+        """Resize the translation cache, evicting oldest entries if needed.
+
+        Args:
+            new_size: New maximum entry capacity for the cache.
+        """
         self._translation_cache.resize(new_size)
 
     def dump_cache(self) -> list:
-        """Dump cache contents for debugging."""
+        """Dump cached entries sorted by hit count for debugging.
+
+        Returns:
+            list: List of dictionaries describing cached entries.
+        """
         return self._translation_cache.dump()
 
     def evaluate(
@@ -105,16 +144,22 @@ class TempTableExprEvaluator:
         collection_name: str,
         filter_expr: dict[str, Any] | None = None,
     ) -> tuple[str | None, list[Any], list[str]]:
-        """
-        Evaluate a $expr expression using temporary tables.
+        """Evaluate a ``$expr`` expression using a temporary table.
+
+        Checks complexity bounds (``2 <= complexity <= 10``) and Tier 2
+        semantic hazards before building or reusing a cached SQL query joined
+        against a materialized temporary table.
 
         Args:
-            expr: The $expr expression dictionary
-            collection_name: Name of the collection table
-            filter_expr: Optional additional filter to apply
+            expr: The ``$expr`` expression dictionary.
+            collection_name: Name of the target collection table.
+            filter_expr: Optional additional equality filter dictionary to
+                AND into the ``WHERE`` clause.
 
         Returns:
-            Tuple of (SQL query, parameters, table_names) or (None, [], []) for Python fallback
+            tuple[str | None, list[Any], list[str]]: Tuple containing
+                ``(sql_query, params, temp_tables)`` on success, or
+                ``(None, [], [])`` when falling back to Tier 1 or Tier 3.
         """
         try:
             # Analyze expression complexity
@@ -232,10 +277,18 @@ class TempTableExprEvaluator:
     )
 
     def _has_tier2_semantics_hazard(self, expr: dict[str, Any]) -> bool:
-        """
-        Return True when Tier 2 temp-table evaluation has semantic mismatches
-        (#116, #121) or unsafe temp-table column names, so evaluation delegates
-        to Tier 1 ExprEvaluator / Tier 3 Python.
+        """Check if ``expr`` has Tier 2 semantic hazards or unsafe columns.
+
+        Returns ``True`` when Tier 2 temp-table evaluation has semantic
+        mismatches (#116, #121), no field references, colliding or reserved
+        temp-table column names, or unsupported null/bool/complex comparisons,
+        so evaluation delegates to Tier 1 ``ExprEvaluator`` or Tier 3 Python.
+
+        Args:
+            expr: The ``$expr`` expression dictionary to inspect.
+
+        Returns:
+            bool: ``True`` if Tier 2 evaluation should be skipped.
         """
         try:
             fields = self._extract_field_references(expr)
@@ -262,6 +315,15 @@ class TempTableExprEvaluator:
             seen_cols.add(col_name)
 
         def _is_safe_nonnull_scalar(val: Any) -> bool:
+            """Return whether ``val`` is a non-null, non-bool literal scalar.
+
+            Args:
+                val: Operand value to inspect.
+
+            Returns:
+                bool: ``True`` if ``val`` is an ``int``, ``float``, or
+                    non-``$`` ``str``.
+            """
             if val is None or isinstance(val, (bool, dict, list)):
                 return False
             if isinstance(val, str) and val.startswith("$"):
@@ -269,6 +331,14 @@ class TempTableExprEvaluator:
             return isinstance(val, (int, float, str))
 
         def _walk(node: Any) -> bool:
+            """Recursively check AST nodes for Tier 2 semantic hazards.
+
+            Args:
+                node: Expression node (dict, list, or scalar) to traverse.
+
+            Returns:
+                bool: ``True`` if any hazard is found in ``node``.
+            """
             if isinstance(node, list):
                 return any(_walk(item) for item in node)
             if not isinstance(node, dict):
@@ -317,19 +387,26 @@ class TempTableExprEvaluator:
         # Cleanup handled by Cursor
 
     def _analyze_complexity(self, expr: dict[str, Any]) -> int:
-        """
-        Analyze expression complexity to determine if Tier 2 is appropriate.
+        """Analyze expression complexity to choose an evaluation tier.
 
         Complexity scoring:
-        - Base expression: 1 point
-        - Each nested operator: +1 point
-        - Each arithmetic operator: +1 point
-        - Each conditional operator: +2 points
-        - Each array operator: +2 points
-        - Each subquery/correlated expression: +3 points
+
+        - Non-dict expression: 0 points
+        - Base dict expression: 1 point
+        - Arithmetic operator (``$add``, ``$subtract``, ``$multiply``,
+          ``$divide``, ``$mod``): +1 point plus nested dict operand scores
+        - Conditional operator (``$cond``, ``$switch``): +2 points plus
+          nested ``if`` and dict ``then`` scores
+        - Logical operators (``$and``, ``$or``, ``$nor``, ``$not``): sum of
+          nested dict operand scores
+        - Array operators (``$size``, ``$in``, ``$arrayElemAt``): +2 points
+        - String operators (``$concat``, ``$substr``, ``$trim``): +1 point
+
+        Args:
+            expr: The ``$expr`` expression dictionary to score.
 
         Returns:
-            int: Complexity score (1-2: Tier 1, 3-10: Tier 2, 11+: Tier 3)
+            int: Complexity score (<2: Tier 1, 2-10: Tier 2, >10: Tier 3).
         """
         if not isinstance(expr, dict):
             return 0
@@ -371,11 +448,17 @@ class TempTableExprEvaluator:
         return score
 
     def _make_expr_key(self, expr: dict[str, Any]) -> str:
-        """
-        Create a cache key from expression structure.
+        """Create a cache key from an expression structure.
 
-        Uses TranslationCache._extract_structure to create a hashable key
-        that preserves field references ($field) but parameterizes literal values.
+        Delegates to ``TranslationCache._extract_structure`` to build a
+        canonicalized hashable tuple preserving field references and literal
+        values, then formats it as a string key.
+
+        Args:
+            expr: The ``$expr`` expression dictionary to key.
+
+        Returns:
+            str: String representation of the canonicalized expression key.
         """
         structure = self._translation_cache._extract_structure(expr)
         return str(structure)
@@ -386,16 +469,19 @@ class TempTableExprEvaluator:
         collection_name: str,
         cached: tuple[str, tuple[Any, ...]],
     ) -> tuple[str, list[Any], list[str]]:
-        """
-        Build query from cached translation.
+        """Build a Tier 2 query from a cached translation entry.
 
         Args:
-            expr: The original expression (unused; kept for signature stability)
-            collection_name: Collection table name
-            cached: Tuple of (where_clause_template, (field_list, param_values))
+            expr: Original expression dictionary (unused; kept for signature
+                stability).
+            collection_name: Collection table name.
+            cached: Tuple ``(where_clause_template, cached_values)`` where
+                ``cached_values`` holds ``(field_list, param_values)`` from
+                ``TranslationCache``.
 
         Returns:
-            Tuple of (SQL query, parameters, table_names)
+            tuple[str, list[Any], list[str]]: Tuple containing
+                ``(sql_query, params, temp_tables)`` ready for execution.
         """
         where_clause_template, (field_list, param_values) = cached
 
@@ -430,7 +516,15 @@ class TempTableExprEvaluator:
         return query.strip(), params, [temp_table]
 
     def _extract_where_clause(self, full_query: str) -> str:
-        """Extract WHERE clause from a full query string."""
+        """Extract the trailing ``WHERE`` clause from a full query string.
+
+        Args:
+            full_query: Complete SQL ``SELECT`` query string.
+
+        Returns:
+            str: Predicate text following the final ``WHERE``, or ``""`` if
+                no ``WHERE`` keyword is present.
+        """
         if "WHERE" in full_query:
             # In our generated queries, WHERE is always at the end of the main SELECT
             parts = full_query.rsplit("WHERE", 1)
@@ -443,22 +537,24 @@ class TempTableExprEvaluator:
         collection_name: str,
         filter_expr: dict[str, Any] | None = None,
     ) -> tuple[str, list[Any], list[str]]:
-        """
-        Build a Tier 2 query using temporary tables.
+        """Build a Tier 2 query using a newly created temporary table.
 
         Strategy:
+
         1. Compile the main query first so unsupported operators fail before
-           allocating a temporary table
-        2. Create temp table with document IDs and JSON-extracted values
-        3. Return the query joined against the populated temporary table
+           allocating a temporary table.
+        2. Create a temporary table with document IDs and JSON-extracted
+           field values.
+        3. Return the query joined against the populated temporary table.
 
         Args:
-            expr: The $expr expression
-            collection_name: Collection table name
-            filter_expr: Optional additional filter
+            expr: The ``$expr`` expression dictionary.
+            collection_name: Collection table name.
+            filter_expr: Optional additional equality filter dictionary.
 
         Returns:
-            Tuple of (SQL query, parameters, table_names)
+            tuple[str, list[Any], list[str]]: Tuple containing
+                ``(sql_query, params, temp_tables)``.
         """
         # Generate unique temp table name
         temp_table = f"temp_expr_{uuid.uuid4().hex[:8]}"
@@ -481,13 +577,12 @@ class TempTableExprEvaluator:
     def _create_temp_table(
         self, temp_table: str, collection_name: str, fields: list[str]
     ) -> None:
-        """
-        Create a temporary table with extracted field values.
+        """Create and index a temporary table with extracted field values.
 
         Args:
-            temp_table: Name of the temporary table
-            collection_name: Source collection name
-            fields: List of field paths to extract
+            temp_table: Name of the temporary table to create.
+            collection_name: Source collection table name.
+            fields: List of field paths to extract into sanitized columns.
         """
         # Build column definitions for extracted fields
         select_exprs = ["id"]
@@ -537,17 +632,16 @@ class TempTableExprEvaluator:
         temp_table: str,
         filter_expr: dict[str, Any] | None = None,
     ) -> tuple[str, list[Any]]:
-        """
-        Build the main query that uses the temporary table.
+        """Build the main ``SELECT`` query joined with the temporary table.
 
         Args:
-            expr: The $expr expression
-            collection_name: Collection table name
-            temp_table: Temporary table name
-            filter_expr: Optional additional filter
+            expr: The ``$expr`` expression dictionary.
+            collection_name: Collection table name.
+            temp_table: Temporary table name.
+            filter_expr: Optional additional equality filter dictionary.
 
         Returns:
-            Tuple of (SQL query, parameters)
+            tuple[str, list[Any]]: ``(sql_query, params)``.
         """
         # Build WHERE clause from expression using temp table columns
         where_clause, params = self._build_expr_where_from_temp(
@@ -587,15 +681,17 @@ class TempTableExprEvaluator:
     def _build_expr_where_from_temp(
         self, expr: dict[str, Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """
-        Build WHERE clause using temporary table columns.
+        """Build a truthy SQL ``WHERE`` predicate using temp-table columns.
+
+        Wraps the compiled expression in ``COALESCE((...), 0) != 0`` to match
+        MongoDB ``$expr`` truthiness.
 
         Args:
-            expr: The $expr expression
-            temp_table: Temporary table name
+            expr: The ``$expr`` expression dictionary.
+            temp_table: Temporary table name.
 
         Returns:
-            Tuple of (WHERE clause, parameters)
+            tuple[str, list[Any]]: ``(where_clause, params)``.
         """
         sql, params = self._convert_expr_to_temp_sql(expr, temp_table)
 
@@ -607,15 +703,18 @@ class TempTableExprEvaluator:
     def _convert_expr_to_temp_sql(
         self, expr: dict[str, Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """
-        Convert expression to SQL using temporary table columns.
+        """Convert a ``$expr`` dictionary into SQL using temp-table columns.
 
         Args:
-            expr: The $expr expression
-            temp_table: Temporary table name
+            expr: Single-key ``$expr`` expression dictionary.
+            temp_table: Temporary table name.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: ``(sql_expression, params)``.
+
+        Raises:
+            ValueError: If ``expr`` is not a single-key dictionary.
+            NotImplementedError: If the operator is not supported in Tier 2.
         """
         if not isinstance(expr, dict) or len(expr) != 1:
             raise ValueError("Invalid $expr expression structure")
@@ -652,7 +751,21 @@ class TempTableExprEvaluator:
     def _convert_logical_to_temp_sql(
         self, operator: str, operands: list[Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """Convert logical operators to SQL using temp table."""
+        """Convert logical operators to SQL using temporary table columns.
+
+        Supports ``$and``, ``$or``, ``$not``, and ``$nor``.
+
+        Args:
+            operator: Logical operator name.
+            operands: List of nested expression operands.
+            temp_table: Temporary table name.
+
+        Returns:
+            tuple[str, list[Any]]: ``(sql_expression, params)``.
+
+        Raises:
+            ValueError: If operand shape or count is invalid for ``operator``.
+        """
         if not isinstance(operands, list):
             raise ValueError(f"{operator} requires a list of expressions")
 
@@ -693,7 +806,21 @@ class TempTableExprEvaluator:
     def _convert_comparison_to_temp_sql(
         self, operator: str, operands: list[Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """Convert comparison operators to SQL using temp table."""
+        """Convert comparison operators to SQL using temporary table columns.
+
+        Supports ``$eq``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, and ``$ne``.
+
+        Args:
+            operator: Comparison operator name.
+            operands: Two-element list of operands to compare.
+            temp_table: Temporary table name.
+
+        Returns:
+            tuple[str, list[Any]]: ``(sql_expression, params)``.
+
+        Raises:
+            ValueError: If ``operands`` does not have length 2.
+        """
         if len(operands) != 2:
             raise ValueError(f"{operator} requires exactly 2 operands")
 
@@ -722,7 +849,22 @@ class TempTableExprEvaluator:
     def _convert_arithmetic_to_temp_sql(
         self, operator: str, operands: list[Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """Convert arithmetic operators to SQL using temp table."""
+        """Convert arithmetic operators to SQL using temporary table columns.
+
+        Supports ``$add``, ``$subtract``, ``$multiply``, ``$divide``, and
+        ``$mod``.
+
+        Args:
+            operator: Arithmetic operator name.
+            operands: List of at least two operands.
+            temp_table: Temporary table name.
+
+        Returns:
+            tuple[str, list[Any]]: ``(sql_expression, params)``.
+
+        Raises:
+            ValueError: If fewer than two operands are provided.
+        """
         if len(operands) < 2:
             raise ValueError(f"{operator} requires at least 2 operands")
 
@@ -751,7 +893,19 @@ class TempTableExprEvaluator:
     def _convert_cond_to_temp_sql(
         self, operands: dict[str, Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """Convert $cond operator to SQL CASE statement using temp table."""
+        """Convert ``$cond`` operator to a SQL ``CASE`` expression.
+
+        Args:
+            operands: Dictionary with ``if``, ``then``, and optional ``else``
+                keys.
+            temp_table: Temporary table name.
+
+        Returns:
+            tuple[str, list[Any]]: ``(sql_case_expression, params)``.
+
+        Raises:
+            ValueError: If ``operands`` is not a dict or lacks ``if``/``then``.
+        """
         if not isinstance(operands, dict):
             raise ValueError("$cond requires a dictionary")
 
@@ -779,7 +933,21 @@ class TempTableExprEvaluator:
     def _convert_cmp_to_temp_sql(
         self, operands: list[Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """Convert $cmp operator to SQL CASE statement using temp table."""
+        """Convert ``$cmp`` operator to a SQL ``CASE`` expression.
+
+        Replicates parameter bindings four times because each operand appears
+        in four ``WHEN`` branches.
+
+        Args:
+            operands: Two-element list of operands to compare.
+            temp_table: Temporary table name.
+
+        Returns:
+            tuple[str, list[Any]]: ``(sql_case_expression, params)``.
+
+        Raises:
+            ValueError: If ``operands`` does not have length 2.
+        """
         if len(operands) != 2:
             raise ValueError("$cmp requires exactly 2 operands")
 
@@ -804,7 +972,22 @@ class TempTableExprEvaluator:
     def _convert_math_to_temp_sql(
         self, operator: str, operands: list[Any], temp_table: str
     ) -> tuple[str, list[Any]]:
-        """Convert math operators to SQL using temp table."""
+        """Convert unary math operators to SQL using temporary table columns.
+
+        Supports ``$abs``, ``$ceil``, ``$floor``, and ``$round``.
+
+        Args:
+            operator: Math operator name.
+            operands: Single-element list containing the numeric operand.
+            temp_table: Temporary table name.
+
+        Returns:
+            tuple[str, list[Any]]: ``(sql_expression, params)``.
+
+        Raises:
+            ValueError: If ``operands`` does not have length 1.
+            NotImplementedError: If ``operator`` is not supported in Tier 2.
+        """
         if len(operands) != 1:
             raise ValueError(f"{operator} requires exactly 1 operand")
 
@@ -830,15 +1013,17 @@ class TempTableExprEvaluator:
     def _convert_operand_to_temp_sql(
         self, operand: Any, temp_table: str
     ) -> tuple[str, list[Any]]:
-        """
-        Convert operand to SQL using temporary table columns.
+        """Convert an operand to SQL using temporary table columns.
+
+        Translates ``$field`` references into qualified temp-table columns,
+        recurses on nested expression dicts, and binds literals as ``?``.
 
         Args:
-            operand: Operand to convert
-            temp_table: Temporary table name
+            operand: Field reference, nested expression dict, or literal.
+            temp_table: Temporary table name.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: ``(sql_expression, params)``.
         """
         if isinstance(operand, str) and operand.startswith("$"):
             # Field reference - use temp table column
@@ -855,14 +1040,14 @@ class TempTableExprEvaluator:
             return "?", [operand]
 
     def _extract_field_references(self, expr: dict[str, Any]) -> list[str]:
-        """
-        Extract all unique field references from an expression.
+        """Extract all unique field references from an expression.
 
         Args:
-            expr: The $expr expression
+            expr: The ``$expr`` expression dictionary.
 
         Returns:
-            List of unique field paths
+            list[str]: Unique field paths in first-seen order without leading
+                ``$``.
         """
         fields = []
 
@@ -883,7 +1068,15 @@ class TempTableExprEvaluator:
         return unique_fields
 
     def _extract_field_references_from_operand(self, operand: Any) -> list[str]:
-        """Extract field references from an operand."""
+        """Recursively collect field references from an operand node.
+
+        Args:
+            operand: String field reference, list, dict, or literal operand.
+
+        Returns:
+            list[str]: Collected field paths without leading ``$`` (may
+                contain duplicates).
+        """
         fields = []
 
         if isinstance(operand, str) and operand.startswith("$"):
@@ -898,14 +1091,16 @@ class TempTableExprEvaluator:
         return fields
 
     def _sanitize_field_name(self, field_path: str) -> str:
-        """
-        Sanitize a field path for use as a SQL column name.
+        """Sanitize a field path for use as a SQL column name.
+
+        Replaces dots and brackets with underscores and prefixes ``f_`` when
+        the result does not start with an alphabetic character.
 
         Args:
-            field_path: Field path (e.g., "stats.wins")
+            field_path: Field path (e.g., ``"stats.wins"``).
 
         Returns:
-            Sanitized column name (e.g., "stats_wins")
+            str: Sanitized column name (e.g., ``"stats_wins"``).
         """
         # Replace dots with underscores
         col_name = field_path.replace(".", "_")

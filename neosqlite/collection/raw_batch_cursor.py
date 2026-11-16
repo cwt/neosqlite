@@ -1,3 +1,5 @@
+"""Raw batch cursor yielding newline-delimited JSON byte batches."""
+
 from __future__ import annotations
 
 import logging
@@ -19,14 +21,28 @@ if TYPE_CHECKING:
 def _iter_json_batches(
     docs: list[dict[str, Any]], batch_size: int
 ) -> Iterator[bytes]:
-    """Serialize document batches into newline-delimited UTF-8 JSON bytes."""
+    """Serialize document batches into newline-delimited UTF-8 JSON bytes.
+
+    Args:
+        docs: Sequence of document dictionaries to serialize.
+        batch_size: Maximum number of documents included in each yielded chunk.
+
+    Yields:
+        bytes: UTF-8 encoded newline-delimited JSON bytes for one batch.
+    """
     for batch in batched(docs, batch_size):
         batch_json = "\n".join(neosqlite_json_dumps(doc) for doc in batch)
         yield batch_json.encode("utf-8")
 
 
 class RawBatchCursor:
-    """A cursor that returns raw batches of JSON data instead of individual documents."""
+    """Cursor that yields raw batches of newline-delimited JSON data.
+
+    Iterates over query or aggregation pipeline results in serialized UTF-8
+    JSON byte chunks rather than individual Python document dictionaries.
+    Supports SQL-backed batched pagination with deterministic ordering and
+    falls back to ``Collection.find()`` for complex queries.
+    """
 
     def __init__(
         self,
@@ -38,17 +54,19 @@ class RawBatchCursor:
         pipeline: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
     ):
-        """
-        Initialize a RawBatchCursor object.
+        """Initialize a RawBatchCursor instance.
 
         Args:
-            collection (Collection): The collection associated with this cursor.
-            filter (dict[str, Any]): A dictionary representing the filter criteria for the documents.
-            projection (dict[str, Any]): A dictionary representing the projection criteria for the documents.
-            hint (str): A string hinting at the index to use for the query.
-            batch_size (int): The number of documents to return in each batch.
-            pipeline (list[dict[str, Any]]): An optional aggregation pipeline to execute.
-            session (ClientSession, optional): A ClientSession for transactions.
+            collection: The collection queried by this cursor.
+            filter: Optional query filter dictionary; defaults to None ({}).
+            projection: Optional field projection dictionary; defaults to
+                None ({}).
+            hint: Optional index hint string for the query.
+            batch_size: Number of documents to serialize per yielded batch.
+                Defaults to 100.
+            pipeline: Optional aggregation pipeline stages to execute instead
+                of a find query.
+            session: Optional ClientSession associated with the operation.
         """
         self._collection = collection
         self._query_helpers = collection.query_engine.helpers
@@ -64,24 +82,26 @@ class RawBatchCursor:
         self._tables_to_cleanup: list[str] = []
 
     def batch_size(self, batch_size: int) -> Self:
-        """
-        Set the batch size for this cursor.
+        """Set the maximum number of documents per yielded batch.
 
         Args:
-            batch_size (int): The number of documents to return in each batch.
+            batch_size: Number of documents to return in each batch.
 
         Returns:
-            RawBatchCursor: This cursor object, for method chaining.
+            Self: This cursor instance for method chaining.
         """
         self._batch_size = batch_size
         return self
 
     def __iter__(self) -> Iterator[bytes]:
-        """
-        Return an iterator over raw batches of JSON data.
+        """Yield raw batches of newline-delimited UTF-8 JSON bytes.
 
-        Returns:
-            Iterator[bytes]: An iterator that yields raw batches of JSON data.
+        Executes either the configured aggregation pipeline, a SQL-paginated
+        query with deterministic ordering, or a Python fallback via
+        ``collection.find()`` when the filter cannot be translated directly.
+
+        Yields:
+            bytes: UTF-8 encoded newline-delimited JSON documents for a batch.
         """
         # If we have a pipeline, use aggregation
         if self._pipeline is not None:

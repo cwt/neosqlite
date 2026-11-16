@@ -1,35 +1,14 @@
-"""
-$expr operator evaluator for NeoSQLite.
+"""$expr operator evaluator for NeoSQLite.
 
-This module implements the MongoDB $expr operator using a 3-tier approach:
-1. Single SQL Query (fastest) - Uses SQLite JSON functions
-2. Temporary Tables (intermediate) - For complex expressions
-3. Python Fallback (slowest but complete) - Always available, especially for kill switch
+Implements the MongoDB ``$expr`` operator using a 3-tier evaluation strategy:
+1. Single SQL Query (fastest) - Uses SQLite JSON/JSONB functions.
+2. Temporary Tables (intermediate) - Reserved for complex expressions.
+3. Python Fallback (complete) - Always available, including kill switch.
 
-The evaluator ensures that SQLite and Python implementations produce identical results.
-
-MongoDB $expr Compatibility:
-- Comparison operators: $eq, $ne, $gt, $gte, $lt, $lte, $cmp
-- Logical operators: $and, $or, $not, $nor
-- Arithmetic operators: $add, $subtract, $multiply, $divide, $mod, $abs, $ceil, $floor, $round, $trunc
-- Conditional operators: $cond, $ifNull, $switch
-- Array operators: $size, $in, $arrayElemAt, $first, $last, $isArray
-- Array aggregation: $sum, $avg, $min, $max
-- Array transformation: $filter, $map, $reduce
-- String operators: $concat, $toLower, $toUpper, $strLenBytes, $substr, $trim
-- String regex: $regexMatch, $regexFind, $regexFindAll
-- Date operators: $year, $month, $dayOfMonth, $hour, $minute, $second, $dayOfWeek, $dayOfYear
-- Date arithmetic: $dateAdd, $dateSubtract, $dateDiff
-- Type operators: $type, $convert, $toString, $toInt, $toDouble, $toBool
-- Object operators: $mergeObjects, $getField, $setField
-- Other: $literal, $let
-- Trigonometric: $sin, $cos, $tan, $asin, $acos, $atan, $atan2
-- Hyperbolic: $sinh, $cosh, $tanh, $asinh, $acosh, $atanh
-- Logarithmic: $ln, $log, $log10, $log2
-- Exponential/Sigmoid: $exp, $sigmoid
-- Angle conversion: $degreesToRadians, $radiansToDegrees
-
-Note: NeoSQLite extends MongoDB with $log2 (base-2 log) operator.
+Ensures SQLite and Python evaluations produce equivalent results across
+comparison, logical, arithmetic, conditional, array, string, regex, date,
+type, object, trigonometric, hyperbolic, logarithmic, exponential, and angle
+conversion operators (plus NeoSQLite's ``$log2`` extension).
 """
 
 from __future__ import annotations
@@ -167,29 +146,26 @@ __all__ = [
 
 
 class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
-    """
-    Evaluator for MongoDB $expr operator.
+    """Evaluator for MongoDB ``$expr`` expressions across SQL and Python.
 
     Supports 3-tier evaluation:
-    - Tier 1: Direct SQL WHERE clause using JSON functions
-    - Tier 2: Temporary tables for complex expressions
-    - Tier 3: Python fallback (always available for kill switch)
+    - Tier 1: Direct SQL ``WHERE`` clause using JSON/JSONB functions.
+    - Tier 2: Temporary tables for complex expressions.
+    - Tier 3: Python fallback (always available for kill switch).
 
-    JSON/JSONB Support:
-    - Automatically uses jsonb_* functions when supported for better performance
-    - Falls back to json_* functions when JSONB is not available
-    - Detects SQLite 3.51.0+ features (jsonb_each, jsonb_tree) for maximum performance
+    Automatically detects JSONB support (including SQLite 3.51.0+
+    ``jsonb_each`` and ``jsonb_tree``) when a database connection is supplied,
+    falling back to ``json_*`` functions otherwise.
     """
 
     def __init__(self, data_column: str = "data", db_connection=None):
-        """
-        Initialize the expression evaluator.
+        """Initialize the expression evaluator.
 
         Args:
-            data_column: Name of the column containing JSON data (default: "data")
-            db_connection: Optional SQLite database connection for JSONB detection.
-                          If provided, JSONB support will be auto-detected.
-                          If None, json_* functions will be used (safe fallback).
+            data_column: Name of the column holding JSON documents. Defaults
+                to ``"data"``.
+            db_connection: Optional SQLite connection used to probe JSONB
+                capabilities; when ``None``, ``json_*`` functions are used.
         """
         self.data_column = data_column
         self._log2_warned = False  # Track if we've warned about $log2
@@ -201,32 +177,47 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
 
     @property
     def json_function_prefix(self) -> str:
-        """Get the appropriate JSON function prefix (json or jsonb)."""
+        """Return the active SQLite JSON function prefix.
+
+        Returns:
+            str: ``"jsonb"`` when JSONB is supported, otherwise ``"json"``.
+        """
         return self.jsonb.json_function_prefix
 
     @property
     def json_each_function(self) -> str:
-        """Get the appropriate json_each function name (json_each or jsonb_each)."""
+        """Return the active table-valued ``json_each`` function name.
+
+        Returns:
+            str: ``"jsonb_each"`` when supported, otherwise ``"json_each"``.
+        """
         return self.jsonb.json_each_function
 
     @property
     def json_group_array_function(self) -> str:
-        """Get the appropriate json_group_array function name."""
+        """Return the active ``json_group_array`` function name.
+
+        Returns:
+            str: ``"jsonb_group_array"`` when JSONB is supported, otherwise
+                ``"json_group_array"``.
+        """
         return self.jsonb.json_group_array_function
 
     def evaluate(
         self, expr: dict[str, Any], tier: int = 1, force_python: bool = False
     ) -> tuple[str | None, list[Any]]:
-        """
-        Evaluate a $expr expression.
+        """Evaluate a ``$expr`` expression for a requested execution tier.
 
         Args:
-            expr: The $expr expression dictionary
-            tier: Complexity tier (1=SQL, 2=TempTable, 3=Python)
-            force_python: Force Python evaluation (kill switch)
+            expr: The ``$expr`` expression dictionary.
+            tier: Complexity tier (1 for SQL, 2 for temp tables, 3+ for
+                Python).
+            force_python: When ``True``, bypasses SQL translation and signals
+                Python evaluation.
 
         Returns:
-            Tuple of (SQL WHERE clause, parameters) or (None, []) for Python evaluation
+            tuple[str | None, list[Any]]: ``(sql_where_clause, params)`` or
+                ``(None, [])`` when Python fallback is required.
         """
         if force_python or tier >= 3:
             return None, []
@@ -242,10 +233,19 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
     def _evaluate_sql_tier1(
         self, expr: dict[str, Any]
     ) -> tuple[str | None, list[Any]]:
-        """
-        Tier 1: Convert simple expressions to SQL WHERE clauses using JSON functions.
+        """Convert an expression to a Tier-1 SQL ``WHERE`` clause.
 
-        Supports basic operators and field comparisons.
+        Ensures a temporary ``AggregationContext`` is active while converting
+        and falls back to ``(None, [])`` if conversion raises
+        ``NotImplementedError`` or ``ValueError``.
+
+        Args:
+            expr: The ``$expr`` expression dictionary to translate.
+
+        Returns:
+            tuple[str | None, list[Any]]: Parenthesized SQL condition and bound
+                parameters, or ``(None, [])`` when SQL translation is not
+                possible.
         """
         context_was_set = self._current_context is not None
         if not context_was_set:
@@ -264,19 +264,18 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
     def _evaluate_sql_tier2(
         self, expr: dict[str, Any]
     ) -> tuple[str | None, list[Any]]:
-        """
-        Tier 2: Use temporary tables for complex expressions.
+        """Evaluate complex expressions using Tier-2 temporary tables.
 
-        This tier is used when:
-        - Expressions are too complex for Tier 1 (single SQL WHERE clause)
-        - Multiple intermediate calculations are needed
-        - The expression can benefit from pre-computed field extractions
+        Placeholder entry point that currently returns ``(None, [])`` so the
+        caller falls back to Python evaluation, as Tier-2 execution requires
+        a database connection managed by the query helper.
 
         Args:
-            expr: The $expr expression
+            expr: The ``$expr`` expression dictionary.
 
         Returns:
-            Tuple of (SQL expression, parameters) or (None, []) for Python fallback
+            tuple[str | None, list[Any]]: Always ``(None, [])`` placeholder for
+                Python fallback.
         """
         # Tier 2 requires database connection which is passed from query_helper
         # For now, this is a placeholder that will be called from query_helper
@@ -289,44 +288,43 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         context: AggregationContext | None = None,
         as_alias: str | None = None,
     ) -> tuple[str, list[Any]]:
-        """
-        Evaluate expression for aggregation pipeline.
+        """Evaluate an expression into a SQL ``SELECT`` clause expression.
 
-        This method evaluates expressions for use in aggregation pipeline stages
-        like $addFields, $project, $group, etc. Unlike the evaluate() method which
-        generates WHERE clause expressions, this method generates SELECT clause
-        expressions with optional aliases.
+        Unlike ``evaluate()``, which produces parenthesized ``WHERE`` clause
+        predicates and falls back to ``None``, this method targets aggregation
+        pipeline stages (such as ``$addFields``, ``$project``, and ``$group``)
+        and raises ``NotImplementedError`` for unsupported operators.
 
         Args:
-            expr: Expression to evaluate. Can be:
-                  - Dict: Expression like {"$sin": "$angle"}
-                  - Str: Field reference like "$field" or variable like "$$ROOT"
-                  - Literal: Number, string, boolean, None, array, or dict
-            context: Aggregation context for variable scoping. If None, a new
-                     context will be created.
-            as_alias: Optional alias for SELECT clause (e.g., "AS field_name")
+            expr: Expression dictionary, field reference (``"$field"``),
+                aggregation variable (``"$$ROOT"``), or literal value.
+            context: Variable scoping context; creates a fresh
+                ``AggregationContext`` when ``None``.
+            as_alias: Optional SQL column alias appended as ``AS <as_alias>``.
 
         Returns:
-            Tuple of (SQL expression, parameters). The SQL expression will include
-            the alias if as_alias is provided.
+            tuple[str, list[Any]]: SQL expression (with alias if provided) and
+                bound parameters.
 
         Raises:
-            NotImplementedError: If the expression operator is not supported in
-                                 SQL tier for aggregation context
+            NotImplementedError: If the expression or variable is not supported
+                in the SQL aggregation tier.
 
         Examples:
             >>> evaluator = ExprEvaluator()
             >>> evaluator.evaluate_for_aggregation({"$sin": "$angle"})
             ("sin(json_extract(data, '$.angle'))", [])
 
-            >>> evaluator.evaluate_for_aggregation({"$sin": "$angle"}, as_alias="sin_val")
+            >>> evaluator.evaluate_for_aggregation(
+            ...     {"$sin": "$angle"}, as_alias="sin_val"
+            ... )
             ("sin(json_extract(data, '$.angle')) AS sin_val", [])
 
             >>> evaluator.evaluate_for_aggregation("$field")
             ("json_extract(data, '$.field')", [])
 
             >>> evaluator.evaluate_for_aggregation(42)
-            ("?", [42])
+            ('?', [42])
         """
         if context is None:
             context = AggregationContext()
@@ -349,24 +347,21 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
     def _convert_operand_to_sql_agg(
         self, operand: Any, context: AggregationContext
     ) -> tuple[str, list[Any]]:
-        """
-        Convert an operand to SQL for aggregation context.
+        """Convert an operand to SQL within an aggregation context.
 
-        This method handles different types of operands:
-        - Expressions: Recursively evaluate using _convert_expr_to_sql
-        - Field references: Convert to json_extract calls
-        - Aggregation variables: Handle $$ROOT, $$CURRENT, etc.
-        - Literals: Convert to parameterized SQL
+        Resolves aggregation variables (such as ``$$ROOT`` and ``$$CURRENT``)
+        first, then delegates expressions, field references, and literals to
+        ``_convert_operand_to_sql()``.
 
         Args:
-            operand: The operand to convert
-            context: Aggregation context for variable scoping
+            operand: Operand expression, field reference, variable, or literal.
+            context: Aggregation context supplying variable bindings.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: SQL expression and bound parameters.
 
         Raises:
-            NotImplementedError: If the operand type is not supported
+            NotImplementedError: If the operand or variable is not supported.
         """
         # Handle aggregation variables first ($$ROOT, $$CURRENT, etc.)
         if _is_aggregation_variable(operand):
@@ -379,18 +374,22 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
     def _handle_aggregation_variable(
         self, var_name: str, context: AggregationContext
     ) -> tuple[str, list[Any]]:
-        """
-        Handle aggregation variable references.
+        """Resolve an aggregation variable reference to a SQL expression.
+
+        Handles ``$$ROOT``, ``$$CURRENT``, custom ``(sql, params)`` variable
+        bindings (from ``$let``/``$map``/``$filter``/``$reduce``), and dotted
+        subpaths such as ``$$this.price``.
 
         Args:
-            var_name: Variable name (e.g., "$$ROOT", "$$CURRENT")
-            context: Aggregation context
+            var_name: Aggregation variable string starting with ``"$$"``.
+            context: Aggregation context storing column and variable bindings.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: SQL expression and bound parameters.
 
         Raises:
-            NotImplementedError: If the variable is not supported
+            NotImplementedError: For ``$$REMOVE`` (handled in application
+                logic) or unknown variable references.
         """
         match var_name:
             case "$$ROOT":
@@ -454,44 +453,38 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         alias: str | None = None,
         context: AggregationContext | None = None,
     ) -> tuple[str, list[Any]]:
-        """
-        Build SELECT clause expression for aggregation (SQL Tier 1 optimized).
+        """Build a SQL ``SELECT`` expression for an aggregation stage.
 
-        This method is similar to evaluate_for_aggregation() but optimized for
-        SQL tier usage. It handles field aliasing and context tracking for
-        multi-stage pipelines.
+        Delegates to ``evaluate_for_aggregation()`` with optional column
+        aliasing and pipeline variable context tracking.
 
         Args:
-            expr: Expression to evaluate. Can be:
-                  - Dict: Expression like {"$sin": "$angle"}
-                  - Str: Field reference like "$field" or variable like "$$ROOT"
-                  - Literal: Number, string, boolean, None, array, or dict
-            alias: Optional alias for SELECT clause (e.g., "AS field_name")
-            context: Aggregation context for variable scoping. If None, creates
-                     a new context. This allows tracking computed fields across
-                     pipeline stages.
+            expr: Expression dictionary, field reference, variable, or literal.
+            alias: Optional SQL column alias appended as ``AS <alias>``.
+            context: Optional aggregation context for variable scoping.
 
         Returns:
-            Tuple of (SQL expression, parameters). The SQL expression will include
-            the alias if alias is provided.
+            tuple[str, list[Any]]: SQL ``SELECT`` expression and parameters.
 
         Raises:
-            NotImplementedError: If the expression operator is not supported in
-                                 SQL tier for aggregation context
+            NotImplementedError: If the expression is not supported in SQL
+                aggregation context.
 
         Examples:
             >>> evaluator = ExprEvaluator()
             >>> evaluator.build_select_expression({"$sin": "$angle"})
             ("sin(json_extract(data, '$.angle'))", [])
 
-            >>> evaluator.build_select_expression({"$sin": "$angle"}, alias="sin_val")
+            >>> evaluator.build_select_expression(
+            ...     {"$sin": "$angle"}, alias="sin_val"
+            ... )
             ("sin(json_extract(data, '$.angle')) AS sin_val", [])
 
             >>> evaluator.build_select_expression("$field")
             ("json_extract(data, '$.field')", [])
 
             >>> evaluator.build_select_expression(42)
-            ("?", [42])
+            ('?', [42])
         """
         return self.evaluate_for_aggregation(
             expr, context=context, as_alias=alias
@@ -502,21 +495,18 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         expr: Any,
         context: AggregationContext | None = None,
     ) -> tuple[str, list[Any]]:
-        """
-        Build GROUP BY clause expression for aggregation (SQL Tier 1 optimized).
-
-        This method is optimized for grouping operations. It's similar to
-        build_select_expression() but doesn't include aliases since GROUP BY
-        clauses reference expressions directly.
+        """Build a SQL ``GROUP BY`` expression without aliasing.
 
         Args:
-            expr: Expression to evaluate for GROUP BY
-            context: Aggregation context for variable scoping
+            expr: Expression or field reference used as a grouping key.
+            context: Optional aggregation context; creates a fresh context
+                when ``None``.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: SQL expression and bound parameters.
 
         Examples:
+            >>> evaluator = ExprEvaluator()
             >>> evaluator.build_group_by_expression("$category")
             ("json_extract(data, '$.category')", [])
 
@@ -534,22 +524,23 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         expr: Any,
         context: AggregationContext | None = None,
     ) -> tuple[str, list[Any]]:
-        """
-        Build HAVING clause expression for post-aggregation filtering.
+        """Build a SQL ``HAVING`` expression for post-aggregation filtering.
 
-        HAVING expressions are evaluated after aggregation, so they can
-        reference aggregate results.
+        Converts single-key operator expressions via ``_convert_expr_to_sql()``
+        and other operands via ``_convert_operand_to_sql_agg()``.
 
         Args:
-            expr: Expression to evaluate for HAVING clause
-            context: Aggregation context for variable scoping
+            expr: Boolean expression or operand for the ``HAVING`` clause.
+            context: Optional aggregation context; creates a fresh context
+                when ``None``.
 
         Returns:
-            Tuple of (SQL expression, parameters)
+            tuple[str, list[Any]]: SQL expression and bound parameters.
 
         Examples:
+            >>> evaluator = ExprEvaluator()
             >>> evaluator.build_having_expression({"$gt": ["$total", 100]})
-            ("(json_extract(data, '$.total') > ?)", [100])
+            ("json_extract(data, '$.total') > ?", [100])
         """
         if context is None:
             context = AggregationContext()
@@ -567,21 +558,20 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
     def _handle_aggregation_variable_sql_tier(
         self, var_name: str, context: PipelineContext | None = None
     ) -> str:
-        """
-        Handle aggregation variable references for SQL tier.
+        """Resolve an aggregation variable name for SQL-tier pipelines.
 
-        This is a SQL-tier-specific version that works with PipelineContext
-        instead of AggregationContext.
+        Maps ``$$ROOT`` to ``"root_data"``, ``$$CURRENT`` to ``"data"``, and
+        ``$$REMOVE`` to the literal marker ``"$$REMOVE"``.
 
         Args:
-            var_name: Variable name (e.g., "$$ROOT", "$$CURRENT")
-            context: Pipeline context for tracking fields
+            var_name: Aggregation variable name (e.g., ``"$$ROOT"``).
+            context: Optional pipeline context (unused by this mapping).
 
         Returns:
-            SQL expression string
+            str: SQL column name or sentinel string.
 
         Raises:
-            NotImplementedError: If the variable is not supported
+            NotImplementedError: If ``var_name`` is not supported in SQL tier.
         """
         match var_name:
             case "$$ROOT":

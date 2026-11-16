@@ -13,12 +13,37 @@ from .base import BaseSqlMixin
 
 
 class ComparisonMixin(BaseSqlMixin):
-    """$eq / $gt / $lt / $gte / $lte / $ne / $cmp → SQL."""
+    """SQL converters for MongoDB aggregation comparison operators.
+
+    Translates ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, and
+    ``$cmp`` into SQLite expressions and parameter lists while preserving
+    MongoDB semantics for missing fields vs. explicit ``null`` and normalized
+    ISO-8601 date comparisons.
+    """
 
     def _convert_comparison_operator(
         self, operator: str, operands: list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert comparison operators to SQL."""
+        """Convert comparison operators to SQL expressions and parameters.
+
+        Handles ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, and ``$lte``.
+        Distinguishes missing JSON keys from explicit ``null`` values via
+        ``json_type`` for field comparisons, normalizes date expressions via
+        ``strftime``, and falls back to Python evaluation when ordering
+        against ``None`` or comparing mixed date and non-date operands.
+
+        Args:
+            operator: Comparison operator name (e.g., ``"$eq"``, ``"$gt"``).
+            operands: Two-element list of left and right operands.
+
+        Returns:
+            tuple[str, list[Any]]: SQL expression and bound parameter list.
+
+        Raises:
+            ValueError: If ``operands`` does not contain two elements.
+            NotImplementedError: If ordering involves ``None`` or a mixed
+                date/non-date comparison requires Python evaluation.
+        """
         if len(operands) != 2:
             raise ValueError(f"{operator} requires exactly 2 operands")
 
@@ -162,6 +187,15 @@ class ComparisonMixin(BaseSqlMixin):
         )
 
         def _is_date_producing(op_val: Any, op_sql: str) -> bool:
+            """Return whether an operand represents or emits a date value.
+
+            Args:
+                op_val: Raw aggregation operand value.
+                op_sql: Converted SQL expression for ``op_val``.
+
+            Returns:
+                bool: ``True`` if ``op_val`` or ``op_sql`` produces a date.
+            """
             if isinstance(op_val, datetime):
                 return True
             if isinstance(op_val, dict) and len(op_val) == 1:
@@ -195,6 +229,20 @@ class ComparisonMixin(BaseSqlMixin):
             def _date_norm_sql(
                 op_val: Any, op_sql: str
             ) -> tuple[str, list[Any] | None]:
+                """Normalize a date operand to canonical UTC ``strftime`` SQL.
+
+                Args:
+                    op_val: Raw aggregation operand value.
+                    op_sql: Converted SQL expression for ``op_val``.
+
+                Returns:
+                    tuple[str, list[Any] | None]: Normalized SQL expression
+                        and optional parameter override (``None`` keeps
+                        existing parameters).
+
+                Raises:
+                    NotImplementedError: If the operand is not a date value.
+                """
                 if (
                     isinstance(op_val, str)
                     and op_val.startswith("$")
@@ -247,7 +295,22 @@ class ComparisonMixin(BaseSqlMixin):
     def _convert_cmp_operator(
         self, operands: list[Any]
     ) -> tuple[str, list[Any]]:
-        """Convert $cmp operator to SQL CASE statement."""
+        """Convert ``$cmp`` operator to a SQL ``CASE`` expression.
+
+        Replicates MongoDB three-way comparison ordering (``-1``, ``0``,
+        ``1``), treating ``NULL`` as less than non-null values and equal to
+        ``NULL``.
+
+        Args:
+            operands: Two-element list of operands to compare.
+
+        Returns:
+            tuple[str, list[Any]]: SQL ``CASE`` expression and repeated bind
+                parameter list matching each operand occurrence.
+
+        Raises:
+            ValueError: If ``operands`` does not contain two elements.
+        """
         if len(operands) != 2:
             raise ValueError("$cmp requires exactly 2 operands")
 

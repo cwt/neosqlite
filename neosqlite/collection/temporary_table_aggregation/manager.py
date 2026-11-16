@@ -10,24 +10,20 @@ logger = logging.getLogger(__name__)
 
 
 class DeterministicTempTableManager:
-    """
-    Manager for deterministic temporary table names.
+    """Manager for deterministic temporary table names.
 
-    This class generates unique but deterministic temporary table names based on
-    pipeline stages and a pipeline ID. It ensures that the same pipeline stage
-    will always generate the same table name within the same pipeline execution,
-    which is useful for caching and optimization purposes.
+    Generates unique but deterministic temporary table names based on pipeline
+    stages and a pipeline ID, ensuring that the same stage produces the same
+    base table name within a pipeline execution.
     """
 
     def __init__(self, pipeline_id: str):
-        """
-        Initialize the DeterministicTempTableManager with a pipeline ID for generating
-        unique table names.
+        """Initialize the manager with a pipeline ID for temp table naming.
 
         Args:
-            pipeline_id (str): A unique identifier for the pipeline, used to ensure
-                               table names are deterministic and unique across
-                               different pipeline executions.
+            pipeline_id: Unique identifier for the pipeline, used to keep
+                generated table names deterministic and collision-free across
+                pipeline executions.
         """
         self.pipeline_id = pipeline_id
         self.stage_counter = 0
@@ -38,25 +34,21 @@ class DeterministicTempTableManager:
     def make_temp_table_name(
         self, stage: dict[str, Any], name_suffix: str = ""
     ) -> str:
-        """
-        Generate a deterministic temporary table name based on the pipeline stage
-        and pipeline ID.
+        """Generate a deterministic temporary table name for a pipeline stage.
 
-        This method creates a unique but deterministic name for a temporary table by:
-        1. Creating a canonical representation of the stage
-        2. Hashing the stage to create a short, unique suffix
-        3. Combining the pipeline ID, stage type, and hash to form a base name
-        4. Ensuring uniqueness by tracking name usage within the pipeline
+        Canonicalizes ``stage`` items, hashes them with SHA-256 to a 6-char
+        hex suffix, combines ``pipeline_id``, the leading stage name without
+        ``"$"``, the hash, and ``name_suffix``, and disambiguates repeated
+        base names via ``self.name_counter``.
 
         Args:
-            stage (dict[str, Any]): The pipeline stage dictionary used to generate
-                                    the table name
-            name_suffix (str, optional): An additional suffix to append to the
-                                         table name. Defaults to "".
+            stage: Pipeline stage dictionary used to derive the table name.
+            name_suffix: Optional suffix appended to the base table name.
+                Defaults to ``""``.
 
         Returns:
-            str: A deterministic temporary table name unique to this stage and
-                 pipeline
+            str: Unique, deterministic temporary table name within this
+                pipeline context.
         """
         # Create a canonical representation of the stage
         stage_key = str(sorted(stage.items()))
@@ -83,39 +75,29 @@ class DeterministicTempTableManager:
 
 @contextmanager
 def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
-    """
-    Context manager for temporary aggregation tables with automatic cleanup.
+    """Provide a transactional temporary-table context for pipelines.
 
-    This context manager provides a clean and safe way to work with temporary
-    tables during aggregation pipeline processing. It handles:
-
-    1. Creating a savepoint for atomicity of the entire pipeline
-    2. Generating deterministic temporary table names
-    3. Providing a function to create temporary tables with proper naming
-    4. Automatic cleanup of all temporary tables and savepoint on exit
-
-    The context manager supports both new deterministic naming (using stage dictionaries)
-    and backward compatibility (using string suffixes) for temporary tables.
+    Opens a SQLite ``SAVEPOINT`` for atomicity, instantiates a
+    ``DeterministicTempTableManager``, and yields a helper function that
+    creates and tracks temporary tables. On error, rolls back to the
+    savepoint, logs a warning, and re-raises; on exit, releases the savepoint
+    and drops all created temporary tables.
 
     Args:
-        db_connection: The database connection object
-        pipeline_id (str | None): A unique identifier for the pipeline. If None,
-                                  a default ID is generated for backward compatibility.
+        db_connection: SQLite database connection supporting ``execute``.
+        pipeline_id: Optional pipeline identifier for deterministic table and
+            savepoint naming. When ``None``, a random default ID is generated.
 
     Yields:
-        Callable: A function to create temporary tables with the signature:
-                  create_temp_table(stage_or_suffix, query, params=None, name_suffix="")
-
-                  Where:
-                  - stage_or_suffix: Either a stage dict (new approach) or string
-                                     (backward compatibility)
-                  - query: The SQL query to populate the temporary table
-                  - params: Optional parameters for the SQL query
-                  - name_suffix: Optional suffix for backward compatibility naming
+        Callable: Helper function ``create_temp_table`` accepting
+            ``(stage_or_suffix, query, params=None, name_suffix="")`` and
+            returning the created table name.
 
     Raises:
-        Exception: Any exception that occurs during pipeline processing is re-raised
-                   after cleanup operations
+        NotImplementedError: Re-raised after rolling back to the savepoint if
+            an unsupported SQL translation falls back.
+        Exception: Re-raised after rolling back to the savepoint if pipeline
+            execution fails.
     """
     temp_tables = []
 
@@ -137,38 +119,28 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
         params: list[Any] | None = None,
         name_suffix: str = "",  # Used only for backward compatibility
     ) -> str:
-        """
-        Create a temporary table for pipeline processing with deterministic naming.
+        """Create and register a temporary table populated by a SQL query.
 
-        This function supports both the new deterministic naming approach (using
-        stage dictionaries) and the old backward-compatible approach (using string
-        suffixes) for temporary table names.
-
-        The function creates a temporary table by executing a CREATE TEMP TABLE
-        AS SELECT statement with the provided query and optional parameters. The
-        table name is generated deterministically based on the pipeline stage or
-        provided suffix, ensuring uniqueness within the pipeline context.
+        Uses deterministic naming via ``DeterministicTempTableManager`` when
+        ``stage_or_suffix`` is a stage dictionary, or falls back to a
+        UUID-suffixed name when given a string suffix.
 
         Args:
-            stage_or_suffix (Any): Either a stage dictionary (new approach) for
-                                   deterministic naming or a string suffix (backward
-                                   compatibility). When using the new approach,
-                                   this should be the pipeline stage dictionary
-                                   that determines the table name. When using the
-                                   old approach, this should be a string suffix
-                                   for the table name.
-            query (str): The SQL query used to populate the temporary table
-            params (list[Any] | None, optional): Parameters for the SQL query.
-                                                 Defaults to None.
-            name_suffix (str, optional): Additional suffix for table name (used
-                                         only in backward compatibility mode).
-                                         Defaults to "".
+            stage_or_suffix: Stage dictionary for deterministic naming, or a
+                string suffix (anything else defaults to ``"unknown"``) for
+                legacy UUID-based naming.
+            query: SQL ``SELECT`` statement used to populate the table.
+            params: Optional sequence of bind parameters for ``query``.
+                Defaults to ``None``.
+            name_suffix: Extra suffix passed to ``make_temp_table_name`` when
+                ``stage_or_suffix`` is a dict. Defaults to ``""``.
 
         Returns:
-            str: The name of the created temporary table
+            str: Name of the newly created temporary table.
 
         Raises:
-            Exception: Any database execution errors are propagated to the caller
+            Exception: Propagates any SQLite execution error after the outer
+                context rolls back the savepoint.
         """
         # Check if we're using the new approach (stage is a dict) or old approach (stage is a string)
         if isinstance(stage_or_suffix, dict):

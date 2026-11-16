@@ -1,8 +1,8 @@
-"""
-SQL converters for expression evaluation.
+"""SQL converters for expression evaluation.
 
 Composes domain-specific mixins into SqlConvertersMixin, which provides
-all _convert_* methods for translating MongoDB $expr operators to SQL.
+all ``_convert_*`` methods for translating MongoDB ``$expr`` operators to
+SQL.
 
 This package was split from the monolithic sql_converters.py (1990 lines)
 into 13 focused modules mirroring the python_evaluators/ structure.
@@ -48,20 +48,21 @@ class SqlConvertersMixin(
     TypeConvertersMixin,
     DataSizeMixin,
 ):
-    """
-    Mixin class providing SQL conversion methods for expression evaluation.
+    """Mixin class providing SQL conversion methods for expression evaluation.
 
-    This class is designed to be composed into ExprEvaluator and provides
-    all the _convert_* methods for converting MongoDB operators to SQL.
+    This class is designed to be composed into ``ExprEvaluator`` and provides
+    all the ``_convert_*`` methods for translating MongoDB operators to SQL.
 
     Required attributes from parent class:
-        - data_column: Name of the JSON data column
-        - json_function_prefix: 'json' or 'jsonb' based on support
-        - json_each_function: 'json_each' or 'jsonb_each'
-        - json_group_array_function: 'json_group_array' or 'jsonb_group_array'
-        - jsonb: JSONBContext with JSONB capability flags
-        - _log2_warned: Boolean tracking if $log2 warning was issued
-        - _current_context: Optional AggregationContext for variable scoping
+        - data_column: Name of the JSON data column.
+        - json_function_prefix: ``'json'`` or ``'jsonb'`` based on support.
+        - json_each_function: ``'json_each'`` or ``'jsonb_each'``.
+        - json_group_array_function: ``'json_group_array'`` or
+          ``'jsonb_group_array'``.
+        - jsonb: ``JSONBContext`` with JSONB capability flags.
+        - _log2_warned: Boolean tracking if ``$log2`` warning was issued.
+        - _current_context: Optional ``AggregationContext`` for variable
+          scoping.
     """
 
     # Type annotations for simple attributes expected from parent class

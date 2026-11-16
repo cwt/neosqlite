@@ -1,3 +1,5 @@
+"""Database connection and command dispatch implementation for NeoSQLite."""
+
 from __future__ import annotations
 
 import json
@@ -24,9 +26,18 @@ logger = logging.getLogger(__name__)
 
 
 def _is_internal_collection_name(name: str) -> bool:
-    """
-    Check if a table name is internal to SQLite or NeoSQLite
-    (e.g., SQLite system tables, NeoSQLite metadata, FTS virtual/shadow tables).
+    """Check if a table name is internal to SQLite or NeoSQLite.
+
+    Detects SQLite system tables (``sqlite_*``), NeoSQLite metadata tables
+    (``_neosqlite_*`` / ``neosqlite_*``), the ``__command_results__`` helper,
+    and FTS5 virtual, shadow, or temporary text-search tables.
+
+    Args:
+        name: SQLite table name to inspect.
+
+    Returns:
+        bool: True if ``name`` is internal or invalid, False for user
+            collections.
     """
     if not name or not isinstance(name, str):
         return True
@@ -44,37 +55,33 @@ def _is_internal_collection_name(name: str) -> bool:
 
 
 class Connection:
-    """
-    Represents a connection to an NeoSQLite database.
+    """Represent a connection to a NeoSQLite database.
 
-    Provides methods for managing collections, executing SQL queries,
-    and handling database lifecycle events. Supports PyMongo-like API.
+    Provides PyMongo-compatible methods for accessing and managing
+    collections, executing database commands, running transactions, and
+    configuring SQLite connection pragmas and background TTL sweeps.
     """
 
     DEFAULT_TRANSLATION_CACHE_SIZE = 100
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Initialize a new database connection.
+        """Initialize a new database connection.
 
         Args:
-            *args: Positional arguments passed to sqlite3.connect().
-            **kwargs: Keyword arguments passed to sqlite3.connect().
-                      Special kwargs:
-                      - tokenizers: List of tuples (name, path) for FTS5 tokenizers to load
-                      - debug: Boolean flag to enable debug printing
-                      - name: Optional name for the database (for PyMongo API compatibility)
-                      - _is_clone: Internal flag for cloning (not for public use)
-                      - journal_mode: Optional journal mode (default: "WAL")
-                      - auto_vacuum: Auto vacuum mode (default: INCREMENTAL).
-                        Can be 0/NONE, 1/FULL, 2/INCREMENTAL, or "NONE"/"FULL"/"INCREMENTAL".
-                        If database has different auto_vacuum setting, migration may be triggered.
-                      - translation_cache: SQL translation cache size (default: 100, 0 to disable)
-                      - ttl_sweep_interval_s: Optional TTL background sweep interval
-                        in seconds (default: None = disabled). When set, a daemon
-                        thread periodically deletes documents expired under
-                        ``expireAfterSeconds`` indexes. File-based DBs only;
-                        ``:memory:`` skips the thread.
+            *args: Positional arguments forwarded to ``sqlite3.connect()``
+                (defaults to ``":memory:"`` for ``db_path`` when omitted).
+            **kwargs: Keyword arguments forwarded to ``sqlite3.connect()`` and
+                NeoSQLite-specific options, which are popped before connecting:
+                ``tokenizers`` (list of ``(name, path)`` tuples for FTS5
+                extensions), ``debug`` (bool), ``name`` (optional DB name),
+                ``_is_clone`` (internal clone flag), ``journal_mode`` (default
+                ``"WAL"``), ``auto_vacuum`` (default ``INCREMENTAL``; accepts
+                ``0``/``1``/``2`` or ``"NONE"``/``"FULL"``/``"INCREMENTAL"``),
+                ``translation_cache`` (SQL translation cache size, default
+                ``100``, ``0`` to disable), ``ttl_sweep_interval_s`` (optional
+                background TTL sweep interval in seconds for file-backed DBs),
+                ``codec_options``, ``read_preference``, ``write_concern``, and
+                ``read_concern``.
         """
         self._collections: dict[str, Collection] = {}
         self._tokenizers: list[tuple[str, str]] = kwargs.pop("tokenizers", [])
@@ -117,25 +124,23 @@ class Connection:
 
     @property
     def db_path(self) -> str:
-        """
-        Get the path to the database file.
+        """Get the path to the database file.
 
         Returns:
-            str: The database file path.
+            str: The database file path (or ``":memory:"``).
         """
         return self._db_path
 
     def connect(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Establish a connection to the SQLite database.
+        """Establish a connection to the SQLite database.
 
-        Configures the database connection with the provided arguments, sets up
-        SQLite-specific settings like isolation level and journal mode, and loads
-        custom FTS5 tokenizers if specified. This method does not return a value.
+        Closes any previously opened connection handle, opens a new
+        ``sqlite3.Connection``, applies connection pragmas and custom SQLite
+        functions, and runs auto_vacuum migration if required.
 
         Args:
-            *args: Positional arguments passed to sqlite3.connect().
-            **kwargs: Keyword arguments passed to sqlite3.connect().
+            *args: Positional arguments passed to ``sqlite3.connect()``.
+            **kwargs: Keyword arguments passed to ``sqlite3.connect()``.
         """
         # Close any previous handle so reconnecting doesn't leak it (#131).
         # Read self.__dict__ directly — getattr would route through
@@ -151,7 +156,13 @@ class Connection:
         self._check_and_migrate_autovacuum(*args, **kwargs)
 
     def _configure_connection(self) -> None:
-        """Apply PRAGMA settings and register custom functions on ``self.db``."""
+        """Apply PRAGMA settings and register custom functions on ``self.db``.
+
+        Configures ``auto_vacuum``, disables automatic ``isolation_level``,
+        sets ``journal_mode``, registers custom regex/math SQLite functions,
+        sets ``PRAGMA synchronous = NORMAL`` for WAL mode unless overridden by
+        ``_write_concern``, and loads any configured FTS5 tokenizer extensions.
+        """
         auto_vacuum = getattr(self, "auto_vacuum", AutoVacuumMode.INCREMENTAL)
         journal_mode = getattr(self, "journal_mode", JournalMode.WAL)
 
@@ -176,14 +187,33 @@ class Connection:
                 self.db.execute("SELECT load_extension(?)", (path,))
 
     def _register_custom_functions(self) -> None:
-        """Register custom SQLite functions, including regex operators."""
+        """Register custom SQLite functions, including regex and math ops."""
 
         def _regexp(pattern, text):
+            """Check whether ``pattern`` matches anywhere inside ``text``.
+
+            Args:
+                pattern: Regular expression pattern.
+                text: Input text value or ``None``.
+
+            Returns:
+                int: ``1`` when ``pattern`` matches ``text``, ``0`` otherwise.
+            """
             if text is None:
                 return 0
             return 1 if re.search(str(pattern), str(text)) is not None else 0
 
         def _regexp_find(pattern, text):
+            """Find the first regex match and return JSON metadata.
+
+            Args:
+                pattern: Regular expression pattern, or ``None``.
+                text: Input text value, or ``None``.
+
+            Returns:
+                str | None: JSON object with ``match``, ``idx``, and
+                    ``captures`` keys, or ``None`` if no match or NULL input.
+            """
             if text is None or pattern is None:
                 return None
             match = re.search(str(pattern), str(text))
@@ -198,6 +228,16 @@ class Connection:
             return None
 
         def _regexp_find_all(pattern, text):
+            """Find all regex matches and return a JSON array of metadata.
+
+            Args:
+                pattern: Regular expression pattern, or ``None``.
+                text: Input text value, or ``None``.
+
+            Returns:
+                str: JSON array string of match dictionaries, or ``"[]"`` on
+                    NULL input or no matches.
+            """
             if text is None or pattern is None:
                 return "[]"
             matches = [
@@ -211,6 +251,19 @@ class Connection:
             return json.dumps(matches)
 
         def _regexp_replace(text, pattern, replacement, count=0):
+            """Replace regex matches in ``text`` using ``re.sub``.
+
+            Args:
+                text: Input text string, or ``None``.
+                pattern: Regular expression pattern, or ``None``.
+                replacement: Replacement string, or ``None``.
+                count: Maximum replacements (``0`` replaces all matches).
+
+            Returns:
+                str | None: Updated string, ``text`` unchanged if ``pattern``
+                    or ``replacement`` is ``None``, or ``None`` if ``text`` is
+                    ``None``.
+            """
             if text is None:
                 return None
             if pattern is None or replacement is None:
@@ -241,7 +294,26 @@ class Connection:
             pass
 
         def _unary(func):
+            """Wrap a 1-argument math function for SQLite NULL/error safety.
+
+            Args:
+                func: Single-argument numeric callable.
+
+            Returns:
+                Callable: Wrapper returning ``None`` on NULL or math errors.
+            """
+
             def wrapper(value):
+                """Evaluate the wrapped unary math function safely.
+
+                Args:
+                    value: Numeric input value or ``None``.
+
+                Returns:
+                    Any: Result of ``func(value)``, or ``None`` if ``value``
+                        is ``None`` or raises ``TypeError``, ``ValueError``,
+                        or ``OverflowError``.
+                """
                 if value is None:
                     return None
                 try:
@@ -252,7 +324,27 @@ class Connection:
             return wrapper
 
         def _binary(func):
+            """Wrap a 2-argument math function for SQLite NULL/error safety.
+
+            Args:
+                func: Two-argument numeric callable.
+
+            Returns:
+                Callable: Wrapper returning ``None`` on NULL or math errors.
+            """
+
             def wrapper(left, right):
+                """Evaluate the wrapped binary math function safely.
+
+                Args:
+                    left: First numeric operand or ``None``.
+                    right: Second numeric operand or ``None``.
+
+                Returns:
+                    Any: Result of ``func(left, right)``, or ``None`` on
+                        ``None`` inputs or ``TypeError``/``ValueError``/
+                        ``OverflowError``.
+                """
                 if left is None or right is None:
                     return None
                 try:
@@ -263,6 +355,16 @@ class Connection:
             return wrapper
 
         def _log_two(base, number):
+            """Compute ``math.log(number, base)`` safely for SQLite.
+
+            Args:
+                base: Logarithm base or ``None``.
+                number: Numeric argument or ``None``.
+
+            Returns:
+                float | None: Logarithm of ``number`` in ``base``, or ``None``
+                    on ``None`` inputs or math errors.
+            """
             if base is None or number is None:
                 return None
             try:
@@ -271,6 +373,11 @@ class Connection:
                 return None
 
         def _pi():
+            """Return the mathematical constant pi.
+
+            Returns:
+                float: Value of ``math.pi``.
+            """
             return math.pi
 
         unary_functions = {
@@ -310,9 +417,16 @@ class Connection:
         self.db.create_function("pi", 0, _pi)
 
     def _check_and_migrate_autovacuum(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Check auto_vacuum setting and migrate if needed.
-        Called after initial connection is established.
+        """Check auto_vacuum setting and migrate if needed.
+
+        Called after initial connection is established. Skips clones and
+        in-memory databases.
+
+        Args:
+            *args: Positional connection arguments passed through to
+                ``_migrate_to_autovacuum``.
+            **kwargs: Keyword connection arguments passed through to
+                ``_migrate_to_autovacuum``.
         """
         if self._is_clone or self._db_path == ":memory:":
             return
@@ -326,10 +440,17 @@ class Connection:
         self._migrate_to_autovacuum(*args, **kwargs)
 
     def _migrate_to_autovacuum(self, *args: Any, **kwargs: Any) -> None:
-        """
-        Migrate database to a new auto_vacuum mode.
+        """Migrate database to a new auto_vacuum mode.
 
-        Delegates to migration.migrate_autovacuum() and then reconnects.
+        Checkpoints WAL, commits/closes the current handle, delegates to
+        ``migration.migrate_autovacuum()``, and reopens and reconfigures
+        ``self.db``.
+
+        Args:
+            *args: Positional arguments passed to ``sqlite3.connect()`` when
+                reconnecting.
+            **kwargs: Keyword arguments passed to ``migrate_autovacuum()`` and
+                ``sqlite3.connect()``.
         """
         old_path = self._db_path
 
@@ -369,18 +490,18 @@ class Connection:
         self._configure_connection()
 
     def cleanup(self) -> None:
-        """Clean up all collection resources associated with this connection."""
+        """Clean up all collection resources for this connection."""
         if hasattr(self, "_collections"):
             for collection in self._collections.values():
                 collection.cleanup()
 
     def close(self) -> None:
-        """
-        Close the database connection.
+        """Close the database connection.
 
-        Commits any pending transaction and properly closes the underlying SQLite
-        connection. This method ensures resources are released and the connection
-        is no longer usable after being called.
+        Stops the TTL sweeper thread if running, cleans up cached collections,
+        clears the JSONB capability cache, commits any pending transaction, and
+        closes the underlying SQLite connection. No-op for clones or already
+        closed connections.
         """
         if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
             return
@@ -420,11 +541,10 @@ class Connection:
         self._closed = True
 
     def _close_rollback(self) -> None:
-        """
-        Close the database connection, rolling back any pending transaction.
+        """Close the database connection, rolling back pending transactions.
 
-        This method is called from __del__ to prevent accidentally committing
-        partial work during garbage collection.
+        Called from ``__del__`` so garbage collection does not persist partial
+        uncommitted work. No-op for clones or already closed connections.
         """
         if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
             return
@@ -458,67 +578,61 @@ class Connection:
 
     @property
     def client(self) -> Self:
-        """
-        Get the MongoClient instance (returns self for NeoSQLite).
+        """Get the ``MongoClient``-compatible handle (returns ``self``).
 
         Returns:
-            Connection: The connection instance itself.
+            Self: The connection instance itself.
         """
         return self
 
     @property
     def codec_options(self) -> Any:
-        """
-        Get the codec options for this connection.
+        """Get the codec options stored on this connection.
 
         Returns:
-            Any: The codec options.
+            Any: The configured codec options, or ``None``.
         """
         return self._codec_options
 
     @property
     def read_preference(self) -> Any:
-        """
-        Get the read preference for this connection.
+        """Get the read preference stored on this connection.
 
         Returns:
-            Any: The read preference.
+            Any: The configured read preference, or ``None``.
         """
         return self._read_preference
 
     @property
     def write_concern(self) -> Any:
-        """
-        Get the write concern for this connection.
+        """Get the write concern stored on this connection.
 
         Returns:
-            Any: The write concern.
+            Any: The configured write concern, or ``None``.
         """
         return self._write_concern
 
     @property
     def read_concern(self) -> Any:
-        """
-        Get the read concern for this connection.
+        """Get the read concern stored on this connection.
 
         Returns:
-            Any: The read concern.
+            Any: The configured read concern, or ``None``.
         """
         return self._read_concern
 
     def __getitem__(self, name: str) -> Collection:
-        """
-        Access a collection by name.
+        """Access a collection by name via dictionary-style indexing.
 
-        Allows retrieving or creating a collection associated with this connection
-        using dictionary-style access. If the collection does not exist, it will be
-        created automatically.
+        Returns a cached ``Collection`` instance or creates one on first
+        access. GridFS dot-notation names ending in ``.files`` or ``.chunks``
+        are mapped to underscore-separated names (e.g., ``fs_files``).
 
         Args:
-            name (str): The name of the collection to access.
+            name: The name of the collection to access.
 
         Returns:
-            Collection: The collection instance associated with the given name.
+            Collection: The collection instance for ``name``.
         """
         if name not in self._collections:
             # Map GridFS dot notation (e.g. 'fs.files' -> 'fs_files')
@@ -532,15 +646,18 @@ class Connection:
         return self._collections[name]
 
     def __getattr__(self, name: str) -> Any:
-        """
-        Proxy attribute access to collection lookup.
+        """Proxy attribute access to collection lookup.
 
-        When an attribute is not found in the instance's dictionary, this method
-        attempts to retrieve it using the dictionary-style collection access (via
-        `__getitem__`). This enables both attribute and dictionary access to collections.
+        Returns an attribute from ``self.__dict__`` when present, otherwise
+        delegates to ``self[name]`` to provide PyMongo-style attribute access
+        to collections.
+
+        Args:
+            name: Attribute or collection name to resolve.
 
         Returns:
-            Any: The value retrieved from the collection, or the attribute if it exists.
+            Any: The attribute value from ``__dict__`` or the ``Collection``
+                for ``name``.
         """
         if name in self.__dict__:
             return self.__dict__[name]
@@ -552,20 +669,20 @@ class Connection:
         default_transaction_options: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> ClientSession:
-        """
-        Start a new client session for transactions.
+        """Start a new client session for transactions.
 
-        This method provides PyMongo-compatible session management by wrapping
-        SQLite's native ACID transactions.
+        Provides PyMongo-compatible session management backed by SQLite
+        transactions and savepoints.
 
         Args:
-            causal_consistency (bool, optional): Whether to enable causal consistency.
-                Ignored in NeoSQLite (stored for API compatibility).
-            default_transaction_options (dict, optional): Default transaction options.
-            **kwargs: Additional session arguments.
+            causal_consistency: Optional causal consistency flag (stored for
+                PyMongo API compatibility).
+            default_transaction_options: Optional mapping of default
+                transaction options for the session.
+            **kwargs: Additional session option keyword arguments.
 
         Returns:
-            ClientSession: A new ClientSession instance.
+            ClientSession: A new ``ClientSession`` bound to this connection.
         """
         options = kwargs.copy()
         if causal_consistency is not None:
@@ -576,36 +693,39 @@ class Connection:
         return ClientSession(self, options=options)
 
     def __enter__(self) -> Self:
-        """
-        Allow the connection to be used in a context manager.
+        """Enter the connection context manager.
 
         Returns:
-            Connection: The connection instance itself, enabling the 'with' statement
-                        to manage the connection's lifecycle.
+            Self: The connection instance itself.
         """
         return self
 
     def __exit__(
         self, exc_type: Any, exc_val: Any, exc_traceback: Any
     ) -> Literal[False]:
-        """
-        Ensure the connection is properly closed when exiting a context manager.
+        """Close the connection when exiting a context manager.
+
+        Args:
+            exc_type: Exception class if raised inside the ``with`` block, or
+                ``None``.
+            exc_val: Exception instance if raised, or ``None``.
+            exc_traceback: Exception traceback if raised, or ``None``.
 
         Returns:
-            Literal[False]: Indicates that the method does not handle exceptions
-                            and the connection should be closed.
+            Literal[False]: Always ``False`` so exceptions propagate normally.
         """
         self.close()
         return False
 
     def drop_collection(self, name: str) -> None:
-        """
-        Drop a collection (table) from the database.
+        """Drop a collection table and its associated metadata.
+
+        Drops the SQLite table if it exists, evicts any cached ``Collection``
+        object, removes matching rows from ``_neosqlite_ttl_indexes``, and
+        drops any FTS5 virtual and shadow tables for ``name``.
 
         Args:
-            name (str): The name of the collection (table) to drop. If the table
-                        does not exist, the operation is silently ignored due to
-                        the use of `IF EXISTS` in the SQL command.
+            name: The name of the collection to drop.
         """
         self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(name)}")
         # Evict the cached Collection so later access doesn't resurrect a
@@ -647,18 +767,18 @@ class Connection:
                 )
 
     def create_collection(self, name: str, **kwargs) -> Collection:
-        """
-        Create a new collection with specific options.
+        """Create a new collection with specific options.
 
         Args:
-            name (str): The name of the collection to create.
-            **kwargs: Additional options for collection creation.
+            name: The name of the collection to create.
+            **kwargs: Additional options forwarded to ``Collection``.
 
         Returns:
-            Collection: The newly created collection.
+            Collection: The newly created collection instance.
 
         Raises:
-            CollectionInvalid: If a collection with the given name already exists.
+            CollectionInvalid: If a collection named ``name`` is already
+                registered on this connection.
         """
         if name in self._collections:
             raise CollectionInvalid(f"Collection {name} already exists")
@@ -669,15 +789,15 @@ class Connection:
         return collection
 
     def get_collection(self, name: str, **kwargs) -> Collection:
-        """
-        Get a collection by name.
+        """Get a collection by name, creating a handle without forced DDL.
 
         Args:
-            name (str): The name of the collection to get.
-            **kwargs: Additional options for collection access.
+            name: The name of the collection to retrieve.
+            **kwargs: Additional options forwarded to ``Collection`` when the
+                handle is not yet cached.
 
         Returns:
-            Collection: The collection instance.
+            Collection: The collection instance for ``name``.
         """
         if name not in self._collections:
             self._collections[name] = Collection(
@@ -686,20 +806,18 @@ class Connection:
         return self._collections[name]
 
     def get_database(self, name: str | None = None, **kwargs: Any) -> Self:
-        """
-        Get a database handle (PyMongo compat).
+        """Get a database handle (PyMongo compatibility helper).
 
-        NeoSQLite is a single-database file: the ``Connection`` is both
-        client and database. This helper returns ``self`` so app code
-        written against ``MongoClient.get_database(name)`` keeps working.
+        NeoSQLite operates on a single database per connection, so this returns
+        ``self`` while logging a debug message if ``name`` differs from
+        ``self.name`` and ``self._db_path``.
 
         Args:
-            name: Optional database name. When given and different from the
-                current ``self.name``, it is accepted and ignored (debug-logged).
-            **kwargs: Extra options, accepted and ignored.
+            name: Optional database name (accepted and ignored).
+            **kwargs: Additional options (accepted and ignored).
 
         Returns:
-            Connection: Itself.
+            Self: The connection instance itself.
         """
         if name is not None and name != self.name and name != self._db_path:
             logger.debug(
@@ -711,17 +829,16 @@ class Connection:
         return self
 
     def drop_database(self, name: str | None = None, **kwargs: Any) -> None:
-        """
-        Drop the database (PyMongo compat, test/debug helper).
+        """Drop all user collections and internal helper tables.
 
-        Drops every user table in the SQLite file (all collections plus
-        internal ``_neosqlite_*`` / FTS helper tables, which are recreated
-        on demand). ``sqlite_%`` system tables are left alone.
+        Drops every discovered collection via ``drop_collection`` plus internal
+        ``_neosqlite_*`` and FTS helper tables, leaving ``sqlite_%`` system
+        tables untouched, then commits the connection.
 
         Args:
-            name: Optional database name. Accepted and ignored; the single
-                underlying file is always the drop target.
-            **kwargs: Extra options, accepted and ignored.
+            name: Optional database name (accepted and ignored; the single
+                underlying database is always targeted).
+            **kwargs: Additional options (accepted and ignored).
         """
         if name is not None and name != self.name and name != self._db_path:
             logger.debug(
@@ -753,15 +870,15 @@ class Connection:
         self.db.commit()
 
     def sweep_ttl_once(self) -> int:
-        """
-        Run one TTL sweep over all collections.
+        """Run one TTL expiration sweep over all file-backed collections.
 
-        Opens a short-lived helper connection to the same file (so the
-        background thread never shares the main ``sqlite3`` handle) and
-        calls ``purge_expired()`` on every collection with TTL specs.
+        Opens a short-lived helper connection to ``self._db_path`` so the
+        background thread never shares the main ``sqlite3`` handle, calls
+        ``purge_expired()`` on each collection with TTL specs, and commits.
 
         Returns:
-            int: Total number of expired documents deleted.
+            int: Total number of expired documents deleted across collections
+                (``0`` when closed or using ``":memory:"``).
         """
         if getattr(self, "_closed", False):
             return 0
@@ -802,6 +919,12 @@ class Connection:
         return total
 
     def _start_ttl_sweeper(self) -> None:
+        """Start the daemon TTL sweeper thread when configured.
+
+        Skips starting when ``_ttl_sweep_interval`` is ``None``, non-numeric,
+        non-positive, when ``_db_path`` is ``":memory:"``, or when the
+        connection is a clone.
+        """
         interval = getattr(self, "_ttl_sweep_interval", None)
         if interval is None:
             return
@@ -828,6 +951,7 @@ class Connection:
         thread.start()
 
     def _ttl_sweep_loop(self) -> None:
+        """Periodically execute ``sweep_ttl_once()`` until stopped."""
         interval = float(self._ttl_sweep_interval or 60.0)
         while not self._ttl_stop.wait(interval):
             try:
@@ -836,6 +960,7 @@ class Connection:
                 logger.debug("TTL sweep loop error: %s", exc)
 
     def _stop_ttl_sweeper(self) -> None:
+        """Signal the TTL sweeper thread to stop and wait briefly for exit."""
         stop = getattr(self, "_ttl_stop", None)
         if stop is not None:
             stop.set()
@@ -845,15 +970,15 @@ class Connection:
         self._ttl_thread = None
 
     def rename_collection(self, old_name: str, new_name: str) -> None:
-        """
-        Rename a collection.
+        """Rename an existing collection and update its TTL metadata.
 
         Args:
-            old_name (str): The current name of the collection.
-            new_name (str): The new name for the collection.
+            old_name: Current name of the collection.
+            new_name: Target new name for the collection.
 
         Raises:
-            CollectionInvalid: If the old collection doesn't exist or new name already exists.
+            CollectionInvalid: If ``old_name`` does not exist or ``new_name``
+                already exists in ``sqlite_master``.
         """
         exists_row = self.db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -887,12 +1012,11 @@ class Connection:
             pass
 
     def list_collection_names(self) -> list[str]:
-        """
-        List all collection names in the database.
+        """List all user collection names in the database.
 
         Returns:
-            list[str]: A list of all collection names in the database,
-            excluding internal SQLite tables and NeoSQLite internal tables.
+            list[str]: Names of tables in ``sqlite_master`` excluding SQLite
+                system tables and NeoSQLite internal tables.
         """
         cursor = self.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
@@ -904,12 +1028,12 @@ class Connection:
         ]
 
     def list_collections(self) -> list[dict[str, Any]]:
-        """
-        Get detailed information about collections in the database.
+        """Get metadata for all user collections in the database.
 
         Returns:
-            list[dict[str, Any]]: A list of dictionaries containing collection information.
-                                Each dictionary has 'name' and 'options' keys.
+            list[dict[str, Any]]: List of dictionaries containing ``"name"``
+                and ``"options"`` (the table's SQL DDL from
+                ``sqlite_master``), excluding internal tables.
         """
         cursor = self.db.execute(
             "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
@@ -927,43 +1051,35 @@ class Connection:
     def command(
         self, command: str | dict[str, Any], value: Any = None, **kwargs: Any
     ) -> dict[str, Any]:
-        """
-        Issue a database command and return the response.
+        """Issue a database command and return the response.
 
-        This method provides PyMongo-compatible command execution for SQLite.
-        It supports various commands including PRAGMA commands, introspection,
-        and utility commands.
+        Provides PyMongo-compatible command execution for SQLite, dispatching
+        built-in administrative/diagnostic commands (such as ``ping``,
+        ``serverStatus``, ``listCollections``, ``collStats``, ``dbStats``,
+        ``compact``, ``vacuum``, ``validate``, ``aggregate``, and
+        ``query_only``) and falling back to safe PRAGMA evaluation.
 
         Args:
-            command: The command to execute. Can be:
-                    - A string (e.g., "table_info", "integrity_check")
-                    - A dict with command name as key (e.g., {"ping": 1})
-            value: Optional command value (for string commands)
-            **kwargs: Additional command arguments
+            command: Command name string (e.g., ``"table_info"``) or
+                single-entry command dictionary (e.g., ``{"ping": 1}``).
+            value: Optional command value converted into ``{command: value}``
+                when ``command`` is a string.
+            **kwargs: Additional command arguments (for example, ``dryRun``
+                or ``freeSpaceTargetMB`` for ``compact``).
 
         Returns:
-            dict[str, Any]: Command response
+            dict[str, Any]: Command response dictionary, typically with
+                ``"ok": 1`` on success or ``"ok": 0`` with ``"errmsg"`` on
+                error.
 
-        compact Command:
-            MongoDB-compatible compact implementation with NeoSQLite extensions.
-
-            Args:
-                collection: Collection name (ignored, operates on entire database)
-                dryRun: If true, returns estimate without actually compacting
-                freeSpaceTargetMB: Target in MB (default: 20). Only compacts if
-                    free space >= threshold. Uses incremental vacuum in batches.
-                    Set to 0 for full VACUUM instead of incremental.
-                comment: Optional comment (ignored, for MongoDB compatibility)
-
-            Returns:
-                dryRun: {"estimatedBytesFreed": <bytes>, "ok": 1}
-                compact: {"bytesFreed": <bytes>, "ok": 1}
+        Raises:
+            TypeError: If ``command`` is neither a ``str`` nor a ``dict``.
 
         Example:
             >>> db = Connection("test.db")
             >>> result = db.command("ping")
             >>> print(result)
-            {'ok': 1.0}
+            {'ok': 1}
         """
         # If command is a string and value is provided, it's equivalent to {command: value}
         if isinstance(command, str) and value is not None:
@@ -991,20 +1107,19 @@ class Connection:
     def cursor_command(
         self, command: str | dict[str, Any], value: Any = None, **kwargs: Any
     ) -> AggregationCursor:
-        """
-        Execute a database command and return a cursor for its results.
+        """Execute a database command and return a cursor for its results.
 
-        This method provides PyMongo-compatible cursor-based command execution.
-        It wraps the results of `command()` in an `AggregationCursor`, allowing
-        them to be iterated.
+        Executes ``self.command(...)`` and wraps extracted result items
+        (``collections``, ``columns``, ``result``, ``cursor.firstBatch``, or
+        the response dict itself) in a pre-executed ``AggregationCursor``.
 
         Args:
-            command: The command to execute.
-            value: Optional command value.
-            **kwargs: Additional command arguments.
+            command: Command name string or command dictionary.
+            value: Optional command value when ``command`` is a string.
+            **kwargs: Additional command arguments passed to ``command()``.
 
         Returns:
-            AggregationCursor: A cursor over the command results.
+            AggregationCursor: Pre-populated cursor over the command results.
         """
         result = self.command(command, value=value, **kwargs)
 
@@ -1035,17 +1150,17 @@ class Connection:
         return cursor
 
     def dereference(self, dbref: dict[str, Any]) -> dict[str, Any] | None:
-        """
-        Resolve a DBRef object.
+        """Resolve a DBRef dictionary to its referenced document.
 
-        This method provides PyMongo-compatible DBRef resolution by performing
-        a `find_one` on the target collection using the provided `$id`.
+        Performs ``find_one({"_id": dbref["$id"]})`` on the collection named
+        by ``dbref["$ref"]``.
 
         Args:
-            dbref: A dictionary representing a DBRef with '$ref' and '$id' keys.
+            dbref: Dictionary containing ``"$ref"`` and ``"$id"`` keys.
 
         Returns:
-            dict[str, Any] | None: The referenced document, or None if not found.
+            dict[str, Any] | None: The referenced document, or ``None`` if
+                ``dbref`` is invalid or no matching document is found.
         """
         if not isinstance(dbref, dict):
             return None
@@ -1065,37 +1180,27 @@ class Connection:
         write_concern: Any | None = None,
         read_concern: Any | None = None,
     ) -> Self:
-        """
-        Get a clone of this database with different options.
+        """Return a shallow clone of this connection with updated options.
 
-        This method returns a new Connection instance with the specified options.
-        For PyMongo API compatibility, the options are stored but not actively
-        used since SQLite has different semantics.
+        Shares the same underlying ``sqlite3.Connection`` and a shallow copy
+        of ``_collections`` while storing PyMongo-compatible option attributes
+        without mutating connection PRAGMAs on the shared handle.
 
         Args:
-            codec_options (Any, optional): Codec options for encoding/decoding.
-                Ignored in NeoSQLite (stored for API compatibility).
-            read_preference (Any, optional): Read preference for replica sets.
-                Ignored in NeoSQLite (stored for API compatibility).
-            write_concern (Any, optional): Write concern for durability settings.
-                Stored for API compatibility.
-            read_concern (Any, optional): Read concern for consistency settings.
-                Ignored in NeoSQLite (stored for API compatibility).
+            codec_options: Codec options stored for PyMongo API compatibility.
+            read_preference: Read preference stored for API compatibility.
+            write_concern: Write concern stored for API compatibility.
+            read_concern: Read concern stored for API compatibility.
 
         Returns:
-            Connection: A new Connection instance with the same underlying database
-                       but with the specified options stored.
-
-        Note:
-            NeoSQLite stores these options for PyMongo API compatibility, but
-            they don't affect SQLite behavior since SQLite doesn't have replica
-            sets, codec options, or the same consistency/durability model.
+            Self: A cloned ``Connection`` sharing ``self.db`` with the new
+                option attributes attached.
 
         Example:
             >>> db = Connection("test.db")
             >>> db_with_options = db.with_options(
             ...     write_concern={"w": "majority"},
-            ...     read_preference={"mode": "primaryPreferred"}
+            ...     read_preference={"mode": "primaryPreferred"},
             ... )
         """
         # Return a new Connection instance that shares the same database connection.
@@ -1126,15 +1231,15 @@ class Connection:
         return clone
 
     def _apply_write_concern(self, write_concern: Any) -> None:
-        """
-        Apply write concern to the underlying SQLite connection via PRAGMAs.
+        """Apply write concern to the underlying SQLite connection via PRAGMAs.
 
-        - w: 0 -> PRAGMA synchronous = OFF
-        - w: 1 -> PRAGMA synchronous = NORMAL
-        - j: True -> PRAGMA synchronous = FULL
+        Maps ``w=0`` to ``PRAGMA synchronous = OFF``, ``w=1`` to
+        ``PRAGMA synchronous = NORMAL``, and truthy ``j`` to
+        ``PRAGMA synchronous = FULL``.
 
         Args:
-            write_concern (Any): The write concern to apply (dict or WriteConcern object).
+            write_concern: ``WriteConcern`` instance or dict specifying ``w``
+                and/or ``j`` flags.
         """
         if not write_concern:
             return
@@ -1163,23 +1268,17 @@ class Connection:
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
-        """
-        Context manager for handling database transactions.
+        """Context manager for handling top-level database transactions.
 
-        Ensures atomicity by beginning a transaction on entry, committing on
-        successful exit, and rolling back in case of exceptions. This allows
-        using the connection in a 'with' statement to manage transaction
-        boundaries safely.
+        Begins a SQLite transaction on entry, commits on normal exit, and rolls
+        back if an exception is raised inside the block.
 
-        Yields control to the block, and automatically commits or rolls back
-        based on execution outcome.
+        Yields:
+            None: Control to the caller inside the active transaction.
 
         Raises:
-            sqlite3.OperationalError: If a transaction is already active.
-                Nesting is refused *before* touching connection state — the
-                previous behavior issued BEGIN (which fails) and then rolled
-                back unconditionally, destroying the outer transaction's
-                pending work (#93).
+            sqlite3.OperationalError: If a transaction is already active on
+                this connection (refused before altering transaction state).
         """
         if self.db.in_transaction:
             raise sqlite3.OperationalError(
@@ -1196,12 +1295,10 @@ class Connection:
             raise
 
     def __del__(self):
-        """
-        Ensure the database connection is closed when the object is garbage collected.
-        Uses _close_rollback to rollback (not commit) any pending transaction,
-        since GC-triggered cleanup should not persist partial work.
-        Wrapped in try/except to avoid crashes during interpreter shutdown when
-        module-level imports (like sqlite3) may already be None.
+        """Close the connection on garbage collection via ``_close_rollback``.
+
+        Rolls back any uncommitted transaction instead of committing partial
+        work, and swallows shutdown errors when module globals are torn down.
         """
         try:
             self._close_rollback()
@@ -1221,12 +1318,31 @@ class Connection:
 def _command_ping(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``ping`` command to verify connection liveness.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Dictionary ``{"ok": 1}``.
+    """
     return {"ok": 1}
 
 
 def _command_serverstatus(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``serverStatus`` command returning SQLite and PID metadata.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Status dictionary with ``ok``, ``version``,
+            ``process``, and ``pid``.
+    """
     return {
         "ok": 1,
         "version": sqlite3.sqlite_version,
@@ -1238,6 +1354,16 @@ def _command_serverstatus(
 def _command_listcollections(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``listCollections`` command.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Dictionary with ``ok`` and ``collections`` listing
+            ``{"name": <collection_name>}`` entries.
+    """
     collections = self.list_collection_names()
     return {
         "ok": 1,
@@ -1248,6 +1374,22 @@ def _command_listcollections(
 def _command_table_info(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``table_info`` command using ``PRAGMA table_info``.
+
+    Args:
+        command: Command payload dictionary optionally providing
+            ``"table_info"``.
+        **kwargs: Keyword arguments; ``table`` may supply the target table
+            name.
+
+    Returns:
+        dict[str, Any]: Dictionary with ``ok`` and ``columns`` metadata dicts
+            (``cid``, ``name``, ``type``, ``notnull``, ``default``, ``pk``).
+
+    Raises:
+        ValueError: If no table name is supplied via ``kwargs["table"]`` or
+            ``command["table_info"]``.
+    """
     table_name = kwargs.get("table")
     if not table_name and isinstance(command, dict):
         table_name = command.get("table_info")
@@ -1273,6 +1415,16 @@ def _command_table_info(
 def _command_integrity_check(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``integrity_check`` command via ``PRAGMA integrity_check``.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Dictionary with ``ok`` and ``result`` containing the
+            check output strings.
+    """
     cursor = self.db.execute("PRAGMA integrity_check")
     result = cursor.fetchall()
     return {"ok": 1, "result": [row[0] for row in result]}
@@ -1281,6 +1433,21 @@ def _command_integrity_check(
 def _command_validate(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``validate`` command using ``PRAGMA integrity_check``.
+
+    Runs table-scoped ``PRAGMA integrity_check`` when a collection name is
+    provided, or database-wide otherwise, reporting any non-``"ok"`` lines.
+
+    Args:
+        command: Command payload dictionary optionally providing
+            ``"validate"``.
+        **kwargs: Keyword arguments; ``validate`` may specify the target
+            collection name.
+
+    Returns:
+        dict[str, Any]: Dictionary containing ``ok`` (``1`` when valid, ``0``
+            otherwise), ``result``, ``errors``, and ``valid``.
+    """
     collection_name = kwargs.get("validate")
     if not collection_name and isinstance(command, dict):
         collection_name = command.get("validate")
@@ -1303,6 +1470,17 @@ def _command_validate(
 def _command_foreign_key_check(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle ``foreign_key_check`` using ``PRAGMA foreign_key_check``.
+
+    Args:
+        command: Command payload dictionary (unused).
+        **kwargs: Optional keyword arguments; ``table`` limits the check to a
+            single table.
+
+    Returns:
+        dict[str, Any]: Dictionary containing ``ok`` and ``violations`` list
+            with ``table``, ``rowid``, ``parent``, and ``fkid`` keys.
+    """
     table_name = kwargs.get("table")
     if table_name:
         cursor = self.db.execute(
@@ -1323,6 +1501,22 @@ def _command_foreign_key_check(
 def _command_index_list(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``index_list`` command using ``PRAGMA index_list``.
+
+    Args:
+        command: Command payload dictionary optionally providing
+            ``"index_list"``.
+        **kwargs: Keyword arguments; ``table`` may supply the target table
+            name.
+
+    Returns:
+        dict[str, Any]: Dictionary with ``ok`` and ``indexes`` metadata dicts
+            (``seq``, ``name``, ``unique``, ``origin``, ``partial``).
+
+    Raises:
+        ValueError: If no table name is supplied via ``kwargs["table"]`` or
+            ``command["index_list"]``.
+    """
     table_name = kwargs.get("table")
     if not table_name and isinstance(command, dict):
         table_name = command.get("index_list")
@@ -1347,6 +1541,16 @@ def _command_index_list(
 def _command_vacuum(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``vacuum`` command by executing SQLite ``VACUUM``.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Status dict
+            ``{"ok": 1, "message": "VACUUM completed"}``.
+    """
     self.db.execute("VACUUM")
     return {"ok": 1, "message": "VACUUM completed"}
 
@@ -1354,6 +1558,21 @@ def _command_vacuum(
 def _command_compact(
     self: Connection, _command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``compact`` command via incremental vacuum or ``VACUUM``.
+
+    Supports ``dryRun`` (returns ``estimatedBytesFreed`` without modifying
+    pages) and ``freeSpaceTargetMB`` (defaults to ``20``; ``0`` forces a full
+    ``VACUUM``, while positive values trigger batched
+    ``PRAGMA incremental_vacuum`` only when free bytes meet the threshold).
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **kwargs: Optional ``dryRun`` and ``freeSpaceTargetMB`` arguments.
+
+    Returns:
+        dict[str, Any]: Response dictionary with ``ok`` and either
+            ``estimatedBytesFreed`` (for ``dryRun``) or ``bytesFreed``.
+    """
     dry_run = kwargs.get("dryRun", False)
     free_space_target_mb = kwargs.get("freeSpaceTargetMB")
 
@@ -1398,6 +1617,18 @@ def _command_compact(
 def _command_wal_checkpoint(
     self: Connection, _command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle ``wal_checkpoint`` using ``PRAGMA wal_checkpoint(<mode>)``.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **kwargs: Optional ``mode`` argument (``"PASSIVE"``, ``"FULL"``,
+            ``"RESTART"``, or ``"TRUNCATE"``; defaults to ``"PASSIVE"``).
+
+    Returns:
+        dict[str, Any]: Dictionary with ``ok``, ``mode``, ``busy``, ``log``,
+            and ``checkpointed`` counts, or ``{"ok": 0, "errmsg": ...}`` if
+            ``mode`` is invalid.
+    """
     mode = str(kwargs.get("mode", "PASSIVE")).upper()
     if mode not in ("PASSIVE", "FULL", "RESTART", "TRUNCATE"):
         return {"ok": 0, "errmsg": f"Invalid wal_checkpoint mode: {mode}"}
@@ -1414,6 +1645,17 @@ def _command_wal_checkpoint(
 def _command_cache_size(
     self: Connection, _command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``cache_size`` command to get or set ``PRAGMA cache_size``.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **kwargs: Optional ``pages`` integer/value to set ``cache_size``; when
+            omitted, queries the current setting.
+
+    Returns:
+        dict[str, Any]: Response dictionary with ``ok`` and either
+            ``message`` (when setting) or ``cache_size`` (when querying).
+    """
     pages = kwargs.get("pages")
     if pages is not None:
         self.db.execute(f"PRAGMA cache_size = {pages}")
@@ -1425,6 +1667,17 @@ def _command_cache_size(
 def _command_busy_timeout(
     self: Connection, _command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle ``busy_timeout`` to get or set ``PRAGMA busy_timeout``.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **kwargs: Optional ``milliseconds`` value to set ``busy_timeout``;
+            when omitted, queries the current timeout.
+
+    Returns:
+        dict[str, Any]: Response dictionary with ``ok`` and either
+            ``message`` (when setting) or ``busy_timeout`` (when querying).
+    """
     ms = kwargs.get("milliseconds")
     if ms is not None:
         self.db.execute(f"PRAGMA busy_timeout = {ms}")
@@ -1436,6 +1689,16 @@ def _command_busy_timeout(
 def _command_analyze(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``analyze`` command by executing SQLite ``ANALYZE``.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Status dict
+            ``{"ok": 1, "message": "ANALYZE completed"}``.
+    """
     self.db.execute("ANALYZE")
     return {"ok": 1, "message": "ANALYZE completed"}
 
@@ -1443,6 +1706,20 @@ def _command_analyze(
 def _command_reindex(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle ``reIndex`` by executing SQLite ``REINDEX``.
+
+    Reindexes a single table/collection when specified via ``reIndex`` or
+    ``reindex``, or reindexes the entire database otherwise.
+
+    Args:
+        command: Command payload dictionary optionally providing
+            ``"reindex"``.
+        **kwargs: Optional ``reIndex`` argument naming the target collection.
+
+    Returns:
+        dict[str, Any]: Status dict
+            ``{"ok": 1, "message": "REINDEX completed"}``.
+    """
     collection_name = kwargs.get("reIndex")
     if not collection_name and isinstance(command, dict):
         collection_name = command.get("reindex")
@@ -1456,6 +1733,27 @@ def _command_reindex(
 def _command_collstats(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``collStats`` command for collection size and index stats.
+
+    Gathers document count, total ``LENGTH(data)`` bytes, average object size,
+    and (when SQLite ``dbstat`` is available) storage page sizes per table and
+    index.
+
+    Args:
+        command: Command payload dictionary optionally providing
+            ``"collstats"``.
+        **kwargs: Optional ``collection`` argument naming the target
+            collection.
+
+    Returns:
+        dict[str, Any]: MongoDB-compatible ``collStats`` dictionary with
+            ``ok``, ``ns``, ``count``, ``size``, ``avgObjSize``,
+            ``storageSize``, ``totalIndexSize``, and ``indexSizes``.
+
+    Raises:
+        ValueError: If no collection name is provided via
+            ``kwargs["collection"]`` or ``command["collstats"]``.
+    """
     collection_name = kwargs.get("collection")
     if not collection_name and isinstance(command, dict):
         collection_name = command.get("collstats")
@@ -1535,6 +1833,19 @@ def _command_collstats(
 def _command_dbstats(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``dbStats`` command returning database-level statistics.
+
+    Aggregates page counts, non-FTS collection object and index counts, index
+    size via ``dbstat`` (falling back to 20% of storage size), view counts,
+    and filesystem disk usage for file-backed databases.
+
+    Args:
+        _command: Command payload dictionary (unused).
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: MongoDB-compatible ``dbStats`` response dictionary.
+    """
     page_count = self.db.execute("PRAGMA page_count").fetchone()[0]
     page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
 
@@ -1632,6 +1943,22 @@ def _command_dbstats(
 def _command_aggregate(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
+    """Handle the ``aggregate`` database command on a collection.
+
+    Args:
+        command: Command payload dictionary optionally providing
+            ``"aggregate"``.
+        **kwargs: Keyword arguments supporting ``aggregate`` (collection name),
+            ``pipeline`` (aggregation stage list), and ``explain`` (bool).
+
+    Returns:
+        dict[str, Any]: Query explanation dictionary when ``explain`` is
+            truthy, or ``{"ok": 1, "result": <documents>}``.
+
+    Raises:
+        ValueError: If no collection name is provided via
+            ``kwargs["aggregate"]`` or ``command["aggregate"]``.
+    """
     collection_name = kwargs.get("aggregate")
     if not collection_name and isinstance(command, dict):
         collection_name = command.get("aggregate")
@@ -1654,6 +1981,21 @@ def _command_aggregate(
 def _command_query_only(
     self: Connection, command: dict, **__: Any
 ) -> dict[str, Any]:
+    """Handle the ``query_only`` command to get or set ``PRAGMA query_only``.
+
+    When ``command`` is a dict containing a non-``None`` ``"query_only"``
+    value (bool, string such as ``"ON"``/``"TRUE"``/``"1"``, or number),
+    updates ``PRAGMA query_only``. Otherwise reads the current setting.
+
+    Args:
+        command: Command payload dictionary optionally containing
+            ``"query_only"``.
+        **__: Additional unused keyword arguments.
+
+    Returns:
+        dict[str, Any]: Dictionary with ``ok`` and boolean ``query_only``, or
+            an error dict when the supplied value has an unsupported type.
+    """
     pragma_value = (
         command.get("query_only") if isinstance(command, dict) else None
     )
@@ -1676,7 +2018,19 @@ def _command_query_only(
 
 
 def _command_default(self: Connection, cmd_name: str) -> dict[str, Any]:
-    """Fallback handler: validate and run as a PRAGMA."""
+    """Fallback handler: validate ``cmd_name`` and run it as a PRAGMA.
+
+    Rejects names that do not match ``^[A-Za-z_][A-Za-z0-9_]*$``, executes
+    ``PRAGMA <cmd_name>``, and maps result rows into dictionaries keyed by
+    column names from ``cursor.description``.
+
+    Args:
+        cmd_name: Candidate SQLite PRAGMA identifier.
+
+    Returns:
+        dict[str, Any]: Dictionary ``{"ok": 1, "result": [...]}`` on success,
+            or ``{"ok": 0, "errmsg": ...}`` if validation or execution fails.
+    """
     if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", cmd_name):
         return {"ok": 0, "errmsg": f"Invalid command name: {cmd_name}"}
     try:

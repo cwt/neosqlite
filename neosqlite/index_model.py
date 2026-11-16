@@ -8,16 +8,12 @@ from .collection.cursor import ASCENDING
 
 
 class IndexModel:
-    """Create an Index instance.
+    """Specification for a collection index passed to ``create_indexes()``.
 
-    For use with create_indexes().
-
-    Takes either a single key or a list containing (key, direction) pairs
-    or keys. If no direction is given, ASCENDING will be assumed.
-
-    Parameters:
-        keys: A single key or a list of (key, direction) pairs or keys.
-        **kwargs: Additional index creation options (unique, sparse, etc.).
+    Wraps an index key specification (a single field name, a list of field
+    names, or a list of ``(field, direction)`` tuples) together with optional
+    index creation flags such as ``unique`` or ``sparse``. When no direction
+    is supplied for a key, ``ASCENDING`` is assumed.
     """
 
     def __init__(
@@ -25,12 +21,30 @@ class IndexModel:
         keys: str | list[str] | list[tuple[str, int]],
         **kwargs: Any,
     ):
+        """Initialize an ``IndexModel`` with keys and index options.
+
+        Args:
+            keys: Single field name, list of field names, or list of
+                ``(key, direction)`` tuples specifying indexed fields.
+            **kwargs: Additional index options (e.g., ``unique``, ``sparse``,
+                ``name``) stored verbatim for the index document.
+        """
         self._keys = keys
         self._kwargs = kwargs
 
     @property
     def document(self) -> dict[str, Any]:
-        """An index document suitable for passing to the createIndexes command."""
+        """Build an index specification document for ``createIndexes``.
+
+        Converts a string ``keys`` value into ``{keys: ASCENDING}`` and a
+        list of strings or ``(key, direction)`` tuples into a mapping under
+        ``"key"`` (defaulting plain string entries to ``ASCENDING``), then
+        merges any keyword options passed at initialization.
+
+        Returns:
+            dict[str, Any]: Dictionary containing the ``"key"`` mapping and
+                any additional index creation options.
+        """
         doc: dict[str, Any] = {}
 
         # Build the key specification

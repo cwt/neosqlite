@@ -9,24 +9,20 @@ logger = logging.getLogger(__name__)
 
 
 def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
-    """
-    Determine if a pipeline can be processed with temporary tables.
+    """Determine whether a pipeline can run using temporary SQLite tables.
 
-    This function checks if all stages in an aggregation pipeline are supported
-    by the temporary table processing approach. It verifies that each stage in
-    the pipeline is one of the supported stage types.
-
-    Additionally, it handles special cases for text search operations:
-    - Pure text search operations are supported with hybrid processing
-    - Text search with simple unwind operations are supported (uses Python text search on temp tables)
-    - Complex nested unwinds (multiple unwinds or dotted paths) fall back to Python
+    Verifies that every stage name is supported by Tier-2 temporary-table
+    processing, rejects ``$match`` stages containing uncompilable
+    ``$jsonSchema`` predicates, requires SQLite 3.25.0+ for window stages
+    (``$setWindowFields`` and ``$fill``), and rejects dotted nested
+    ``$unwind`` paths.
 
     Args:
-        pipeline (list[dict[str, Any]]): List of aggregation pipeline stages to check
+        pipeline: List of aggregation pipeline stage dictionaries to inspect.
 
     Returns:
-        bool: True if all stages in the pipeline are supported and can be processed
-              with temporary tables, False otherwise
+        bool: True if the pipeline can be executed with temporary tables,
+            False otherwise.
     """
     # Check if all stages are supported in Tier-2 SQL temp-table execution
     supported_stages = {
@@ -100,24 +96,25 @@ def execute_2nd_tier_aggregation(
     pipeline: list[dict[str, Any]],
     batch_size: int = 101,
 ) -> list[dict[str, Any]]:
-    """
-    Execute aggregation pipeline using temporary table approach for complex pipelines.
+    """Execute an aggregation pipeline using Tier-2 temporary tables.
 
-    This function is designed to be called as the second tier in a three-tier processing system:
-    1. First tier (QueryEngine): Try existing SQL optimization for simple pipelines
-    2. Second tier (this function): Try temporary table approach for complex pipelines
-    3. Third tier (QueryEngine): Fall back to Python implementation for unsupported operations
-
-    This function focuses specifically on processing complex pipelines that the current
-    NeoSQLite SQL optimization cannot handle efficiently, using temporary tables for better performance.
+    Acts as the second tier in NeoSQLite's three-tier aggregation strategy
+    between single-query SQL (Tier 1) and Python fallback (Tier 3). Checks
+    ``get_force_fallback()`` and ``can_process_with_temporary_tables()``, then
+    runs ``TemporaryTableAggregationProcessor.process_pipeline``.
 
     Args:
-        query_engine: The NeoSQLite QueryEngine instance to use for processing
-        pipeline (list[dict[str, Any]]): List of aggregation pipeline stages to process
-        batch_size (int): Batch size for fetching results from temporary tables
+        query_engine: ``QueryEngine`` instance owning the target collection.
+        pipeline: List of aggregation pipeline stage dictionaries to execute.
+        batch_size: Number of documents per batch when reading results.
 
     Returns:
-        list[dict[str, Any]]: List of result documents after processing the pipeline
+        list[dict[str, Any]]: Aggregated result documents produced by the
+            pipeline.
+
+    Raises:
+        NotImplementedError: If forced fallback is enabled, the pipeline is
+            unsupported by temporary tables, or processing fails.
     """
     # Check if we should force fallback for benchmarking/debugging
     from ..query_helper import get_force_fallback

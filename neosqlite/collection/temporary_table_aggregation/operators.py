@@ -1,3 +1,5 @@
+"""Composite operator mixin for temporary table aggregation."""
+
 from __future__ import annotations
 
 from .operators_advanced import OperatorsAdvancedMixin
@@ -18,4 +20,10 @@ class OperatorsMixin(
     OperatorsTextMixin,
     OperatorsAdvancedMixin,
 ):
-    """Composes all operator mixins. No method bodies here; see the mixin modules."""
+    """Compose all temporary-table aggregation stage operator mixins.
+
+    Combines ``OperatorsMatchMixin``, ``OperatorsLookupMixin``,
+    ``OperatorsSortProjMixin``, ``OperatorsGroupMixin``,
+    ``OperatorsTextMixin``, and ``OperatorsAdvancedMixin`` into a single
+    mixin class without defining additional method bodies here.
+    """

@@ -33,7 +33,17 @@ from ..type_utils import _hashable_group_key
 
 
 def _addtoset_key(value: Any) -> Any:
-    """Hashable canonical form for $addToSet membership (#155)."""
+    """Return a hashable canonical key for ``$addToSet`` membership.
+
+    Tags values by type so booleans, numbers, dicts, lists, and strings do not
+    collide in Python sets, and normalizes numeric types via ``float`` (#155).
+
+    Args:
+        value: Document field or evaluated expression value to key.
+
+    Returns:
+        Any: Hashable tagged tuple suitable for set membership checks.
+    """
     if isinstance(value, dict):
         return ("d", json.dumps(value, sort_keys=True, default=str))
     if isinstance(value, list):
@@ -48,8 +58,7 @@ def _addtoset_key(value: Any) -> Any:
 
 
 class AggregationMixin(SqlAggregationMixin):
-    """
-    Mixin class providing aggregation pipeline methods.
+    """Mixin class providing aggregation pipeline methods.
 
     This mixin assumes it will be used with a class that has the following:
 
@@ -86,20 +95,25 @@ class AggregationMixin(SqlAggregationMixin):
         group_query: dict[str, Any],
         docs: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """
-        Process the $group stage of an aggregation pipeline.
+        """Process the ``$group`` stage of an aggregation pipeline in Python.
 
-        This method groups documents by a specified field and performs specified
-        accumulator operations on other fields.
+        Groups documents by ``_id`` (literal ``None``, expression, or field
+        path) while preserving the original unhashed ``_id`` value in output
+        documents. Supports ``$count``, ``$sum``, ``$avg``, ``$min``,
+        ``$max``, ``$push``, ``$addToSet``, ``$first``, ``$last``,
+        ``$mergeObjects``, ``$stdDevPop``, ``$stdDevSamp``, ``$firstN``,
+        ``$lastN``, ``$minN``, and ``$maxN``.
 
         Args:
-            group_query (dict[str, Any]): A dictionary representing the $group
-                                          stage of the aggregation pipeline.
-            docs (list[dict[str, Any]]): A list of documents to be grouped.
+            group_query: Dictionary representing the ``$group`` stage spec.
+            docs: Input documents to group and aggregate.
 
         Returns:
-            list[dict[str, Any]]: A list of grouped documents with applied
-                                  accumulator operations.
+            list[dict[str, Any]]: Grouped documents with evaluated
+                accumulator fields.
+
+        Raises:
+            NotImplementedError: If the ``$accumulator`` operator is used.
         """
 
         grouped_docs: dict[Any, dict[str, Any]] = {}
@@ -428,19 +442,20 @@ class AggregationMixin(SqlAggregationMixin):
         docs: list[dict[str, Any]],
         batch_size: int = 101,
     ) -> str:
-        """
-        Run a sub-pipeline (e.g., for $facet) on a list of documents.
+        """Run a sub-pipeline (e.g. for ``$facet``) on a list of documents.
 
-        Uses tier optimization (Tier-1/Tier-2/Tier-3) for each sub-pipeline.
-        Results are streamed to a temporary table in batches to avoid memory issues.
+        Creates a temporary ``Collection`` and temporary result table,
+        processes ``docs`` in batches via ``Collection.aggregate`` so each
+        sub-pipeline uses normal tier optimization, and stores serialized
+        results in the temporary SQLite table.
 
         Args:
-            sub_pipeline: List of pipeline stages to execute
-            docs: Input documents
-            batch_size: Number of documents to process in each batch
+            sub_pipeline: List of pipeline stage dictionaries to execute.
+            docs: Input documents to process (unwrapping ``__doc__`` if set).
+            batch_size: Maximum number of documents per processing batch.
 
         Returns:
-            Name of the temporary table containing results
+            str: Name of the temporary SQLite table holding result rows.
         """
         # Create a temporary in-memory collection to run the sub-pipeline
         # This allows each sub-pipeline to use Tier-1/Tier-2 optimization
@@ -516,7 +531,16 @@ class AggregationMixin(SqlAggregationMixin):
                 pass  # Ignore cleanup errors
 
     def _field_exists(self, doc: dict[str, Any], field_path: str) -> bool:
-        """Check if a field or nested field path exists in a document."""
+        """Check whether a field or dotted nested path exists in a document.
+
+        Args:
+            doc: Document dictionary to inspect.
+            field_path: Field name or dot-separated path (e.g. ``a.b.c``).
+
+        Returns:
+            bool: True if ``doc`` is a dict and every path segment is present,
+                False otherwise.
+        """
         if not isinstance(doc, dict):
             return False
         curr: Any = doc
@@ -532,18 +556,20 @@ class AggregationMixin(SqlAggregationMixin):
         document: dict[str, Any],
         root: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """
-        Applies the projection to the document, selecting or excluding fields
-        based on the projection criteria.
+        """Apply a MongoDB-style ``$project`` specification to a document.
+
+        Supports empty projections (returned unchanged), inclusion mode with
+        computed expressions and variables (``$$ROOT``, ``$$CURRENT``,
+        ``$$REMOVE``), simple inclusion mode, and exclusion mode (including
+        dotted nested paths).
 
         Args:
-            projection (dict[str, Any]): A dictionary specifying which fields to
-                                         include or exclude.
-            document (dict[str, Any]): The document to apply the projection to.
-            root (dict[str, Any] | None): Optional original root document for ``$$ROOT``.
+            projection: Mapping specifying fields or expressions to project.
+            document: Input document to project.
+            root: Optional original root document used for ``$$ROOT``.
 
         Returns:
-            dict[str, Any]: The document with fields applied based on the projection.
+            dict[str, Any]: Projected document containing selected fields.
         """
         from ..expr_evaluator import (
             REMOVE_SENTINEL,
@@ -558,6 +584,13 @@ class AggregationMixin(SqlAggregationMixin):
         include_id = projection.get("_id", 1) == 1
 
         def _assign(target: dict[str, Any], field_key: str, val: Any) -> None:
+            """Assign a projected value to a top-level or dotted target field.
+
+            Args:
+                target: Destination document dictionary to mutate.
+                field_key: Field name or dot-separated nested path.
+                val: Projected value to store at ``field_key``.
+            """
             if "." in field_key:
                 self.collection._set_val(target, field_key, val)
             else:

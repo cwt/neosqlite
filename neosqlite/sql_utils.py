@@ -2,19 +2,20 @@ import re
 
 
 def quote_identifier(identifier: str) -> str:
-    """
-    Safely quote a SQL identifier (like a table or column name).
-    Only allows safe identifiers matching ^[A-Za-z_][A-Za-z0-9_]*$.
-    For table names, use quote_table_name() instead.
+    """Safely validate and return a SQL identifier.
+
+    Only allows identifiers matching ``^[A-Za-z_][A-Za-z0-9_]*$`` and raises
+    ``ValueError`` for empty or unsafe identifiers. For table names, prefer
+    ``quote_table_name()``.
 
     Args:
-        identifier (str): The identifier to quote.
+        identifier: SQL identifier (table or column name) to validate.
 
     Returns:
-        str: The identifier (validated to be safe).
+        str: The validated identifier string.
 
     Raises:
-        ValueError: If the identifier contains unsafe characters.
+        ValueError: If the identifier is empty or contains unsafe characters.
     """
     if not identifier:
         raise ValueError("Identifier cannot be empty")
@@ -30,7 +31,18 @@ def quote_identifier(identifier: str) -> str:
 
 
 def quote_table_name(name: str) -> str:
-    """
-    Safely quote a table name. In NeoSQLite, table names are the same as collection names.
+    """Safely validate and return a SQL table name.
+
+    In NeoSQLite, table names correspond to collection names and are validated
+    using ``quote_identifier()``.
+
+    Args:
+        name: The table or collection name to validate.
+
+    Returns:
+        str: The validated table name string.
+
+    Raises:
+        ValueError: If the table name is empty or contains unsafe characters.
     """
     return quote_identifier(name)

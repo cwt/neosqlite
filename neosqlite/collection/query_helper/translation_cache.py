@@ -18,34 +18,64 @@ from typing import Any
 
 
 class CacheEntry:
-    """Single cache entry with hit statistics."""
+    """Single cache entry with hit statistics.
+
+    Stores a cached SQL template string alongside its associated bound
+    parameter payload and tracks how many cache hits the entry has served
+    via ``__slots__`` for low memory overhead.
+    """
 
     __slots__ = ("sql_template", "payload", "hit_count")
 
     def __init__(self, sql_template: str, payload: tuple[Any, ...]):
+        """Initialize a cache entry with a SQL template and payload.
+
+        Args:
+            sql_template: Cached SQL query template string.
+            payload: Bound parameter tuple corresponding 1:1 with the
+                template placeholders.
+        """
         self.sql_template = sql_template
         self.payload = payload
         self.hit_count = 0
 
 
 class TranslationCache:
-    """
-    LRU cache for SQL translation templates with O(1) get/put operations.
+    """LRU cache for SQL translation templates with O(1) get/put operations.
 
-    Uses OrderedDict for efficient LRU eviction: most recently used entries
-    are moved to the end, least recently used are evicted from the front.
+    Uses ``OrderedDict`` for efficient LRU eviction: most recently used
+    entries are moved to the end, while least recently used entries are
+    evicted from the front once ``_max_size`` is reached.
     """
 
     DEFAULT_MAX_SIZE = 100
 
     def __init__(self, max_size: int = DEFAULT_MAX_SIZE):
+        """Initialize the translation cache.
+
+        Args:
+            max_size: Maximum number of entries to retain in the cache
+                before LRU eviction. A value of ``0`` disables caching.
+                Defaults to ``DEFAULT_MAX_SIZE``.
+        """
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._max_size = max_size
         self._miss_count = 0
         self._hit_count = 0
 
     def get(self, key: str) -> tuple[str, tuple[Any, ...]] | None:
-        """Get cached SQL template by key. Returns (sql, payload) or None."""
+        """Get a cached SQL template and payload by key.
+
+        Updates hit/miss counters and promotes matched entries to the most
+        recently used position in the ``OrderedDict``.
+
+        Args:
+            key: Canonicalized cache key produced by ``make_key()``.
+
+        Returns:
+            tuple[str, tuple[Any, ...]] | None: ``(sql_template, payload)``
+            if caching is enabled and the key is present, or None on a miss.
+        """
         if self._max_size == 0:
             self._miss_count += 1
             return None
@@ -63,12 +93,18 @@ class TranslationCache:
     def put(
         self, key: str, sql_template: str, payload: tuple[Any, ...]
     ) -> None:
-        """Store SQL template in cache with its associated payload.
+        """Store a SQL template in the cache with its associated payload.
 
-        The payload is consumer-defined (e.g. the exact bound parameters for
-        the template). It must correspond 1:1 with this exact key, which is
-        guaranteed because ``make_key`` canonicalizes literal values into the
-        key — a cache hit therefore implies an identical pipeline.
+        The payload is consumer-defined (e.g., the exact bound parameters for
+        the template) and must correspond 1:1 with this key, which is
+        guaranteed because ``make_key()`` canonicalizes literal values into
+        the key. When the cache is at capacity, the least recently used entry
+        is evicted. Does nothing if ``_max_size == 0``.
+
+        Args:
+            key: Canonicalized cache key for the pipeline.
+            sql_template: Translated SQL query template string.
+            payload: Bound parameter tuple associated with the template.
         """
         if self._max_size == 0:
             return  # Cache disabled
@@ -88,16 +124,21 @@ class TranslationCache:
         self._cache[key] = CacheEntry(sql_template, payload)
 
     def make_key(self, pipeline: list[dict[str, Any]]) -> str:
-        """
-        Create a cache key from the full pipeline content.
+        """Create a cache key from the full pipeline content.
 
         Literal values are canonicalized (type-tagged) into the key so that a
         cache hit implies an identical pipeline. This is required for
-        correctness: sort directions, limits and other literals may be baked
-        into the cached SQL template rather than bound as parameters.
+        correctness because sort directions, limits, and other literals may be
+        baked into the cached SQL template rather than bound as parameters.
+        Field references (``$field``) are preserved verbatim and dicts are
+        sorted by key.
 
-        Field references ($field) are preserved verbatim; dicts are sorted
-        for order-insensitivity where ordering is not semantic.
+        Args:
+            pipeline: List of aggregation stage dictionaries.
+
+        Returns:
+            str: Pipe-delimited canonical cache key representing all stages
+            in order.
         """
         key_parts = []
         for stage in pipeline:
@@ -107,14 +148,20 @@ class TranslationCache:
         return "|".join(key_parts)
 
     def _canonicalize(self, value: Any) -> tuple:
-        """
-        Recursively convert a value into a hashable, type-tagged structure.
+        """Recursively convert a value into a hashable, type-tagged tuple.
 
         Type tags distinguish values that Python would otherwise equate
-        (e.g. True vs 1, 1 vs 1.0) so that semantically different pipelines
-        never share a cache entry. Unhashable/exotic objects (ObjectId,
-        datetime, bytes, ...) are represented via their type name and repr,
-        which is stable for equal instances.
+        (e.g., ``True`` vs ``1``, ``1`` vs ``1.0``) so semantically different
+        pipelines never share a cache entry. Arbitrary objects such as
+        ``ObjectId`` or ``datetime`` are tagged by type name and string
+        representation.
+
+        Args:
+            value: Arbitrary pipeline value or nested structure to
+                canonicalize.
+
+        Returns:
+            tuple: Hashable, type-tagged representation of ``value``.
         """
         match value:
             case bool():
@@ -143,17 +190,27 @@ class TranslationCache:
                 return ("o", type(value).__name__, str(value))
 
     def _extract_structure(self, obj: Any) -> tuple:
-        """
-        Recursively convert a pipeline fragment into a hashable nested tuple.
+        """Recursively convert a pipeline fragment into a hashable tuple.
 
-        Preserves both field references ($field) and literal values so that
-        structurally identical but semantically different fragments (e.g.
-        differing sort directions or comparison bounds) map to distinct keys.
+        Delegates to ``_canonicalize()`` so both field references and literal
+        values are preserved in a type-tagged tuple.
+
+        Args:
+            obj: Pipeline fragment or expression value to canonicalize.
+
+        Returns:
+            tuple: Hashable, type-tagged nested tuple for ``obj``.
         """
         return self._canonicalize(obj)
 
     def get_stats(self) -> dict[str, Any]:
-        """Get cache statistics."""
+        """Get cache statistics and per-entry hit summaries.
+
+        Returns:
+            dict[str, Any]: Dictionary containing ``size``, ``max_size``,
+            ``hits``, ``misses``, ``hit_rate``, ``total_accesses``, and
+            ``entries`` (sorted by descending ``hit_count``).
+        """
         total = self._hit_count + self._miss_count
         hit_rate = self._hit_count / total if total > 0 else 0.0
 
@@ -190,24 +247,50 @@ class TranslationCache:
         self._hit_count = 0
 
     def resize(self, new_size: int) -> None:
-        """Resize cache, evicting entries if needed."""
+        """Resize the cache, evicting oldest entries if needed.
+
+        Args:
+            new_size: New maximum entry capacity for the cache.
+        """
         self._max_size = new_size
         while len(self._cache) > new_size:
             self._cache.popitem(last=False)
 
     def evict(self, key: str) -> bool:
-        """Evict a specific entry by key. Returns True if evicted."""
+        """Evict a specific entry from the cache by key.
+
+        Args:
+            key: Cache key to remove.
+
+        Returns:
+            bool: True if the entry existed and was removed, False otherwise.
+        """
         if key in self._cache:
             del self._cache[key]
             return True
         return False
 
     def contains(self, key: str) -> bool:
-        """Check if a key is in the cache."""
+        """Check if a key is currently present in the cache.
+
+        Args:
+            key: Cache key to look up.
+
+        Returns:
+            bool: True if the key is in the cache, False otherwise.
+        """
         return key in self._cache
 
     def get_entry(self, key: str) -> dict | None:
-        """Get detailed info about a specific cache entry."""
+        """Get detailed metadata for a specific cache entry.
+
+        Args:
+            key: Cache key to inspect.
+
+        Returns:
+            dict | None: Dictionary with ``key``, ``sql_template``,
+            ``payload``, and ``hit_count``, or None if the key is absent.
+        """
         entry = self._cache.get(key)
         if entry is None:
             return None
@@ -219,11 +302,24 @@ class TranslationCache:
         }
 
     def _get_entry_hit_count(self, item: tuple[str, CacheEntry]) -> int:
-        """Helper to extract hit_count from cache entry for sorting."""
+        """Extract ``hit_count`` from a cache item tuple for sorting.
+
+        Args:
+            item: ``(key, entry)`` pair from ``self._cache.items()``.
+
+        Returns:
+            int: Hit count recorded on the entry.
+        """
         return item[1].hit_count
 
     def dump(self) -> list[dict]:
-        """Dump all cache entries for debugging."""
+        """Dump all cache entries sorted by hit count for debugging.
+
+        Returns:
+            list[dict]: Entry dictionaries with ``key``, ``sql_preview``
+            (truncated to 100 chars with newlines collapsed), ``payload``,
+            and ``hit_count``, ordered by descending hits.
+        """
         sorted_items = sorted(
             self._cache.items(), key=self._get_entry_hit_count, reverse=True
         )
@@ -238,9 +334,17 @@ class TranslationCache:
         ]
 
     def is_enabled(self) -> bool:
-        """Check if cache is enabled."""
+        """Check whether caching is enabled (``_max_size > 0``).
+
+        Returns:
+            bool: True if ``_max_size > 0``, False otherwise.
+        """
         return self._max_size > 0
 
     def __len__(self) -> int:
-        """Return number of entries in cache."""
+        """Return the number of entries currently stored in the cache.
+
+        Returns:
+            int: Current cache entry count.
+        """
         return len(self._cache)

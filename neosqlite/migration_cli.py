@@ -51,12 +51,26 @@ END
 
 
 class MigrationError(RuntimeError):
-    """Raised when a database cannot be migrated safely."""
+    """Raised when a database cannot be migrated safely.
+
+    Signaled for invalid source or destination paths, unrequested overwrite
+    attempts, or row-count mismatches detected while rebuilding a table.
+    """
 
 
 @dataclass(frozen=True, slots=True)
 class LegacyTable:
-    """A collection table whose ``_id`` column still uses TEXT affinity."""
+    """A collection table whose ``_id`` column still uses TEXT affinity.
+
+    Captures the table's rewritten DDL alongside its original index and
+    trigger definitions so they can be recreated after rebuilding.
+
+    Attributes:
+        name: SQLite table name.
+        create_sql: Rewritten ``CREATE TABLE`` statement with ``_id BLOB``.
+        indexes: Index ``CREATE INDEX`` statements belonging to the table.
+        triggers: Trigger ``CREATE TRIGGER`` statements on the table.
+    """
 
     name: str
     create_sql: str
@@ -66,7 +80,15 @@ class LegacyTable:
 
 @dataclass(frozen=True, slots=True)
 class MigrationResult:
-    """Summary returned by :func:`migrate_database`."""
+    """Summary returned by :func:`migrate_database`.
+
+    Attributes:
+        tables: Names of legacy collection tables discovered or migrated.
+        row_counts: Mapping from migrated table name to row count (empty on
+            dry runs).
+        destination: Absolute destination database path, or ``None`` when
+            ``dry_run`` is enabled.
+    """
 
     tables: tuple[str, ...]
     row_counts: dict[str, int]
@@ -74,11 +96,28 @@ class MigrationResult:
 
 
 def _table_info(conn: sqlite3.Connection, table_name: str) -> list[tuple]:
+    """Return ``PRAGMA table_info`` rows for a SQLite table.
+
+    Args:
+        conn: Open SQLite database connection.
+        table_name: Name of the table to inspect.
+
+    Returns:
+        list[tuple]: Column metadata tuples from ``PRAGMA table_info``.
+    """
     quoted = quote_identifier(table_name)
     return conn.execute(f"PRAGMA table_info({quoted})").fetchall()
 
 
 def _all_table_names(conn: sqlite3.Connection) -> list[str]:
+    """List all non-internal SQLite user table names in the database.
+
+    Args:
+        conn: Open SQLite database connection.
+
+    Returns:
+        list[str]: Table names from ``sqlite_master`` excluding ``sqlite_%``.
+    """
     return [
         row[0]
         for row in conn.execute(
@@ -91,6 +130,17 @@ def _all_table_names(conn: sqlite3.Connection) -> list[str]:
 def _has_incoming_foreign_key(
     conn: sqlite3.Connection, table_name: str, all_tables: list[str]
 ) -> bool:
+    """Check whether any other table holds a foreign key to ``table_name``.
+
+    Args:
+        conn: Open SQLite database connection.
+        table_name: Candidate target table name.
+        all_tables: List of user table names in the database to inspect.
+
+    Returns:
+        bool: True if another table references ``table_name``, False
+            otherwise.
+    """
     for other in all_tables:
         if other == table_name:
             continue
@@ -103,6 +153,20 @@ def _has_incoming_foreign_key(
 
 
 def _is_collection_table(conn: sqlite3.Connection, table_name: str) -> bool:
+    """Check whether ``table_name`` matches NeoSQLite's legacy schema.
+
+    A candidate collection table must have exactly columns ``id``, ``_id``,
+    and ``data`` with ``_id`` declared as ``TEXT`` or ``JSONB`` and ``data``
+    declared as ``TEXT`` or ``JSONB``.
+
+    Args:
+        conn: Open SQLite database connection.
+        table_name: Table name to inspect.
+
+    Returns:
+        bool: True if the table matches the legacy collection layout, False
+            otherwise.
+    """
     columns = {
         row[1].lower(): (row[2] or "").upper()
         for row in _table_info(conn, table_name)
@@ -116,7 +180,21 @@ def _is_collection_table(conn: sqlite3.Connection, table_name: str) -> bool:
 
 
 def find_legacy_tables(conn: sqlite3.Connection) -> list[LegacyTable]:
-    """Find collection tables that still use TEXT affinity for ``_id``."""
+    """Find collection tables that still use TEXT affinity for ``_id``.
+
+    Scans ``sqlite_master`` in table-name order, skipping internal tables,
+    virtual tables, non-collection tables, and tables participating in incoming
+    or outgoing foreign keys. Rewrites the first ``_id TEXT`` or
+    ``_id JSONB`` declaration to ``_id BLOB`` and collects associated indexes
+    and triggers.
+
+    Args:
+        conn: Open SQLite database connection to inspect.
+
+    Returns:
+        list[LegacyTable]: Discovered legacy collection tables with rewritten
+            DDL and saved index/trigger SQL.
+    """
     all_tables = _all_table_names(conn)
     legacy: list[LegacyTable] = []
 
@@ -175,6 +253,25 @@ def find_legacy_tables(conn: sqlite3.Connection) -> list[LegacyTable]:
 
 
 def _rebuild_table(conn: sqlite3.Connection, table: LegacyTable) -> int:
+    """Rebuild one legacy collection table with ``_id BLOB`` affinity.
+
+    Renames ``table.name`` to a temporary table, creates the new table from
+    ``table.create_sql``, copies rows while recovering typed ``_id`` values via
+    ``_MIGRATE_ID_EXPR``, verifies row count parity, drops the temporary
+    table, and recreates saved indexes and triggers.
+
+    Args:
+        conn: Open SQLite connection positioned inside a transaction.
+        table: Legacy table metadata and DDL produced by
+            :func:`find_legacy_tables`.
+
+    Returns:
+        int: Number of rows migrated into the rebuilt table.
+
+    Raises:
+        MigrationError: If the row count after copying differs from the
+            original table.
+    """
     quoted_name = quote_identifier(table.name)
     temp_name = f"__neosqlite_migrate_{uuid.uuid4().hex}"
     quoted_temp = quote_identifier(temp_name)
@@ -210,6 +307,12 @@ def _rebuild_table(conn: sqlite3.Connection, table: LegacyTable) -> int:
 
 
 def _backup_database(source: str, destination: str) -> None:
+    """Copy a SQLite database using the online backup API.
+
+    Args:
+        source: Path to the source SQLite database file.
+        destination: Path to the destination SQLite database file.
+    """
     source_conn = sqlite3.connect(source)
     destination_conn = sqlite3.connect(destination)
     try:
@@ -220,6 +323,11 @@ def _backup_database(source: str, destination: str) -> None:
 
 
 def _checkpoint_and_close(conn: sqlite3.Connection) -> None:
+    """Truncate the WAL journal if active and close the connection.
+
+    Args:
+        conn: Open SQLite database connection to checkpoint and close.
+    """
     try:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception:
@@ -228,6 +336,13 @@ def _checkpoint_and_close(conn: sqlite3.Connection) -> None:
 
 
 def _remove_db_files(path: str) -> None:
+    """Remove a SQLite database file and its ``-wal``/``-shm`` sidecars.
+
+    Missing files are ignored.
+
+    Args:
+        path: Base path of the SQLite database file.
+    """
     for suffix in ("", "-wal", "-shm"):
         candidate = path + suffix
         try:
@@ -237,6 +352,13 @@ def _remove_db_files(path: str) -> None:
 
 
 def _remove_sidecars(path: str) -> None:
+    """Remove ``-wal`` and ``-shm`` sidecar files for a database path.
+
+    Missing sidecar files are ignored.
+
+    Args:
+        path: Base path of the SQLite database file.
+    """
     for suffix in ("-wal", "-shm"):
         candidate = path + suffix
         try:
@@ -255,8 +377,30 @@ def migrate_database(
 ) -> MigrationResult:
     """Copy *source* to *destination* and rebuild legacy ``_id TEXT`` tables.
 
-    The source file is only read. The destination is written through a
-    temporary file and atomically replaced on success.
+    The source file is only read. When ``dry_run`` is false, the database is
+    backed up into a temporary file in the destination directory, legacy
+    tables are rebuilt inside an ``IMMEDIATE`` transaction, file permissions
+    from ``source`` are preserved when possible, and ``destination`` is
+    replaced atomically via ``os.replace``.
+
+    Args:
+        source: Path to the existing source NeoSQLite database file.
+        destination: Path where the migrated database file should be written.
+        overwrite: If True, atomically replace ``destination`` when it already
+            exists.
+        dry_run: If True, inspect ``source`` and report legacy tables without
+            writing any files.
+        verbose: If True, print progress for each migrated table.
+
+    Returns:
+        MigrationResult: Summary containing discovered or migrated table names,
+            per-table row counts, and the destination path (or ``None`` on dry
+            runs).
+
+    Raises:
+        MigrationError: If ``source`` is missing, equals ``destination``,
+            ``destination`` exists without ``overwrite``, the destination
+            directory does not exist, or row counts mismatch during rebuild.
     """
     source = os.path.abspath(source)
     destination = os.path.abspath(destination)
@@ -347,6 +491,13 @@ def migrate_database(
 
 
 def _build_parser() -> argparse.ArgumentParser:
+    """Build the command-line argument parser for ``neosqlite-migration``.
+
+    Returns:
+        argparse.ArgumentParser: Configured parser accepting ``source``,
+            optional ``destination``, ``--overwrite``, ``--dry-run``, and
+            ``--verbose``/``-v``.
+    """
     parser = argparse.ArgumentParser(
         prog="neosqlite-migration",
         description=(
@@ -380,7 +531,18 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Console entry point for ``neosqlite-migration``."""
+    """Console entry point for ``neosqlite-migration``.
+
+    Parses command-line arguments, invokes :func:`migrate_database`, prints
+    dry-run or migration summaries to stdout, and reports errors to stderr.
+
+    Args:
+        argv: Optional sequence of argument strings (defaults to
+            ``sys.argv[1:]`` when ``None``).
+
+    Returns:
+        int: Exit status code (``0`` on success, ``1`` on migration failure).
+    """
     parser = _build_parser()
     args = parser.parse_args(argv)
 

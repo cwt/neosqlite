@@ -1,5 +1,7 @@
-"""
-Enhanced text search functionality for NeoSQLite with international character support.
+"""Enhanced text search functionality for NeoSQLite.
+
+Provides Unicode-aware, diacritic-insensitive, and case-insensitive text
+matching with LRU caching for compiled regular expressions.
 """
 
 import logging
@@ -12,27 +14,27 @@ logger = logging.getLogger(__name__)
 
 
 class TextSearchOptimizer:
-    """
-    Optimize text search operations with caching and Unicode support.
+    """Optimize text search operations with caching and Unicode support.
 
-    This class provides optimized text search functionality with:
-    - LRU caching for compiled regex patterns
-    - Unicode normalization for international character support
-    - Diacritic-insensitive matching
-    - Case-insensitive searching
+    Provides LRU caching for compiled regex patterns, NFD Unicode
+    normalization for diacritic-insensitive matching, and case-insensitive
+    searching for international characters.
     """
 
     @staticmethod
     @lru_cache(maxsize=512)
     def compile_pattern(search_term: str):
-        """
-        Compile and cache regex patterns for better performance.
+        """Compile and cache an escaped regex pattern for a search term.
+
+        Compiles ``re.escape(search_term)`` with ``re.IGNORECASE | re.UNICODE``
+        flags and caches up to 512 patterns.
 
         Args:
-            search_term: The term to search for
+            search_term: The substring to escape and compile into a regex.
 
         Returns:
-            Compiled regex pattern or None if compilation fails
+            re.Pattern | None: Compiled regex pattern, or None if
+                ``re.compile`` raises ``re.error``.
         """
         try:
             return re.compile(
@@ -44,14 +46,16 @@ class TextSearchOptimizer:
 
     @staticmethod
     def normalize_text(text: str) -> str:
-        """
-        Normalize text for comparison by removing diacritics.
+        """Normalize text by lowercasing and stripping diacritics.
+
+        Converts ``text`` to lowercase, applies Unicode NFD decomposition, and
+        removes combining non-spacing marks (category ``Mn``).
 
         Args:
-            text: Text to normalize
+            text: Input text string to normalize.
 
         Returns:
-            Normalized text with diacritics removed
+            str: Lowercased text with combining diacritical marks removed.
         """
         # Normalize to decomposed form (NFD)
         normalized = unicodedata.normalize("NFD", text.lower())
@@ -61,14 +65,17 @@ class TextSearchOptimizer:
     @staticmethod
     @lru_cache(maxsize=512)
     def get_normalized_pattern(search_term: str):
-        """
-        Get normalized pattern for diacritic-insensitive matching.
+        """Compile and cache a diacritic-stripped regex for a search term.
+
+        Normalizes ``search_term`` via ``normalize_text()``, escapes it, and
+        compiles with ``re.IGNORECASE | re.UNICODE`` flags.
 
         Args:
-            search_term: The term to search for
+            search_term: The term to normalize and compile into a regex.
 
         Returns:
-            Compiled regex pattern for normalized text or None if compilation fails
+            re.Pattern | None: Compiled regex pattern for normalized text, or
+                None if ``re.compile`` raises ``re.error``.
         """
         try:
             normalized = TextSearchOptimizer.normalize_text(search_term)
@@ -79,22 +86,20 @@ class TextSearchOptimizer:
 
 
 def unified_text_search(document: dict[str, Any], search_term: str) -> bool:
-    """
-    Unified text search function that works with both simple queries and aggregation pipelines.
+    """Search a document recursively for a text term.
 
-    This function provides enhanced text search capabilities with:
-    - Case-insensitive matching
-    - Unicode support for international characters
-    - Diacritic-insensitive matching (e.g., 'cafe' matches 'café')
-    - Support for nested documents and arrays
-    - Proper handling of special characters
+    Works with both simple queries and aggregation pipelines, providing
+    case-insensitive, Unicode-aware, and diacritic-insensitive matching
+    across nested dictionaries and lists.
 
     Args:
-        document: The document to search in
-        search_term: The term to search for
+        document: The document dictionary to search.
+        search_term: Non-empty string term to search for.
 
     Returns:
-        True if the document contains the search term, False otherwise
+        bool: True if any string value in ``document`` matches
+            ``search_term``, False otherwise (including empty or non-string
+            terms).
     """
     if not isinstance(search_term, str) or not search_term:
         return False
@@ -104,15 +109,19 @@ def unified_text_search(document: dict[str, Any], search_term: str) -> bool:
     normalized_pattern = TextSearchOptimizer.get_normalized_pattern(search_term)
 
     def search_in_value(value: Any, term: str) -> bool:
-        """
-        Search for the term in a single value.
+        """Search for the term in a single field value.
+
+        Matches strings via exact regex, diacritic-normalized regex, or
+        case-insensitive substring fallback, and recurses into dicts and
+        lists.
 
         Args:
-            value: The value to search in
-            term: The search term
+            value: Field value to inspect (string, dict, list, or other).
+            term: Search term string.
 
         Returns:
-            True if the value contains the search term, False otherwise
+            bool: True if ``value`` matches or contains ``term``, False
+                otherwise.
         """
         match value:
             case str():
@@ -141,15 +150,15 @@ def unified_text_search(document: dict[str, Any], search_term: str) -> bool:
                 return False
 
     def search_in_document(doc: dict[str, Any], term: str) -> bool:
-        """
-        Recursively search for the term in a document.
+        """Recursively search all values of a document for the term.
 
         Args:
-            doc: The document to search in
-            term: The search term
+            doc: Dictionary whose values are searched.
+            term: Search term string.
 
         Returns:
-            True if the document contains the search term, False otherwise
+            bool: True if any value in ``doc`` matches ``term``, False
+                otherwise.
         """
         # Search in all values of the document
         return any(search_in_value(value, term) for value in doc.values())
@@ -158,17 +167,18 @@ def unified_text_search(document: dict[str, Any], search_term: str) -> bool:
 
 
 def simple_text_contains(text: str, search_term: str) -> bool:
-    """
-    Simple case-insensitive text containment check.
+    """Perform a simple case-insensitive substring check.
 
-    This is a fast fallback for basic ASCII text matching.
+    Provides a fast fallback when either argument may not be a string or when
+    basic lowercase substring matching is sufficient.
 
     Args:
-        text: The text to search in
-        search_term: The term to search for
+        text: The text to search within.
+        search_term: The substring to look for.
 
     Returns:
-        True if the text contains the search term, False otherwise
+        bool: True if both inputs are strings and ``search_term`` appears in
+            ``text`` ignoring case, False otherwise.
     """
     if not isinstance(text, str) or not isinstance(search_term, str):
         return False

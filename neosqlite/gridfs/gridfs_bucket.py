@@ -30,11 +30,12 @@ from .utils import (
 
 
 class GridFSBucket:
-    """
-    A GridFSBucket-like class for storing large files in SQLite.
+    """PyMongo-compatible GridFS bucket backed by SQLite tables.
 
-    This implementation provides a PyMongo-compatible interface for GridFS
-    functionality using SQLite as the backend storage.
+    Stores file metadata documents in ``<bucket_name>_files`` and binary data
+    chunks in ``<bucket_name>_chunks``. Supports streaming and buffer-based
+    uploads/downloads, custom file ids, revisions, metadata/aliases, legacy
+    dot-named table migration, and SQLite write-concern pragmas.
     """
 
     def __init__(
@@ -46,16 +47,28 @@ class GridFSBucket:
         read_preference: Any | None = None,
         disable_md5: bool = False,
     ):
-        """
-        Initialize a new GridFSBucket instance.
+        """Initialize a ``GridFSBucket`` and ensure backing tables exist.
+
+        Validates ``chunk_size_bytes`` and ``write_concern``, applies SQLite
+        ``PRAGMA synchronous`` settings, migrates any legacy dot-named GridFS
+        tables, and creates the files/chunks tables and indexes.
 
         Args:
-            db: SQLite database connection or neosqlite.Connection instance
-            bucket_name: The bucket name for the GridFS files (default: "fs")
-            chunk_size_bytes: The chunk size in bytes (default: 255KB)
-            write_concern: Write concern settings (simulated for compatibility)
-            read_preference: Read preference settings (not applicable to SQLite)
-            disable_md5: Disable MD5 checksum calculation for performance
+            db: SQLite database connection or ``neosqlite.Connection`` wrapper.
+            bucket_name: Base bucket prefix used for ``<bucket>_files`` and
+                ``<bucket>_chunks`` tables. Defaults to ``"fs"``.
+            chunk_size_bytes: Default chunk size in bytes. Defaults to
+                ``255 * 1024`` (255 KiB).
+            write_concern: Optional write concern dict supporting ``"w"``,
+                ``"wtimeout"``, and ``"j"`` keys. Defaults to ``None``.
+            read_preference: Accepted for PyMongo compatibility and stored on
+                the bucket instance. Defaults to ``None``.
+            disable_md5: If ``True``, skip MD5 checksum computation on uploads.
+                Defaults to ``False``.
+
+        Raises:
+            ValueError: If ``chunk_size_bytes <= 0`` or any ``write_concern``
+                option has an invalid type.
         """
         raw_db = getattr(db, "db", db)
         self._db = raw_db
@@ -102,7 +115,11 @@ class GridFSBucket:
         self._create_collections()
 
     def _migrate_legacy_tables_if_needed(self):
-        """Migrate legacy GridFS tables from dot-based names to underscore-based names."""
+        """Migrate legacy dot-named GridFS tables to underscore-named tables.
+
+        Renames ``<bucket>.files`` and ``<bucket>.chunks`` when present,
+        falling back to the legacy names if renaming the files table fails.
+        """
         old_files = f"{self._bucket_name}.files"
         old_chunks = f"{self._bucket_name}.chunks"
         new_files = quote_table_name(self._files_collection)
@@ -142,7 +159,12 @@ class GridFSBucket:
                 )
 
     def _apply_write_concern(self):
-        """Apply write concern settings to SQLite connection."""
+        """Apply write concern settings to the SQLite connection.
+
+        Configures ``PRAGMA synchronous`` to ``FULL`` when journaling (``j``)
+        is enabled, ``NORMAL`` otherwise, and overrides to ``OFF`` when
+        ``w == 0``.
+        """
         # Handle journal concern (j=True)
         if self._write_concern.get("j"):
             # Set synchronous to FULL for maximum durability
@@ -158,7 +180,11 @@ class GridFSBucket:
             self._db.execute("PRAGMA synchronous = OFF")
 
     def _create_collections(self):
-        """Create the files and chunks collections (tables) if they don't exist."""
+        """Create the files and chunks SQLite tables and indexes if absent.
+
+        Also ensures missing schema columns (``content_type``, ``aliases``)
+        and the unique ``_id`` index exist on pre-existing tables.
+        """
         json_type = JSONBContext.from_db(self._db).storage_type
         files_coll = quote_table_name(self._files_collection)
         chunks_coll = quote_table_name(self._chunks_collection)
@@ -220,7 +246,11 @@ class GridFSBucket:
             pass
 
     def _migrate_table_schema(self):
-        """Migrate existing tables to add new columns for content_type and aliases."""
+        """Add ``content_type`` and ``aliases`` columns when missing.
+
+        Checks the existing files table schema and runs ``ALTER TABLE``
+        for each missing column, logging debug details on failure.
+        """
         files_coll = quote_table_name(self._files_collection)
         try:
             if not column_exists(
@@ -242,33 +272,33 @@ class GridFSBucket:
     def _serialize_metadata(
         self, metadata: dict[str, Any] | None
     ) -> str | None:
-        """
-        Serialize metadata to JSON string.
+        """Serialize a metadata dictionary into a JSON string.
 
         Args:
-            metadata: Metadata dictionary to serialize
+            metadata: Optional metadata dictionary to serialize.
 
         Returns:
-            JSON string representation or None
+            str | None: Serialized JSON string, or ``None`` if ``metadata`` is
+                ``None``.
         """
         return serialize_metadata(metadata)
 
     def _deserialize_metadata(
         self, metadata_str: str | None
     ) -> dict[str, Any] | None:
-        """
-        Deserialize metadata from JSON string.
+        """Deserialize a JSON string back into a metadata dictionary.
 
         Args:
-            metadata_str: JSON string representation of metadata
+            metadata_str: Serialized metadata string or ``None``.
 
         Returns:
-            Metadata dictionary or None
+            dict[str, Any] | None: Deserialized metadata dictionary, or
+                ``None`` if ``metadata_str`` is ``None``.
         """
         return deserialize_metadata(metadata_str)
 
     def _force_sync_if_needed(self):
-        """Force database synchronization if write concern requires it."""
+        """Checkpoint the WAL when write concern requires durability."""
         force_sync_if_needed(self._db, self._write_concern)
 
     def upload_from_stream(
@@ -279,22 +309,29 @@ class GridFSBucket:
         metadata: dict[str, Any] | None = None,
         session: Any | None = None,
     ) -> ObjectId:
-        """
-        Uploads a user file to a GridFS bucket.
+        """Upload a file from bytes or a readable stream into GridFS.
 
-        Reads the contents of the user file from source and uploads it
-        as chunks in the chunks collection. After all the chunks have
-        been uploaded, it creates a file document in the files collection.
+        Reads the full payload from ``source``, optionally computes its MD5
+        digest, inserts a file document into ``_files_collection``, stores all
+        chunks via ``_insert_chunks``, and forces sync if configured.
 
         Args:
-            filename: The name of the file to upload
-            source: The source data (bytes or file-like object)
-            chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
-            metadata: Optional metadata for the file
-            session: A ClientSession for transactions.
+            filename: Stored filename for the GridFS file document.
+            source: Raw ``bytes`` payload or file-like object with ``read()``.
+            chunk_size_bytes: Bytes per chunk. Defaults to the bucket's
+                ``chunk_size_bytes`` when ``None`` or ``0``.
+            metadata: Optional metadata dictionary for the file document.
+            session: Optional ``ClientSession`` validated before writing.
 
         Returns:
-            The ObjectId of the uploaded file document
+            ObjectId: Newly generated ``ObjectId`` assigned to the file's
+                ``_id`` field.
+
+        Raises:
+            TypeError: If ``source`` is neither ``bytes`` nor a readable
+                file-like object.
+            RuntimeError: If SQLite does not return a ``lastrowid`` for the
+                inserted file record.
         """
         if session:
             validate_session(session, self._db)
@@ -352,17 +389,17 @@ class GridFSBucket:
     def _insert_chunks(
         self, file_id: int, data: bytes, chunk_size_bytes: int | None = None
     ):
-        """
-        Split data into chunks and insert them into the chunks collection.
+        """Split ``data`` into chunks and insert them in a single transaction.
 
-        Chunks are inserted with executemany inside a single transaction:
-        one INSERT per chunk previously meant one implicit transaction per
-        255 KiB — thousands of fsyncs for a large file (#152).
+        Inserts all chunks with ``executemany`` inside an explicit transaction
+        to avoid one implicit fsync per chunk (#152). Does nothing if ``data``
+        is empty.
 
         Args:
-            file_id: The ID of the file document
-            data: The data to be chunked
-            chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
+            file_id: Integer primary key (``id``) of the parent file row.
+            data: Raw file bytes to split into chunks.
+            chunk_size_bytes: Bytes per chunk. Defaults to the bucket's
+                ``chunk_size_bytes`` when ``None`` or ``0``.
         """
         chunk_size = chunk_size_bytes or self._chunk_size_bytes
         rows = [
@@ -393,13 +430,18 @@ class GridFSBucket:
     def download_to_stream(
         self, file_id: ObjectId | str | int, destination: io.IOBase
     ) -> None:
-        """
-        Downloads the contents of the stored file specified by file_id
-        and writes the contents to destination.
+        """Write the contents of a stored GridFS file to ``destination``.
+
+        Looks up the file by ``file_id`` and writes its chunks in ascending
+        chunk index order using ``destination.write()``.
 
         Args:
-            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
-            destination: A file-like object to which the file contents will be written
+            file_id: File identifier as an ``ObjectId``, 24-char hex string,
+                or integer ``id``.
+            destination: Writable binary file-like object receiving the bytes.
+
+        Raises:
+            NoFile: If no file matching ``file_id`` exists in the bucket.
         """
         # Convert file_id to appropriate format for lookup
         if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
@@ -435,14 +477,15 @@ class GridFSBucket:
     def _get_integer_id_for_file(
         self, file_id: ObjectId | str | int
     ) -> int | None:
-        """
-        Convert a file identifier (ObjectId, hex string, or integer) to an integer ID.
+        """Resolve an ``ObjectId``, hex string, or int id to row ``id``.
 
         Args:
-            file_id: The file identifier (ObjectId, hex string, or integer ID)
+            file_id: File identifier (``ObjectId``, 24-char hex string,
+                integer string, or integer row ``id``).
 
         Returns:
-            The integer ID corresponding to the file, or None if not found
+            int | None: Integer primary key ``id`` in ``_files_collection``,
+                or ``None`` if not found or invalid.
         """
         try:
             return get_integer_id_for_table(
@@ -483,28 +526,36 @@ class GridFSBucket:
     def download_to_stream_by_name(
         self, filename: str, destination: io.IOBase, revision: int = -1
     ) -> None:
-        """
-        Downloads the contents of the stored file specified by filename
-        and writes the contents to destination.
+        """Write a stored file selected by ``filename`` and ``revision``.
 
         Args:
-            filename: The name of the file to download
-            destination: A file-like object to which the file contents will be written
-            revision: The revision of the file to download (default: -1 for latest)
+            filename: Stored filename to look up.
+            destination: Writable binary file-like object receiving the bytes.
+            revision: Revision offset (``-1`` for newest, ``0`` for oldest).
+                Defaults to ``-1``.
+
+        Raises:
+            NoFile: If no matching file revision exists.
         """
         file_id = self._get_file_id_by_name(filename, revision)
         self.download_to_stream(file_id, destination)
 
     def _get_file_id_by_name(self, filename: str, revision: int = -1) -> int:
-        """
-        Get the file ID for a given filename and revision.
+        """Resolve ``filename`` and ``revision`` to its integer row ``id``.
+
+        Non-negative revisions index forward from the oldest upload; negative
+        revisions index backward from the newest (``-1`` is latest) (#109).
 
         Args:
-            filename: The name of the file
-            revision: The revision number (-1 for latest, 0 for first, etc.)
+            filename: Stored filename to query.
+            revision: Revision index (``-1`` for latest, ``0`` for oldest).
+                Defaults to ``-1``.
 
         Returns:
-            The integer _id of the file document
+            int: Internal integer primary-key ``id`` of the file row.
+
+        Raises:
+            NoFile: If no file exists at the requested filename/revision.
         """
         if revision >= 0:
             # Forward revisions: 0-indexed from the oldest upload
@@ -532,14 +583,16 @@ class GridFSBucket:
         return row[0]
 
     def open_download_stream(self, file_id: ObjectId | str | int) -> GridOut:
-        """
-        Opens a stream to read the contents of the stored file specified by file_id.
+        """Open a ``GridOut`` stream to read the file matching ``file_id``.
 
         Args:
-            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
+            file_id: File identifier as an ``ObjectId``, hex string, or int.
 
         Returns:
-            A GridOut instance to read the file contents
+            GridOut: Readable GridFS download stream for the matched file.
+
+        Raises:
+            NoFile: If no file matching ``file_id`` exists in the bucket.
         """
         # Convert to integer ID for internal use
         if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
@@ -549,26 +602,30 @@ class GridFSBucket:
     def open_download_stream_by_name(
         self, filename: str, revision: int = -1
     ) -> GridOut:
-        """
-        Opens a stream to read the contents of the stored file specified by filename.
+        """Open a ``GridOut`` stream for a file by name and revision.
 
         Args:
-            filename: The name of the file to read
-            revision: The revision of the file to read (default: -1 for latest)
+            filename: Stored filename to look up.
+            revision: Revision index (``-1`` for latest, ``0`` for oldest).
+                Defaults to ``-1``.
 
         Returns:
-            A GridOut instance to read the file contents
+            GridOut: Readable GridFS download stream for the matched file.
+
+        Raises:
+            NoFile: If no matching file revision exists.
         """
         file_id = self._get_file_id_by_name(filename, revision)
         return GridOut(self._db, self._bucket_name, file_id)
 
     def delete(self, file_id: ObjectId | str | int) -> None:
-        """
-        Given a file_id, delete the stored file's files collection document
-        and associated chunks from a GridFS bucket.
+        """Delete a stored file document and all of its chunks by id.
 
         Args:
-            file_id: The _id of the file document (ObjectId, hex string, or integer ID)
+            file_id: File identifier as an ``ObjectId``, hex string, or int.
+
+        Raises:
+            NoFile: If no file matching ``file_id`` exists in the bucket.
         """
         # Convert to integer ID for internal use
         if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
@@ -598,15 +655,18 @@ class GridFSBucket:
     def find(
         self, filter: dict[str, Any] | None = None, session: Any | None = None
     ) -> GridOutCursor:
-        """
-        Find and return the files collection documents that match filter.
+        """Find file documents matching ``filter`` and return a cursor.
+
+        Validates ``session`` and normalizes id queries via
+        ``normalize_id_query_for_db`` before constructing ``GridOutCursor``.
 
         Args:
-            filter: The filter to apply when searching for files
-            session: A ClientSession for transactions.
+            filter: Optional MongoDB-style filter query dictionary. Defaults
+                to ``None`` (matches all files).
+            session: Optional ``ClientSession`` validated before querying.
 
         Returns:
-            A GridOutCursor instance
+            GridOutCursor: Cursor iterating matching ``GridOut`` instances.
         """
         validate_session(session, self._db)
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
@@ -622,17 +682,17 @@ class GridFSBucket:
         metadata: dict[str, Any] | None = None,
         session: Any | None = None,
     ) -> GridIn:
-        """
-        Opens a stream for writing a file to a GridFS bucket.
+        """Open a writable ``GridIn`` stream for uploading a new file.
 
         Args:
-            filename: The name of the file to upload
-            chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
-            metadata: Optional metadata for the file
-            session: A ClientSession for transactions.
+            filename: Filename to store on the created GridFS file document.
+            chunk_size_bytes: Bytes per chunk. Defaults to the bucket's
+                ``chunk_size_bytes`` when ``None`` or ``0``.
+            metadata: Optional metadata dictionary for the file document.
+            session: Optional ``ClientSession`` validated before opening.
 
         Returns:
-            A GridIn instance to write the file contents
+            GridIn: Writable GridFS upload stream.
         """
         validate_session(session, self._db)
 
@@ -655,16 +715,25 @@ class GridFSBucket:
         metadata: dict[str, Any] | None = None,
         session: Any | None = None,
     ):
-        """
-        Uploads a user file to a GridFS bucket with a custom file id.
+        """Upload a file with a caller-supplied ``_id`` from bytes or stream.
+
+        Ensures no file with ``file_id`` already exists, stores ``ObjectId``
+        or integer custom ids in ``_files_collection``, inserts chunks via
+        ``_insert_chunks``, and forces sync if configured.
 
         Args:
-            file_id: The custom _id for the file document (ObjectId or integer ID)
-            filename: The name of the file to upload
-            source: The source data (bytes or file-like object)
-            chunk_size_bytes: Bytes per chunk (defaults to bucket's chunk_size_bytes)
-            metadata: Optional metadata for the file
-            session: A ClientSession for transactions.
+            file_id: Custom ``ObjectId`` or integer identifier for the file.
+            filename: Stored filename for the GridFS file document.
+            source: Raw ``bytes`` payload or readable file-like object.
+            chunk_size_bytes: Bytes per chunk. Defaults to the bucket's
+                ``chunk_size_bytes`` when ``None``.
+            metadata: Optional metadata dictionary for the file document.
+            session: Optional ``ClientSession`` validated before writing.
+
+        Raises:
+            FileExists: If a file with ``file_id`` already exists.
+            TypeError: If ``source`` is neither ``bytes`` nor a readable
+                file-like object.
         """
         validate_session(session, self._db)
 
@@ -775,18 +844,20 @@ class GridFSBucket:
         content_type: str | None = None,
         aliases: list[str] | None = None,
     ) -> GridIn:
-        """
-        Opens a stream for writing a file to a GridFS bucket with a custom file id.
+        """Open a writable ``GridIn`` stream with a custom ``_id``.
 
         Args:
-            file_id: The custom _id for the file document (ObjectId or integer ID)
-            filename: The name of the file to upload
-            metadata: Optional metadata for the file
-            content_type: Optional MIME type of the file
-            aliases: Optional list of alternative names for the file
+            file_id: Custom ``ObjectId`` or integer identifier for the file.
+            filename: Stored filename for the GridFS file document.
+            metadata: Optional metadata dictionary for the file document.
+            content_type: Optional MIME content type string.
+            aliases: Optional list of alternative filenames.
 
         Returns:
-            A GridIn instance to write the file contents
+            GridIn: Writable GridFS upload stream bound to ``file_id``.
+
+        Raises:
+            FileExists: If a file with ``file_id`` already exists.
         """
         # Check if file with this ID already exists
         if isinstance(file_id, ObjectId):
@@ -821,11 +892,13 @@ class GridFSBucket:
         )
 
     def delete_by_name(self, filename: str) -> None:
-        """
-        Delete all stored file documents and associated chunks with the given filename.
+        """Delete all stored files and chunks matching ``filename``.
 
         Args:
-            filename: The name of the file to delete
+            filename: Filename whose file documents and chunks will be deleted.
+
+        Raises:
+            NoFile: If no file with ``filename`` exists in the bucket.
         """
         # Chunks are keyed by the integer id column (files_id), not the
         # logical _id — selecting _id here orphaned every chunk (#92).
@@ -862,12 +935,14 @@ class GridFSBucket:
         )
 
     def rename(self, file_id: ObjectId | str | int, new_filename: str) -> None:
-        """
-        Rename a stored file with the specified file_id to a new filename.
+        """Rename a stored file identified by ``file_id``.
 
         Args:
-            file_id: The _id of the file to rename (ObjectId, hex string, or integer ID)
-            new_filename: The new name for the file
+            file_id: File identifier as an ``ObjectId``, hex string, or int.
+            new_filename: Replacement filename to assign.
+
+        Raises:
+            NoFile: If no file matching ``file_id`` exists in the bucket.
         """
         if (file_int_id := self._get_integer_id_for_file(file_id)) is None:
             raise NoFile(f"File with id {file_id} not found")
@@ -885,12 +960,14 @@ class GridFSBucket:
             raise NoFile(f"File with id {file_id} not found")
 
     def rename_by_name(self, filename: str, new_filename: str) -> None:
-        """
-        Rename all stored files with the specified filename to a new filename.
+        """Rename all stored files with ``filename`` to ``new_filename``.
 
         Args:
-            filename: The current name of the files to rename
-            new_filename: The new name for the files
+            filename: Current filename of the files to rename.
+            new_filename: Replacement filename to assign.
+
+        Raises:
+            NoFile: If no file with ``filename`` exists in the bucket.
         """
         cursor = self._db.execute(
             f"""
@@ -905,11 +982,10 @@ class GridFSBucket:
             raise NoFile(f"File with name {filename} not found")
 
     def drop(self) -> None:
-        """
-        Remove all files and chunks from the bucket.
+        """Delete all files and chunks from this GridFS bucket.
 
-        This method deletes all data in the GridFS bucket, including
-        all files and their associated chunks.
+        Removes all rows from ``_chunks_collection`` before deleting all rows
+        from ``_files_collection`` to satisfy foreign-key constraints.
         """
         # Delete all chunks first (foreign key constraint)
         self._db.execute(f"DELETE FROM {self._chunks_collection}")
@@ -918,11 +994,10 @@ class GridFSBucket:
         self._db.execute(f"DELETE FROM {self._files_collection}")
 
     def list(self) -> list[str]:
-        """
-        List all unique filenames in the GridFS bucket.
+        """List all distinct filenames stored in this GridFS bucket.
 
         Returns:
-            A list of unique filenames
+            list[str]: Sorted list of unique filenames in the files table.
         """
         cursor = self._db.execute(
             f"SELECT DISTINCT filename FROM {self._files_collection} ORDER BY filename"

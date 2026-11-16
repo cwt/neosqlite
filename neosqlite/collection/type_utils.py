@@ -1,8 +1,7 @@
-"""
-Shared type checking and conversion utilities for the collection package.
+"""Shared type checking and conversion utilities for the collection package.
 
-This module consolidates type-related utility functions that are used across
-multiple submodules (expr_evaluator, query_helper, etc.) to avoid code duplication
+This module consolidates type-related utility functions used across multiple
+submodules (``expr_evaluator``, ``query_helper``, etc.) to avoid duplication
 and provide a single source of truth for type operations.
 """
 
@@ -21,44 +20,104 @@ from .jsonb_support import json_constructor
 
 
 def _convert_to_int(value: Any) -> Any:
-    """Convert value to int."""
+    """Convert a value to a Python ``int``.
+
+    Args:
+        value: Input value convertible by ``int()``.
+
+    Returns:
+        Any: Converted integer value.
+    """
     return int(value)
 
 
 def _convert_to_long(value: Any) -> Any:
-    """Convert value to long (64-bit int)."""
+    """Convert a value to a 64-bit integer (Python ``int``).
+
+    Args:
+        value: Input value convertible by ``int()``.
+
+    Returns:
+        Any: Converted integer value.
+    """
     return int(value)
 
 
 def _convert_to_double(value: Any) -> Any:
-    """Convert value to double (float)."""
+    """Convert a value to a double-precision ``float``.
+
+    Args:
+        value: Input value convertible by ``float()``.
+
+    Returns:
+        Any: Converted floating-point value.
+    """
     return float(value)
 
 
 def _convert_to_decimal(value: Any) -> Any:
-    """Convert value to decimal (float, as SQLite lacks Decimal128)."""
+    """Convert a value to a numeric ``float`` (SQLite lacks Decimal128).
+
+    Args:
+        value: Input value convertible by ``float()``.
+
+    Returns:
+        Any: Converted floating-point value.
+    """
     return float(value)
 
 
 def _convert_to_string(value: Any) -> Any:
-    """Convert value to string."""
+    """Convert a value to a ``str``.
+
+    Args:
+        value: Input value to stringify.
+
+    Returns:
+        Any: String representation of ``value``.
+    """
     return str(value)
 
 
 def _convert_to_bool(value: Any) -> Any:
-    """Convert value to bool."""
+    """Convert a value to a ``bool``.
+
+    Args:
+        value: Input value evaluated for Python truthiness.
+
+    Returns:
+        Any: Boolean truth value of ``value``.
+    """
     return bool(value)
 
 
 def _convert_to_objectid(value: Any) -> Any:
-    """Convert value to ObjectId."""
+    """Convert a truthy value to an ``ObjectId``, or return ``None``.
+
+    Args:
+        value: Hex string, ``ObjectId``, or falsy value.
+
+    Returns:
+        Any: ``ObjectId(str(value))`` when ``value`` is truthy, else ``None``.
+    """
     from neosqlite.objectid import ObjectId
 
     return ObjectId(str(value)) if value else None
 
 
 def _convert_to_bindata(value: Any) -> Any:
-    """Convert value to Binary (binData)."""
+    """Convert a value to a ``Binary`` (``binData``) instance.
+
+    Encodes ``str`` inputs as UTF-8 bytes before wrapping in ``Binary``;
+    returns ``None`` unchanged when ``value`` is ``None``.
+
+    Args:
+        value: Bytes-like value, ``str``, or ``None``.
+
+    Returns:
+        Any: ``Binary`` wrapper instance, or ``None`` if ``value`` is
+        ``None``.
+    """
     from neosqlite.binary import Binary
 
     if value is None:
@@ -69,7 +128,18 @@ def _convert_to_bindata(value: Any) -> Any:
 
 
 def _convert_to_bsonbindata(value: Any) -> Any:
-    """Convert value to Binary (bsonBinData)."""
+    """Convert a value to a ``Binary`` (``bsonBinData``) instance.
+
+    Encodes ``str`` inputs as UTF-8 bytes before wrapping in ``Binary``;
+    returns ``None`` unchanged when ``value`` is ``None``.
+
+    Args:
+        value: Bytes-like value, ``str``, or ``None``.
+
+    Returns:
+        Any: ``Binary`` wrapper instance, or ``None`` if ``value`` is
+        ``None``.
+    """
     from neosqlite.binary import Binary
 
     if value is None:
@@ -80,34 +150,59 @@ def _convert_to_bsonbindata(value: Any) -> Any:
 
 
 def _convert_to_regex(value: Any) -> Any:
-    """Convert value to regex pattern."""
+    """Convert a truthy pattern value to a compiled ``re.Pattern``.
+
+    Args:
+        value: Regex pattern string or falsy value.
+
+    Returns:
+        Any: Compiled ``re.Pattern`` when ``value`` is truthy, else ``None``.
+    """
     return re.compile(str(value)) if value else None
 
 
 def _convert_to_bsonregex(value: Any) -> Any:
-    """Convert value to regex pattern (bsonRegex)."""
+    """Convert a truthy pattern value to a compiled ``re.Pattern`` (bsonRegex).
+
+    Args:
+        value: Regex pattern string or falsy value.
+
+    Returns:
+        Any: Compiled ``re.Pattern`` when ``value`` is truthy, else ``None``.
+    """
     return re.compile(str(value)) if value else None
 
 
 def _convert_to_date(value: Any) -> Any:
-    """Convert value to date (returns as-is; proper conversion requires parsing)."""
+    """Pass through a date value (full conversion requires parsing).
+
+    Args:
+        value: Input date-like value.
+
+    Returns:
+        Any: The input ``value`` unchanged.
+    """
     return value
 
 
 def _convert_to_null(value: Any) -> None:
-    """Convert any value to None."""
+    """Convert any value to ``None`` (BSON null).
+
+    Args:
+        value: Input value (ignored).
+    """
     return None
 
 
 def get_bson_type(value: Any) -> str:
-    """
-    Get BSON type name for a value.
+    """Get the BSON type name for a Python value.
 
     Args:
-        value: The value to check
+        value: The value to inspect.
 
     Returns:
-        BSON type name (e.g., 'null', 'bool', 'int', 'double', 'string', 'array', 'object')
+        str: BSON type name (``"null"``, ``"bool"``, ``"int"``, ``"double"``,
+        ``"string"``, ``"array"``, ``"object"``, or ``"unknown"``).
     """
     match value:
         case None:
@@ -129,23 +224,22 @@ def get_bson_type(value: Any) -> str:
 
 
 def bson_sort_key(value: Any) -> tuple:
-    """
-    Build a total-order sort key following BSON type ordering.
+    """Build a total-order sort key following BSON type ordering.
 
     Missing/None values sort before numbers, then strings, objects, arrays,
     booleans, and datetimes. Values of the same class compare naturally;
-    values of different classes are ordered by class rank, so mixed
-    populations never raise TypeError (MongoDB never fails a sort on type
-    mixture — it orders by BSON type first).
+    values of different classes are ordered by class rank so mixed
+    populations never raise ``TypeError`` (MongoDB orders by BSON type
+    first).
 
-    Use with sort(reverse=True) for descending order; missing/null then
+    Use with ``sort(reverse=True)`` for descending order; missing/null then
     correctly sort last, as in MongoDB.
 
     Args:
-        value: The value to build a key from (None represents missing)
+        value: The value to build a key from (``None`` represents missing).
 
     Returns:
-        A tuple that compares safely against keys of any other value.
+        tuple: A tuple that compares safely against keys of any other value.
     """
     if value is None:
         return (0, 0)
@@ -175,17 +269,16 @@ def bson_sort_key(value: Any) -> tuple:
 
 
 def _is_expression(value: Any) -> bool:
-    """
-    Check if value is an aggregation expression.
+    """Check if value is an aggregation expression.
 
-    An expression is a dict with exactly one key starting with '$'
-    that is not a reserved field name.
+    An expression is a dict with exactly one key starting with ``$`` that is
+    not a reserved field name (``$field`` or ``$index``).
 
     Args:
-        value: Value to check
+        value: Value to check.
 
     Returns:
-        True if value is an expression, False otherwise
+        bool: True if ``value`` is an expression, False otherwise.
 
     Examples:
         >>> _is_expression({"$sin": "$angle"})
@@ -210,17 +303,16 @@ def _is_expression(value: Any) -> bool:
 
 
 def _is_field_reference(value: Any) -> bool:
-    """
-    Check if value is a field reference.
+    """Check if value is a field reference.
 
-    Field references start with '$' but are not expressions
-    (i.e., they're simple strings like "$field" or "$nested.field").
+    Field references start with ``$`` but are not system variables (``$$``) or
+    expression dicts (e.g. ``"$field"`` or ``"$nested.field"``).
 
     Args:
-        value: Value to check
+        value: Value to check.
 
     Returns:
-        True if value is a field reference, False otherwise
+        bool: True if ``value`` is a field reference, False otherwise.
 
     Examples:
         >>> _is_field_reference("$field")
@@ -240,16 +332,16 @@ def _is_field_reference(value: Any) -> bool:
 
 
 def _is_literal(value: Any) -> bool:
-    """
-    Check if value is a literal (not an expression or field reference).
+    """Check if value is a literal rather than a field reference or variable.
 
-    Literals include: numbers, strings, booleans, None, arrays, and plain dicts.
+    Literals include numbers, strings not starting with ``$``, booleans,
+    ``None``, arrays, and plain dicts.
 
     Args:
-        value: Value to check
+        value: Value to check.
 
     Returns:
-        True if value is a literal, False otherwise
+        bool: True if ``value`` is a literal, False otherwise.
 
     Examples:
         >>> _is_literal(42)
@@ -273,20 +365,17 @@ def _is_literal(value: Any) -> bool:
 
 
 def _is_numeric_value(value: Any) -> bool:
-    """
-    Check if a value is numeric (int or float) or can be converted to a numeric value.
+    """Check if a value is a finite numeric int or float.
 
-    This function determines if a value can be safely used in arithmetic operations
-    like $inc and $mul. It considers:
-    - int and float values as numeric (excluding bool, NaN, and infinity)
-    - None as non-numeric (would cause issues in arithmetic)
-    - String representations of numbers as non-numeric (to match MongoDB behavior)
+    Determines whether ``value`` can be used in arithmetic updates such as
+    ``$inc`` and ``$mul``. Treats ``int`` and finite ``float`` as numeric while
+    excluding ``bool``, ``NaN``, ``inf``, ``None``, and numeric strings.
 
     Args:
-        value: The value to check
+        value: The value to check.
 
     Returns:
-        bool: True if the value is numeric, False otherwise
+        bool: True if the value is a finite non-bool number, False otherwise.
     """
     # Explicitly exclude boolean values (even though bool is subclass of int in Python)
     if isinstance(value, bool):
@@ -305,15 +394,14 @@ def _is_numeric_value(value: Any) -> bool:
 
 
 def validate_session(session: Any | None, connection: Any) -> None:
-    """
-    Validate that the session belongs to this connection.
+    """Validate that the session belongs to the given database connection.
 
     Args:
-        session: ClientSession instance or None
-        connection: The parent Connection or sqlite3.Connection object to validate against
+        session: ``ClientSession`` instance or ``None``.
+        connection: Parent ``Connection`` or ``sqlite3.Connection`` to check.
 
     Raises:
-        ValueError: If the session belongs to a different connection
+        ValueError: If the session belongs to a different connection.
     """
     if session is not None:
         # connection could be neosqlite.Connection or sqlite3.Connection
@@ -363,7 +451,17 @@ __all__ = [
 
 
 def is_encoded_json_value(value: Any) -> bool:
-    """Return True if value is serialized as a JSON object string (ObjectId or Binary)."""
+    """Return True if value is stored as an encoded JSON wrapper object.
+
+    Detects ``ObjectId`` instances and ``bytes`` subclasses exposing an
+    ``encode_for_storage`` method (such as ``Binary``).
+
+    Args:
+        value: Python query or document value to check.
+
+    Returns:
+        bool: True if ``value`` is serialized as a JSON wrapper object.
+    """
     from ..objectid import ObjectId
 
     return isinstance(value, ObjectId) or (
@@ -374,11 +472,19 @@ def is_encoded_json_value(value: Any) -> bool:
 def serialize_sql_query_value(
     value: Any, jsonb_supported: bool = False
 ) -> tuple[Any, str]:
-    """Serialize a Python query value and return (sql_param, sql_placeholder).
+    """Serialize a Python query value and return ``(sql_param, placeholder)``.
 
-    ObjectId and Binary values are stored as JSON objects in ``data``; under JSONB
-    mode, ``jsonb(?)`` lets SQLite compare JSONB-extracted/iterated values directly
-    against compact JSON text.
+    ``ObjectId`` and ``Binary`` values are stored as JSON objects in ``data``;
+    under JSONB mode, ``jsonb(?)`` lets SQLite compare JSONB-extracted or
+    iterated values directly against compact JSON text.
+
+    Args:
+        value: Python query value to bind in a SQL condition.
+        jsonb_supported: Whether SQLite JSONB comparisons are active.
+
+    Returns:
+        tuple[Any, str]: Bound SQL parameter and SQL placeholder (``"?"`` or
+        ``"jsonb(?)"``).
     """
     if is_encoded_json_value(value):
         from .json_helpers import neosqlite_json_dumps_for_sql
@@ -393,13 +499,31 @@ def serialize_sql_query_value(
 def serialize_in_values(
     values: list[Any] | tuple[Any, ...], jsonb_supported: bool = False
 ) -> tuple[str, list[Any]]:
-    """Serialize values for a SQL IN (...) list, returning (placeholders_sql, params)."""
+    """Serialize values for a SQL ``IN (...)`` list.
+
+    Calls ``serialize_sql_query_value`` on each element and joins the
+    resulting placeholders into a comma-separated SQL fragment.
+
+    Args:
+        values: Sequence of Python query values to serialize.
+        jsonb_supported: Whether SQLite JSONB comparisons are active.
+
+    Returns:
+        tuple[str, list[Any]]: Tuple of ``(placeholders_sql, params)``.
+    """
     pairs = [serialize_sql_query_value(v, jsonb_supported) for v in values]
     return ", ".join(ph for _, ph in pairs), [p for p, _ in pairs]
 
 
 def _bson_json_types(value: Any) -> list[str]:
-    """Return SQLite json_type/json_each.type strings matching value's BSON type."""
+    """Return SQLite ``json_type`` / ``json_each.type`` names for a value.
+
+    Args:
+        value: Python value whose compatible SQLite JSON types are needed.
+
+    Returns:
+        list[str]: Matching SQLite JSON type names, or ``[]`` if unknown.
+    """
     if isinstance(value, bool):
         return ["true", "false"]
     if isinstance(value, (int, float)):
@@ -416,7 +540,15 @@ def _bson_json_types(value: Any) -> list[str]:
 
 
 def json_type_guard_sql(json_path: str, value: Any) -> str:
-    """Return a SQL fragment restricting json_type to the value's BSON type."""
+    """Return a SQL predicate restricting ``json_type`` to a value's BSON type.
+
+    Args:
+        json_path: Quoted SQL JSON path expression (e.g. ``"'$.a'"``).
+        value: Python value whose SQLite JSON type should be matched.
+
+    Returns:
+        str: SQL predicate guarding ``json_type(data, json_path)``.
+    """
     if value is None:
         return f"json_type(data, {json_path}) IS NULL"
     types = _bson_json_types(value)
@@ -429,7 +561,14 @@ def json_type_guard_sql(json_path: str, value: Any) -> str:
 
 
 def json_types_for_values(values: list[Any] | tuple[Any, ...]) -> list[str]:
-    """Collect sorted unique SQLite json_type names for a sequence of values."""
+    """Collect sorted unique SQLite ``json_type`` names for a sequence.
+
+    Args:
+        values: Sequence of Python values to inspect.
+
+    Returns:
+        list[str]: Sorted unique SQLite JSON type strings across ``values``.
+    """
     types: set[str] = set()
     for val in values:
         types.update(_bson_json_types(val))
@@ -437,7 +576,15 @@ def json_types_for_values(values: list[Any] | tuple[Any, ...]) -> list[str]:
 
 
 def json_type_list_sql(value: Any) -> str:
-    """Return a SQL IN-list of json_type/json_each.type values for a value."""
+    """Return a SQL ``IN``-list tuple of ``json_type`` names for a value.
+
+    Args:
+        value: Python value whose SQLite JSON type names are formatted.
+
+    Returns:
+        str: SQL tuple literal such as ``"('integer', 'real')"``, defaulting
+        to ``"('null',)"`` when no known JSON types match.
+    """
     types = _bson_json_types(value)
     if not types:
         return "('null',)"
@@ -445,7 +592,22 @@ def json_type_list_sql(value: Any) -> str:
 
 
 def regex_to_sql_pattern(value: Any, options: str = "") -> str | None:
-    """Convert a regex string (+ $options) or compiled re.Pattern to a SQLite REGEXP pattern."""
+    """Convert a regex string or ``re.Pattern`` to a SQLite REGEXP pattern.
+
+    Supports compiled ``re.Pattern`` instances with string patterns and
+    flags within ``IGNORECASE``, ``MULTILINE``, ``DOTALL``, ``VERBOSE``,
+    ``UNICODE``, and ``ASCII``, as well as string patterns with ``options``
+    characters (``i``, ``m``, ``s``, ``x``).
+
+    Args:
+        value: Compiled ``re.Pattern`` or regex pattern string.
+        options: Optional MongoDB regex options string when ``value`` is a
+            ``str``.
+
+    Returns:
+        str | None: SQLite-compatible pattern string with inline flags, or
+        ``None`` if ``value`` uses unsupported flags/types or fails to compile.
+    """
     if isinstance(value, re.Pattern):
         raw_pattern = value.pattern
         if not isinstance(raw_pattern, str):
@@ -496,7 +658,15 @@ def regex_to_sql_pattern(value: Any, options: str = "") -> str | None:
 
 
 def _format_types_in_sql(values: list[Any] | tuple[Any, ...]) -> str:
-    """Format SQLite json_type values into a SQL IN tuple."""
+    """Format SQLite ``json_type`` names for values into a SQL ``IN`` tuple.
+
+    Args:
+        values: Sequence of Python values to inspect.
+
+    Returns:
+        str: SQL tuple literal of unique JSON type names, defaulting to
+        ``"('null',)"`` when empty.
+    """
     types = json_types_for_values(values)
     if not types:
         return "('null',)"
@@ -511,7 +681,28 @@ def build_json_in_clause(
     jsonb_supported: bool,
     json_each_function: str,
 ) -> tuple[str, list[Any]]:
-    """Build SQL WHERE predicate and params for MongoDB $in on a JSON field."""
+    """Build SQL WHERE predicate and params for MongoDB ``$in`` on JSON fields.
+
+    Handles empty lists (always false ``"0"``), unwrapped ``value`` array
+    paths, ``None`` elements (matching missing/null fields or null array
+    items), non-object scalar/array checks via ``json_each``/``jsonb_each``,
+    and object values (including ``ObjectId`` and ``Binary``) via
+    ``<prefix>_extract``.
+
+    Args:
+        data_expr: SQL expression yielding the JSON/JSONB document column.
+        json_path: Quoted JSON path expression or ``"value"`` inside
+            ``json_each``.
+        op_val: Sequence of candidate values for ``$in``.
+        json_function_prefix: Prefix for scalar JSON functions (``"json"`` or
+            ``"jsonb"``).
+        jsonb_supported: Whether ``jsonb_*`` comparison syntax is enabled.
+        json_each_function: Table-valued function name (``"json_each"`` or
+            ``"jsonb_each"``).
+
+    Returns:
+        tuple[str, list[Any]]: Tuple of ``(sql_clause, params)``.
+    """
     if not op_val:
         return "0", []
     has_null = any(v is None for v in op_val)
@@ -595,7 +786,27 @@ def build_json_nin_clause(
     jsonb_supported: bool,
     json_each_function: str,
 ) -> tuple[str, list[Any]]:
-    """Build SQL WHERE predicate and params for MongoDB $nin on a JSON field."""
+    """Build SQL WHERE clause and params for MongoDB ``$nin`` on JSON fields.
+
+    Handles empty lists (always true ``"1"``), unwrapped ``value`` array
+    paths, null exclusion (requiring non-missing, non-null fields and no null
+    array elements when ``None`` is present), non-object fields, and object
+    values (including ``ObjectId`` and ``Binary``).
+
+    Args:
+        data_expr: SQL expression yielding the JSON/JSONB document column.
+        json_path: Quoted JSON path expression or ``"value"`` inside
+            ``json_each``.
+        op_val: Sequence of excluded values for ``$nin``.
+        json_function_prefix: Prefix for scalar JSON functions (``"json"`` or
+            ``"jsonb"``).
+        jsonb_supported: Whether ``jsonb_*`` comparison syntax is enabled.
+        json_each_function: Table-valued function name (``"json_each"`` or
+            ``"jsonb_each"``).
+
+    Returns:
+        tuple[str, list[Any]]: Tuple of ``(sql_clause, params)``.
+    """
     if not op_val:
         return "1", []
     has_null = any(v is None for v in op_val)
@@ -672,7 +883,14 @@ def build_json_nin_clause(
 
 
 def expr_truthiness_sql(sql_expr: str) -> str:
-    """Wrap a Tier-1 $expr SQL expression in MongoDB truthiness semantics."""
+    """Wrap a Tier-1 ``$expr`` SQL expression in MongoDB truthiness logic.
+
+    Args:
+        sql_expr: Translated SQL expression representing an ``$expr`` value.
+
+    Returns:
+        str: SQL boolean predicate matching MongoDB truthiness semantics.
+    """
     if "json('true')" in sql_expr or 'json("true")' in sql_expr:
         return f"({sql_expr} = json('true'))"
     return f"(COALESCE(({sql_expr}), 0) != 0)"
@@ -685,7 +903,23 @@ def build_json_containment_clause(
     value: Any,
     json_each_function: str,
 ) -> tuple[str, list[Any]]:
-    """Build scalar equality + array containment clause (#99) for a regular JSON field."""
+    """Build scalar equality and array containment SQL clause for a field.
+
+    Combines direct scalar comparison (``field_access = ?``) with ``EXISTS``
+    checks over ``json_each_function`` across every dotted prefix of
+    ``field`` to mirror MongoDB array traversal semantics (#99).
+
+    Args:
+        data_expr: SQL expression yielding the JSON/JSONB document column.
+        field: Dotted MongoDB field path (e.g., ``"items.tag"``).
+        field_access: SQL expression extracting the field directly.
+        value: Target scalar or encoded JSON value to match.
+        json_each_function: Table-valued function name (``"json_each"`` or
+            ``"jsonb_each"``).
+
+    Returns:
+        tuple[str, list[Any]]: Tuple of ``(sql_clause, params)``.
+    """
     is_field_jsonb = field_access.startswith("jsonb_extract(")
     each_is_jsonb = json_each_function == "jsonb_each"
     scalar_val, scalar_ph = serialize_sql_query_value(value, is_field_jsonb)
@@ -728,11 +962,18 @@ def build_json_containment_clause(
 
 
 def _hashable_group_key(value: Any) -> tuple:
-    """Type-tagged, hashable stand-in for a $group _id value (#103).
+    """Build a type-tagged, hashable key for a ``$group`` ``_id`` value.
 
-    MongoDB groups by array/document values too; Python dicts require
-    hashable keys, so complex values are represented by their canonical
-    structure while the ORIGINAL value is kept as the returned _id.
+    MongoDB groups by array and document values as well as scalars; Python
+    dicts require hashable keys, so nested structures are converted into
+    canonical type-tagged tuples while keeping the original value as ``_id``
+    (#103).
+
+    Args:
+        value: Any Python value representing a ``$group`` ``_id`` key.
+
+    Returns:
+        tuple: Canonical hashable type-tagged tuple representation.
     """
     match value:
         case bool():
@@ -789,8 +1030,22 @@ def build_bson_type_sql(
 ) -> str | None:
     """Build a SQLite predicate matching MongoDB ``$type`` semantics.
 
-    Returns ``None`` when any requested type requires Python evaluation
-    (for example BSON date, regex, or unknown type names/codes).
+    Supports single type specifications (BSON integer code, alias string from
+    ``_BSON_TYPE_ALIASES``, or Python type) as well as lists/tuples of types
+    combined with ``OR``. Distinguishes plain objects from encoded
+    ``ObjectId``, ``Binary``, and ``$date`` documents.
+
+    Args:
+        data_expr: SQL expression yielding the JSON/JSONB document column.
+        json_path: Quoted JSON path expression (ignored if ``val_expr`` set).
+        type_spec: BSON type code, alias string, Python type, or list/tuple.
+        type_expr: Optional precomputed SQL ``json_type`` expression.
+        val_expr: Optional SQL expression yielding an already-extracted value.
+
+    Returns:
+        str | None: SQLite predicate string, or ``None`` when any requested
+        type requires Python evaluation (e.g., date, regex, unknown type) or
+        when ``json_path`` is not a quoted literal without ``val_expr``.
     """
     from ..binary import Binary
     from ..objectid import ObjectId

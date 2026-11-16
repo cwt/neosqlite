@@ -16,7 +16,18 @@ if TYPE_CHECKING:
 
 
 class CRUDOperationsMixin:
-    """Mixin providing CRUD operations for QueryHelper."""
+    """Mixin providing low-level CRUD operations for QueryHelper.
+
+    Implements internal insert, replace, and delete helpers against the
+    underlying SQLite table, including ``_id`` generation/preservation,
+    ``bytes``-to-``Binary`` conversion, and JSON validation.
+
+    Expected attributes from host class:
+        - collection: Target ``Collection`` instance.
+        - _get_integer_id_for_oid: Resolver mapping document IDs to row IDs.
+        - _validate_json_document: Validator for serialized JSON documents.
+        - _get_json_error_position: Diagnostic helper for invalid JSON.
+    """
 
     collection: "Collection"
     _get_integer_id_for_oid: Any
@@ -24,24 +35,23 @@ class CRUDOperationsMixin:
     _get_json_error_position: Any
 
     def _internal_insert(self, document: dict[str, Any]) -> Any:
-        """
-        Inserts a document into the collection and returns the inserted document's _id.
+        """Insert a document into the collection and return its _id.
 
-        This method inserts a document into the collection after converting any bytes
-        objects to Binary objects for proper JSON serialization and validating the
-        resulting JSON string. It handles both databases with JSON1 support and those
-        without by providing appropriate fallbacks.
+        Generates a new ``ObjectId`` when ``_id`` is omitted or ``None``,
+        converts ``bytes`` values to ``Binary`` for JSON serialization, and
+        validates the resulting JSON string before inserting into SQLite. If
+        ``_id`` was not present in ``document``, it is populated in place.
 
         Args:
-            document (dict): The document to insert. Must be a dictionary.
+            document: The document dictionary to insert.
 
         Returns:
-            int: The auto-increment id of the inserted document.
+            Any: The generated ``ObjectId`` or user-provided ``_id`` value.
 
         Raises:
-            MalformedDocument: If the document is not a dictionary
-            ValueError: If the document contains invalid JSON
-            sqlite3.Error: If database operations fail
+            MalformedDocument: If ``document`` is not a dictionary.
+            ValueError: If serialized JSON validation fails.
+            sqlite3.Error: If the SQLite insert fails to yield a row ID.
         """
         from ...exceptions import MalformedDocument
 
@@ -111,12 +121,14 @@ class CRUDOperationsMixin:
         return generated_id
 
     def _internal_replace(self, doc_id: Any, replacement: dict[str, Any]):
-        """
-        Replaces an entire document in the collection.
+        """Replace an entire document in the collection.
+
+        Preserves the existing ``_id`` from the stored JSON document or the
+        dedicated ``_id`` column when ``replacement`` omits ``"_id"``.
 
         Args:
-            doc_id (Any): The ID of the document to replace (can be ObjectId, int, etc.).
-            replacement (dict[str, Any]): The new document to replace the existing one.
+            doc_id: ID of the document to replace (ObjectId, int, etc.).
+            replacement: Replacement document mapping.
         """
         from ..json_helpers import neosqlite_json_loads
 
@@ -147,11 +159,13 @@ class CRUDOperationsMixin:
         )
 
     def _internal_delete(self, doc_id: Any):
-        """
-        Deletes a document from the collection based on the document ID.
+        """Delete a document from the collection by document ID.
+
+        Resolves ``doc_id`` to the internal SQLite integer row ID and deletes
+        the matching row from the collection table.
 
         Args:
-            doc_id (Any): The ID of the document to delete (can be ObjectId, int, etc.).
+            doc_id: ID of the document to delete (ObjectId, int, etc.).
         """
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)

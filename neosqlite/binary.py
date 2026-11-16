@@ -1,3 +1,5 @@
+"""BSON Binary-like representation for NeoSQLite documents."""
+
 from __future__ import annotations
 
 import base64
@@ -6,24 +8,23 @@ from typing import Self
 
 
 class Binary(bytes):
-    """
-    A BSON Binary-like class for representing binary data in neosqlite.
+    """A BSON Binary-like class for representing binary data in neosqlite.
 
-    This class provides a PyMongo-compatible interface for storing binary data
-    directly in documents (outside of GridFS). The data is automatically
-    encoded/decoded when stored in SQLite JSON documents.
+    Provides a PyMongo-compatible ``bytes`` subclass with an associated BSON
+    subtype integer for storing binary data directly in documents (outside of
+    GridFS). Instances are automatically encoded to and decoded from base64
+    dictionaries when stored in SQLite JSON documents.
 
-    Example usage:
-        # Create binary data
-        binary_data = Binary(b"some binary content")
-
-        # Store in document
-        collection.insert_one({"data": binary_data})
-
-        # Retrieve and use
-        doc = collection.find_one({})
-        retrieved_data = doc["data"]  # Returns Binary instance
-        raw_bytes = bytes(retrieved_data)  # Convert to bytes if needed
+    Example:
+        >>> from neosqlite import Connection
+        >>> db = Connection(":memory:")
+        >>> collection = db.test
+        >>> binary_data = Binary(b"some binary content")
+        >>> _ = collection.insert_one({"data": binary_data})
+        >>> doc = collection.find_one({})
+        >>> raw_bytes = bytes(doc["data"])
+        >>> raw_bytes
+        b'some binary content'
     """
 
     # Type declaration for mypy
@@ -45,15 +46,22 @@ class Binary(bytes):
         data: bytes | bytearray | memoryview,
         subtype: int = BINARY_SUBTYPE,
     ):
-        """
-        Create a new Binary instance.
+        """Create a new ``Binary`` instance.
 
         Args:
-            data: Binary data (bytes, bytearray, or memoryview)
-            subtype: Binary subtype (default: BINARY_SUBTYPE)
+            data: Binary payload as ``bytes``, ``bytearray``, or
+                ``memoryview``.
+            subtype: BSON binary subtype in ``[0, 256)`` (defaults to
+                ``BINARY_SUBTYPE``).
 
         Returns:
-            A new Binary instance
+            Binary: A new ``Binary`` instance wrapping ``data`` and
+                ``subtype``.
+
+        Raises:
+            TypeError: If ``data`` is not ``bytes``, ``bytearray``, or
+                ``memoryview``, or if ``subtype`` is not an ``int``.
+            ValueError: If ``subtype`` is outside the range ``[0, 256)``.
         """
         if isinstance(data, (bytearray, memoryview)):
             data = bytes(data)
@@ -72,15 +80,21 @@ class Binary(bytes):
 
     @property
     def subtype(self) -> int:
-        """Get the binary subtype."""
+        """Return the BSON binary subtype.
+
+        Returns:
+            int: The integer subtype code assigned to this instance.
+        """
         return self._subtype
 
     def encode_for_storage(self) -> dict:
-        """
-        Encode the binary data for JSON storage.
+        """Encode the binary data for JSON storage.
+
+        Serializes the raw bytes using UTF-8 base64 alongside the
+        ``__neosqlite_binary__`` marker and ``subtype``.
 
         Returns:
-            A dictionary representation for JSON storage
+            dict: A dictionary representation suitable for JSON storage.
         """
         return {
             "__neosqlite_binary__": True,
@@ -90,14 +104,18 @@ class Binary(bytes):
 
     @classmethod
     def decode_from_storage(cls, encoded_data: dict) -> Self:
-        """
-        Decode binary data from JSON storage.
+        """Decode binary data from JSON storage.
 
         Args:
-            encoded_data: Dictionary representation from JSON storage
+            encoded_data: Dictionary representation previously produced by
+                ``encode_for_storage``.
 
         Returns:
-            A Binary instance
+            Self: A reconstructed ``Binary`` instance.
+
+        Raises:
+            ValueError: If ``encoded_data`` is not a valid encoded binary
+                dictionary or is missing the ``"data"`` field.
         """
         if (
             not isinstance(encoded_data, dict)
@@ -116,15 +134,19 @@ class Binary(bytes):
 
     @classmethod
     def from_uuid(cls, uuid_value, uuid_representation=None):
-        """
-        Create a Binary instance from a UUID.
+        """Create a ``Binary`` instance from a ``uuid.UUID``.
 
         Args:
-            uuid_value: A UUID instance
-            uuid_representation: UUID representation (ignored in neosqlite)
+            uuid_value: A ``uuid.UUID`` instance to convert.
+            uuid_representation: UUID representation (accepted for PyMongo API
+                compatibility and ignored in neosqlite).
 
         Returns:
-            A Binary instance with UUID_SUBTYPE
+            Binary: A ``Binary`` instance containing the UUID bytes with
+                ``UUID_SUBTYPE``.
+
+        Raises:
+            TypeError: If ``uuid_value`` is not a ``uuid.UUID`` instance.
         """
         if not isinstance(uuid_value, uuid.UUID):
             raise TypeError("uuid_value must be a UUID instance")
@@ -133,14 +155,18 @@ class Binary(bytes):
         return cls(uuid_value.bytes, cls.UUID_SUBTYPE)
 
     def as_uuid(self, uuid_representation=None):
-        """
-        Convert this Binary instance to a UUID.
+        """Convert this ``Binary`` instance back to a ``uuid.UUID``.
+
+        Args:
+            uuid_representation: UUID representation (accepted for PyMongo API
+                compatibility and ignored in neosqlite).
 
         Returns:
-            A UUID instance
+            uuid.UUID: The ``UUID`` constructed from the instance bytes.
 
         Raises:
-            ValueError: If the subtype is not UUID_SUBTYPE
+            ValueError: If this instance's ``subtype`` is not
+                ``UUID_SUBTYPE``.
         """
         if self._subtype != self.UUID_SUBTYPE:
             raise ValueError("Binary subtype is not UUID_SUBTYPE")
@@ -148,14 +174,31 @@ class Binary(bytes):
         return uuid.UUID(bytes=bytes(self))
 
     def __repr__(self) -> str:
-        """Return a string representation of the Binary instance."""
+        """Return a string representation of the ``Binary`` instance.
+
+        Omits the subtype argument when it equals ``BINARY_SUBTYPE``.
+
+        Returns:
+            str: Printable representation of the binary value and subtype.
+        """
         if self._subtype == self.BINARY_SUBTYPE:
             return f"Binary({super().__repr__()})"
         else:
             return f"Binary({super().__repr__()}, {self._subtype})"
 
     def __eq__(self, other) -> bool:
-        """Check equality with another object."""
+        """Check equality with another ``Binary`` or ``bytes`` object.
+
+        Another ``Binary`` matches when both bytes and subtype are equal. A
+        plain ``bytes`` object matches only when this instance has
+        ``BINARY_SUBTYPE``.
+
+        Args:
+            other: Object to compare against.
+
+        Returns:
+            bool: True if ``other`` is equal to this instance, False otherwise.
+        """
         if isinstance(other, Binary):
             return super().__eq__(other) and self._subtype == other._subtype
         elif isinstance(other, bytes):
@@ -165,9 +208,21 @@ class Binary(bytes):
         return False
 
     def __ne__(self, other) -> bool:
-        """Check inequality with another object."""
+        """Check inequality with another object.
+
+        Args:
+            other: Object to compare against.
+
+        Returns:
+            bool: True if ``other`` is not equal to this instance, False
+                otherwise.
+        """
         return not self.__eq__(other)
 
     def __hash__(self) -> int:
-        """Return a hash value for the Binary instance."""
+        """Return a hash value for the ``Binary`` instance.
+
+        Returns:
+            int: Hash computed from the underlying bytes and subtype.
+        """
         return hash((bytes(self), self._subtype))

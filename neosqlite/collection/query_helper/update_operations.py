@@ -36,7 +36,16 @@ from .utils import (
 
 
 def _unset_nested_field(doc: dict[str, Any], field_path: str) -> None:
-    """Remove a possibly dotted field path from a document in-place."""
+    """Remove a top-level or dotted field path from a document in place.
+
+    Traverses intermediate dictionaries along ``field_path`` when dotted and
+    pops the leaf key if present, returning silently if any intermediate key
+    is missing or not a dictionary.
+
+    Args:
+        doc: Document dictionary to mutate in place.
+        field_path: Top-level field name or dot-separated nested path.
+    """
     if "." not in field_path:
         doc.pop(field_path, None)
         return
@@ -51,7 +60,15 @@ def _unset_nested_field(doc: dict[str, Any], field_path: str) -> None:
 
 
 def _get_field_for_update(doc: dict[str, Any], field_path: str) -> Any:
-    """Read a top-level or dotted field for update validation/calculation."""
+    """Read a top-level or dotted field value for update calculations.
+
+    Args:
+        doc: Source document dictionary.
+        field_path: Top-level field name or dot-separated nested path.
+
+    Returns:
+        Any: Field value if found, or ``None`` if absent.
+    """
     if "." not in field_path:
         return doc.get(field_path)
     if _field_exists(field_path, doc):
@@ -62,7 +79,16 @@ def _get_field_for_update(doc: dict[str, Any], field_path: str) -> Any:
 def _set_field_for_update(
     doc: dict[str, Any], field_path: str, value: Any
 ) -> None:
-    """Write a top-level or dotted field for Python update operations."""
+    """Write a top-level or dotted field for Python update operations.
+
+    Sets top-level keys directly and delegates dotted paths to
+    :func:`_set_nested_field`.
+
+    Args:
+        doc: Document dictionary to update in place.
+        field_path: Top-level field name or dot-separated nested path.
+        value: Value to assign at ``field_path``.
+    """
     if "." not in field_path:
         doc[field_path] = value
     else:
@@ -75,14 +101,12 @@ if TYPE_CHECKING:
 
 
 class UpdateOperationsMixin(SqlUpdatesMixin):
-    """
-    A mixin class providing update operations for QueryHelper.
+    """Mixin class providing document update operations for QueryHelper.
 
-    This mixin assumes it will be used with a class that has:
-    - self.collection (with db and name attributes)
-    - self.jsonb.jsonb_supported
-    - self.jsonb.json_function_prefix
-    - self._build_simple_where_clause method
+    Dispatches updates across the unified SQL expression path, legacy SQL
+    update paths, and the Python fallback implementation. Expects subclasses to
+    provide ``collection``, ``jsonb``, and ``_get_integer_id_for_oid``, and
+    inherits SQL update helpers from :class:`SqlUpdatesMixin`.
     """
 
     collection: "Collection"
@@ -97,21 +121,26 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
         array_filters: list[dict[str, Any]] | None = None,
         query_filter: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        """
-        Helper method for updating documents.
+        """Apply an update specification using SQL or Python fallback paths.
 
-        Attempts to use SQL-based updates for simple operations, falling back to
-        Python-based updates for complex operations.
+        Pre-validates ``$inc`` and ``$mul`` operands, honors
+        ``get_force_fallback()``, attempts unified SQL expression updates when
+        ``doc_id != 0``, then falls back to legacy enhanced/standard SQL paths
+        (when ``array_filters`` is empty) or Python-based evaluation.
 
         Args:
-            doc_id (Any): The ID of the document to update (can be ObjectId, int, etc.).
-            update_spec (dict[str, Any]): The update specification.
-            original_doc (dict[str, Any]): The original document before the update.
-            array_filters (list[dict[str, Any]], optional): Filter documents for array positional operators.
-            query_filter (dict[str, Any], optional): The query filter for $ operator.
+            doc_id: Document identifier (for example, ``ObjectId`` or ``int``),
+                or ``0`` for an in-memory upsert document.
+            update_spec: Mapping of MongoDB update operators to operands.
+            original_doc: Original document snapshot before applying updates.
+            array_filters: Optional filter documents for positional ``$[...]``
+                array updates.
+            query_filter: Optional query filter used to match positional
+                ``$`` array elements.
 
         Returns:
-            tuple[dict[str, Any], bool]: The updated document and whether it was modified.
+            tuple[dict[str, Any], bool]: Pair ``(updated_doc, was_modified)``
+                indicating whether the document changed.
         """
         # Validate $inc and $mul operations before choosing implementation
         # This ensures consistent behavior between SQL and Python implementations
@@ -214,20 +243,32 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
         array_filters: list[dict[str, Any]] | None = None,
         query_filter: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], bool]:
-        """
-        Perform update operations using Python-based logic.
+        """Apply update operators in Python and persist changes when needed.
+
+        Evaluates ``$set`` (including positional operators), ``$unset``,
+        ``$inc``, ``$push`` (with ``$each``, ``$position``, ``$slice``),
+        ``$addToSet`` (with ``$each``), ``$pull``, ``$pullAll``, ``$pop``,
+        ``$bit``, ``$rename``, ``$mul``, ``$min``, ``$max``, ``$currentDate``,
+        and ``$setOnInsert`` (for ``doc_id == 0``) on a deep copy of
+        ``original_doc``. Writes the updated JSON back to SQLite when
+        ``doc_id != 0``.
 
         Args:
-            doc_id (Any): The document ID of the document to update (can be ObjectId, int, etc.).
-            update_spec (dict[str, Any]): A dictionary specifying the update
-                                          operations to perform.
-            original_doc (dict[str, Any]): The original document before applying
-                                           the updates.
-            array_filters (list[dict[str, Any]], optional): Filter documents for array positional operators.
-            query_filter (dict[str, Any], optional): The query filter for $ operator.
+            doc_id: Document identifier (``ObjectId``, ``int``, etc.), or
+                ``0`` when constructing a document for upsert insertion.
+            update_spec: Mapping of MongoDB update operators to specifications.
+            original_doc: Original document prior to applying updates.
+            array_filters: Optional filter documents for positional array
+                updates.
+            query_filter: Optional query filter for positional ``$`` matching.
 
         Returns:
-            tuple[dict[str, Any], bool]: The updated document and whether it was modified.
+            tuple[dict[str, Any], bool]: Pair ``(doc_to_update, was_modified)``
+                comparing the result to ``original_doc``.
+
+        Raises:
+            MalformedQueryException: If a ``$bit`` operand is not a dict or an
+                update operator is unsupported.
         """
         doc_to_update = deepcopy(original_doc)
 

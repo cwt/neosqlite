@@ -35,20 +35,18 @@ _HAS_QUEZ = importlib.util.find_spec("quez") is not None
 
 
 class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
-    """
-    A class that provides methods for querying and manipulating documents in a collection.
+    """Provides methods for querying and manipulating collection documents.
 
-    The QueryEngine handles all database operations including inserting, updating, deleting,
-    and finding documents. It also supports aggregation pipelines, bulk operations, and
-    various utility methods for counting and retrieving distinct values.
+    Coordinates CRUD, find, count/distinct, aggregation pipeline, and bulk
+    write operations across SQL Tier 1 (CTE), SQL Tier 1.5 (legacy), Tier 2
+    (temporary table), and Tier 3 (Python fallback) execution paths.
     """
 
     def __init__(self, collection):
-        """
-        Initialize the QueryEngine with a collection.
+        """Initialize the QueryEngine with a collection.
 
         Args:
-            collection: The collection instance this QueryEngine will operate on.
+            collection: Collection instance this ``QueryEngine`` operates on.
         """
         self.collection = collection
         self.helpers = QueryHelper(collection)
@@ -77,20 +75,33 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self._last_tier: str | None = None  # type: ignore[annotation-unchecked]
 
     def add_tier_change_callback(self, callback: TierChangeCallback) -> None:
-        """Add a callback to be notified when query tier changes.
+        """Add a callback to be notified when the query tier changes.
 
-        Callback receives: (previous_tier: str | None, new_tier: str, pipeline: list)
-        where tier is one of:
-        - "tier1" (SQL CTE - new aggregation optimizer)
-        - "tier1_standard" (non-CTE SQL aggregation)
-        - "tier2" (temp table for complex $expr)
-        - "tier3" (Python fallback)
-        - None (before any query)
+        The callback receives ``(previous_tier, new_tier, pipeline)`` where
+        each tier name is one of:
+
+        - ``"tier1"``: SQL CTE aggregation optimizer
+        - ``"tier1_standard"``: Non-CTE SQL aggregation
+        - ``"tier2"``: Temporary table aggregation for complex pipelines
+        - ``"tier3"``: Python fallback
+        - ``None``: Initial state before any query has run
+
+        Args:
+            callback: Callable invoked as ``callback(previous_tier, new_tier,
+                pipeline)`` whenever the active tier changes.
         """
         self._tier_callbacks.append(callback)
 
     def remove_tier_change_callback(self, callback: TierChangeCallback) -> bool:
-        """Remove a tier change callback. Returns True if found."""
+        """Remove a previously registered tier change callback.
+
+        Args:
+            callback: Callback function to remove from the notification list.
+
+        Returns:
+            bool: ``True`` if the callback was found and removed, ``False``
+                otherwise.
+        """
         try:
             self._tier_callbacks.remove(callback)
             return True
@@ -98,7 +109,12 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             return False
 
     def get_last_tier(self) -> str | None:
-        """Get the last tier that was used for query execution."""
+        """Get the last tier used for aggregation query execution.
+
+        Returns:
+            str | None: Name of the most recently used tier, or ``None`` if no
+                tracked query has executed yet.
+        """
         return self._last_tier
 
     def clear_tier_callbacks(self) -> None:
@@ -106,7 +122,16 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         self._tier_callbacks.clear()
 
     def _notify_tier_change(self, new_tier: str, pipeline: list) -> None:
-        """Notify all callbacks of a tier change."""
+        """Notify registered callbacks when the execution tier changes.
+
+        Invokes each callback only if ``new_tier`` differs from
+        ``self._last_tier``, catching any callback exception so query
+        execution is unaffected, and then updates ``self._last_tier``.
+
+        Args:
+            new_tier: Identifier of the tier selected for ``pipeline``.
+            pipeline: Aggregation pipeline stages executed under ``new_tier``.
+        """
         if self._last_tier != new_tier:
             for callback in self._tier_callbacks:
                 try:
@@ -127,21 +152,22 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         batch_size: int = 101,
         session: ClientSession | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        Applies a list of aggregation pipeline stages to the collection.
+        """Execute an aggregation pipeline against the collection.
 
-        This method handles both simple and complex queries. For simpler queries,
-        it leverages the database's native indexing capabilities to optimize
-        performance. For more complex queries, it falls back to a Python-based
-        processing mechanism.
+        Validates ``session`` and delegates to
+        ``aggregate_with_constraints``, selecting the fastest supported
+        execution tier (SQL Tier 1 CTE, legacy SQL Tier 1.5, Tier 2 temporary
+        tables, or Python fallback).
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
-            batch_size (int): The batch size for fetching results from database.
-            session (ClientSession, optional): A ClientSession for transactions.
+            pipeline: List of aggregation pipeline stage dictionaries.
+            batch_size: Number of rows fetched per database batch. Defaults to
+                101.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            list[dict[str, Any]]: The list of documents after applying the aggregation pipeline.
+            list[dict[str, Any]]: Documents produced by the aggregation
+                pipeline.
         """
         validate_session(session, self.collection._database)
         return self.aggregate_with_constraints(
@@ -155,17 +181,24 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         memory_constrained: bool = False,
         session: ClientSession | None = None,
     ) -> list[dict[str, Any]] | CompressedQueue:
-        """
-        Applies a list of aggregation pipeline stages with memory constraints.
+        """Execute an aggregation pipeline with optional memory constraints.
+
+        Attempts execution via ``quez`` when ``memory_constrained`` is
+        ``True`` and ``quez`` is installed, then tries SQL Tier 1, legacy SQL
+        Tier 1.5, Tier 2 temporary tables, fast ``$count`` shortcuts, and
+        finally Python fallback.
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
-            batch_size (int): The batch size for processing large result sets.
-            memory_constrained (bool): Whether to use memory-constrained processing.
-            session (ClientSession, optional): A ClientSession for transactions.
+            pipeline: List of aggregation pipeline stage dictionaries.
+            batch_size: Number of rows fetched per database batch. Defaults to
+                101.
+            memory_constrained: Whether to return results in a compressed
+                ``quez.CompressedQueue`` when ``quez`` is available.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            list[dict[str, Any]] | CompressedQueue: The results as either a list or compressed queue.
+            list[dict[str, Any]] | CompressedQueue: Result document list, or a
+                ``CompressedQueue`` when memory-constrained mode is active.
         """
         validate_session(session, self.collection._database)
         # If memory_constrained is True and quez is available, use quez for processing
@@ -362,15 +395,20 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         pipeline: list[dict[str, Any]],
         session: ClientSession | None = None,
     ) -> dict[str, Any]:
-        """
-        Explain the execution plan for an aggregation pipeline.
+        """Explain the execution plan for an aggregation pipeline.
+
+        Probes SQL Tier 1 (CTE), legacy SQL Tier 1.5, Tier 2 temporary-table
+        eligibility, and Python fallback in order without executing the full
+        aggregation query.
 
         Args:
-            pipeline (list[dict[str, Any]]): The aggregation pipeline to explain.
-            session (ClientSession, optional): A ClientSession for transactions.
+            pipeline: List of aggregation pipeline stages to explain.
+            session: Optional ``ClientSession`` accepted for API compatibility
+                (unused).
 
         Returns:
-            dict[str, Any]: The execution plan explanation.
+            dict[str, Any]: Execution plan dictionary containing ``tier``,
+                ``type``, and tier-specific SQL/plan or ``pipeline`` details.
         """
         # 1. Try SQL Tier 1 optimization
         if self.sql_tier_aggregator.can_optimize_pipeline(pipeline):
@@ -438,23 +476,20 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         batch_size: int = 100,
         session: ClientSession | None = None,
     ) -> RawBatchCursor:
-        """
-        Perform aggregation and retrieve batches of raw JSON.
+        """Perform aggregation and retrieve batches of raw JSON.
 
-        Similar to the :meth:`aggregate` method but returns a
-        :class:`~neosqlite.raw_batch_cursor.RawBatchCursor`.
-
-        This method returns raw JSON batches which can be more efficient for
-        certain use cases where you want to process data in batches rather than
-        individual documents.
+        Similar to ``aggregate()``, but returns a ``RawBatchCursor`` so callers
+        can process raw JSON payloads in batches rather than individual
+        deserialized documents.
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
-            batch_size (int): The number of documents to include in each batch.
-            session (ClientSession, optional): A ClientSession for transactions.
+            pipeline: List of aggregation pipeline stage dictionaries.
+            batch_size: Number of documents to include in each batch. Defaults
+                to 100.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            RawBatchCursor instance.
+            RawBatchCursor: Cursor yielding batches of raw JSON documents.
         """
         validate_session(session, self.collection._database)
         return RawBatchCursor(
@@ -474,19 +509,24 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         ordered: bool = True,
         session: ClientSession | None = None,
     ) -> BulkWriteResult:
-        """
-        Execute bulk write operations on the collection.
+        """Execute bulk write operations on the collection.
+
+        Parses each request with ``_parse_bulk_request`` and dispatches it
+        to the corresponding CRUD method with ``session``.
 
         Args:
-            requests: List of write operations to execute.
-            ordered: If true, operations will be performed in order and will
-                     stop and raise BulkWriteError if an operation fails.
-                     If false, operations will continue executing and will
-                     raise BulkWriteError at the end if any operations failed.
-            session (ClientSession, optional): A ClientSession for transactions.
+            requests: List of write request objects to execute.
+            ordered: If ``True``, execute operations in order and stop on the
+                first error before raising ``BulkWriteError``; if ``False``,
+                attempt all operations and raise at the end if any failed.
+            session: Optional ``ClientSession`` for transactional execution.
 
         Returns:
-            BulkWriteResult: A result object containing counts and upserted_ids.
+            BulkWriteResult: Result object containing operation counts and
+                upserted IDs.
+
+        Raises:
+            BulkWriteError: If one or more write operations fail.
         """
         validate_session(session, self.collection._database)
         inserted_count = 0
@@ -600,15 +640,19 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
     def _aggregate_with_quez(
         self, pipeline: list[dict[str, Any]], batch_size: int = 101
     ) -> CompressedQueue:
-        """
-        Process aggregation pipeline with quez compressed queue for memory efficiency.
+        """Process an aggregation pipeline using a ``quez.CompressedQueue``.
 
         Args:
-            pipeline (list[dict[str, Any]]): A list of aggregation pipeline stages to apply.
-            batch_size (int): The batch size for quez queue processing.
+            pipeline: List of aggregation pipeline stage dictionaries.
+            batch_size: Batch size parameter accepted for signature consistency
+                (unused; results are loaded via ``aggregate(pipeline)``).
 
         Returns:
-            CompressedQueue: A compressed queue containing the results.
+            CompressedQueue: Compressed queue populated with aggregation
+                results.
+
+        Raises:
+            RuntimeError: If importing ``quez`` fails unexpectedly.
         """
         try:
             if _HAS_QUEZ:
