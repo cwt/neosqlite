@@ -51,6 +51,7 @@ class AggregationContext:
         self.stage_index: int = 0
         self.current_field: str | None = None
         self.pipeline_id: str | None = None
+        self.root_column: str | None = None
 
     def bind_document(self, doc: dict[str, Any]) -> None:
         """
@@ -111,6 +112,7 @@ class AggregationContext:
         new_ctx.stage_index = self.stage_index
         new_ctx.current_field = self.current_field
         new_ctx.pipeline_id = self.pipeline_id
+        new_ctx.root_column = self.root_column
         return new_ctx
 
 

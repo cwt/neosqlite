@@ -847,9 +847,59 @@ class TestSQLTierCorrectness:
 
         results = list(collection.aggregate(pipeline))
         assert len(results) == 1
+        assert collection.query_engine.get_last_tier() == "tier1"
+        explain = collection.query_engine.explain_aggregation(pipeline)
+        assert explain.get("tier") == 1
         # binSize for "test data" (9 bytes) might be 9 or 10 in SQL due to approx
         assert results[0]["binSize"] in [9, 10, 11, 12]  # Allow small range
         assert results[0]["docSize"] > 0
+
+    def test_root_preserved_after_stage0_and_in_nested_expressions(
+        self, collection
+    ):
+        """Verify $$ROOT works in Tier 1 across stage-0 shapes and expressions."""
+        collection.insert_many(
+            [
+                {"_id": 100, "name": "Alice", "score": 10},
+                {"_id": 101, "name": "Bob", "score": 20},
+            ]
+        )
+
+        # Stage 0 $addFields changes data; Stage 1 $$ROOT must measure original doc
+        add_pipe = [
+            {"$match": {"_id": {"$in": [100, 101]}}},
+            {"$addFields": {"extra": "x" * 60}},
+            {
+                "$project": {
+                    "rootSize": {"$bsonSize": "$$ROOT"},
+                    "curSize": {"$bsonSize": "$$CURRENT"},
+                    "merged": {"$mergeObjects": ["$$ROOT", {"tag": "v1"}]},
+                }
+            },
+        ]
+        add_res = list(collection.aggregate(add_pipe))
+        assert len(add_res) == 2
+        assert collection.query_engine.get_last_tier() == "tier1"
+        for doc in add_res:
+            assert doc["rootSize"] < doc["curSize"]
+            assert "extra" not in doc["merged"]
+            assert doc["merged"]["tag"] == "v1"
+
+        # Stage 0 $sort / $skip / $limit / $replaceRoot with downstream $$ROOT
+        for first_stage in [
+            {"$sort": {"score": -1}},
+            {"$skip": 0},
+            {"$limit": 5},
+            {"$replaceRoot": {"newRoot": "$$ROOT"}},
+        ]:
+            pipe = [
+                first_stage,
+                {"$project": {"size": {"$bsonSize": "$$ROOT"}}},
+            ]
+            res = list(collection.aggregate(pipe))
+            assert len(res) >= 1
+            assert collection.query_engine.get_last_tier() == "tier1"
+            assert all(row["size"] > 0 for row in res)
 
     def test_size_operators_tier_comparison(self, collection):
         """Compare size operators between SQL and Python tiers with allowed diff."""

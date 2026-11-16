@@ -27,6 +27,20 @@ from .pipeline_context import PipelineContext
 from .query_helper.utils import _check_sqlite_version
 
 
+def _append_root_column(
+    select_parts: list[str],
+    context: PipelineContext,
+    preserve_root: bool,
+    table_alias: str = "",
+) -> None:
+    """Append the root_data projection when $$ROOT preservation is active."""
+    prefix = f"{table_alias}." if table_alias else ""
+    if preserve_root:
+        select_parts.append(f"{prefix}data AS root_data")
+    elif context.has_root:
+        select_parts.append(f"{prefix}root_data")
+
+
 def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
     """Normalize encoded ObjectId JSON dicts to their 24-hex id string."""
     return (
@@ -302,6 +316,16 @@ class StageBuildersMixin:
     def can_optimize_pipeline(self, pipeline: list[dict[str, Any]]) -> bool: ...  # type: ignore[empty-body]
     def _pipeline_needs_root(self, pipeline: list[dict[str, Any]]) -> bool: ...  # type: ignore[empty-body]
 
+    def _make_agg_context(
+        self, context: PipelineContext, preserve_root: bool = False
+    ) -> AggregationContext:
+        """Create an AggregationContext scoped to the current pipeline stage."""
+        agg_ctx = AggregationContext()
+        agg_ctx.stage_index = context.stage_index
+        if context.has_root and not preserve_root:
+            agg_ctx.root_column = "root_data"
+        return agg_ctx
+
     def _build_stage_sequence(
         self,
         pipeline: list[dict[str, Any]],
@@ -355,15 +379,25 @@ class StageBuildersMixin:
                     stage_spec, prev_stage, context, preserve_root
                 )
             case "$group":
-                return self._build_group_sql(stage_spec, prev_stage, context)
+                return self._build_group_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$match":
-                return self._build_match_sql(stage_spec, prev_stage, context)
+                return self._build_match_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$sort":
-                return self._build_sort_sql(stage_spec, prev_stage, context)
+                return self._build_sort_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$skip":
-                return self._build_skip_sql(stage_spec, prev_stage, context)
+                return self._build_skip_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$limit":
-                return self._build_limit_sql(stage_spec, prev_stage, context)
+                return self._build_limit_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$count":
                 return self._build_count_sql(stage_spec, prev_stage, context)
             case "$unset":
@@ -383,19 +417,25 @@ class StageBuildersMixin:
                     stage_spec, prev_stage, context, preserve_root
                 )
             case "$sample":
-                return self._build_sample_sql(stage_spec, prev_stage, context)
+                return self._build_sample_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$bucket":
-                return self._build_bucket_sql(stage_spec, prev_stage, context)
+                return self._build_bucket_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$bucketAuto":
                 return self._build_bucket_auto_sql(
-                    stage_spec, prev_stage, context
+                    stage_spec, prev_stage, context, preserve_root
                 )
             case "$unionWith":
                 return self._build_union_with_sql(
-                    stage_spec, prev_stage, context
+                    stage_spec, prev_stage, context, preserve_root
                 )
             case "$redact":
-                return self._build_redact_sql(stage_spec, prev_stage, context)
+                return self._build_redact_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$lookup":
                 return self._build_lookup_sql(
                     stage_spec, prev_stage, context, preserve_root
@@ -403,10 +443,12 @@ class StageBuildersMixin:
             case "$merge":
                 return self._build_merge_sql(stage_spec, prev_stage, context)
             case "$densify":
-                return self._build_densify_sql(stage_spec, prev_stage, context)
+                return self._build_densify_sql(
+                    stage_spec, prev_stage, context, preserve_root
+                )
             case "$graphLookup":
                 return self._build_graph_lookup_sql(
-                    stage_spec, prev_stage, context
+                    stage_spec, prev_stage, context, preserve_root
                 )
             case "$facet":
                 return self._build_facet_sql(stage_spec, prev_stage, context)
@@ -439,8 +481,7 @@ class StageBuildersMixin:
                 else:
                     return None, []
             else:
-                agg_ctx = AggregationContext()
-                agg_ctx.stage_index = context.stage_index
+                agg_ctx = self._make_agg_context(context, preserve_root)
                 expr_sql, expr_params = self.evaluator.build_select_expression(
                     expr, context=agg_ctx
                 )
@@ -458,10 +499,7 @@ class StageBuildersMixin:
             data_expr = "data"
 
         select_parts = ["id", "_id", f"{data_expr} AS data"]
-        if preserve_root:
-            select_parts.append("data AS root_data")
-        elif context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
 
     def _build_project_sql(self, spec, prev_stage, context, preserve_root):
@@ -474,10 +512,7 @@ class StageBuildersMixin:
         include_id = spec.get("_id", 1) != 0
         select_parts.append("_id" if include_id else "NULL AS _id")
 
-        if preserve_root:
-            select_parts.append("data AS root_data")
-        elif context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
 
         json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         json_obj_func = f"{self.jsonb.json_function_prefix}_object"
@@ -513,8 +548,7 @@ class StageBuildersMixin:
                     continue
 
                 if _is_expression(value):
-                    agg_ctx = AggregationContext()
-                    agg_ctx.stage_index = context.stage_index
+                    agg_ctx = self._make_agg_context(context, preserve_root)
                     expr_sql, expr_params = (
                         self.evaluator.build_select_expression(
                             value, context=agg_ctx
@@ -589,10 +623,7 @@ class StageBuildersMixin:
         json_paths = [f"'{parse_json_path(f)}'" for f in fields]
         data_expr = f"json({json_set_func}({json_remove_func}(data, {', '.join(json_paths)}), '$._id', _id))"
         select_parts = ["id", "_id", f"{data_expr} AS data"]
-        if preserve_root:
-            select_parts.append("data AS root_data")
-        elif context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", []
 
     def _build_replace_root_sql(self, spec, prev_stage, context, preserve_root):
@@ -608,35 +639,36 @@ class StageBuildersMixin:
             json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
             expr_sql = f"{json_extract_func}(data, '{parse_json_path(field)}')"
         elif new_root == "$$ROOT":
-            if context.has_root:
+            if context.has_root and not preserve_root:
                 expr_sql = f"json({json_set_func}(root_data, '$._id', _id))"
             else:
                 expr_sql = f"json({json_set_func}(data, '$._id', _id))"
         elif new_root == "$$CURRENT":
             expr_sql = f"json({json_set_func}(data, '$._id', _id))"
         else:
+            agg_ctx = self._make_agg_context(context, preserve_root)
             expr_sql, expr_params = self.evaluator.build_select_expression(
-                new_root
+                new_root, context=agg_ctx
             )
             all_params.extend(expr_params)
 
         data_expr = f"json({json_set_func}({expr_sql}, '$._id', _id))"
         select_parts = ["id", "_id", f"{data_expr} AS data"]
-        if preserve_root:
-            select_parts.append("data AS root_data")
-        elif context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
 
-    def _build_sample_sql(self, spec, prev_stage, context):
+    def _build_sample_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         size = spec.get("size", 1)
         select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} ORDER BY RANDOM() LIMIT ?"
         return sql, [size]
 
-    def _build_bucket_sql(self, spec, prev_stage, context):
+    def _build_bucket_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         group_by = spec.get("groupBy")
         boundaries = spec.get("boundaries")
         default = spec.get("default", "Other")
@@ -645,8 +677,11 @@ class StageBuildersMixin:
         if not group_by or not boundaries:
             return None, []
 
+        agg_ctx = self._make_agg_context(context, preserve_root)
         all_params = []
-        key_sql, key_params = self.evaluator.build_select_expression(group_by)
+        key_sql, key_params = self.evaluator.build_select_expression(
+            group_by, context=agg_ctx
+        )
         all_params.extend(key_params)
 
         # Build CASE for boundaries
@@ -675,7 +710,9 @@ class StageBuildersMixin:
             if not agg_result:
                 return None, []
             sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
+            expr_sql, expr_params = self.evaluator.build_select_expression(
+                expr, context=agg_ctx
+            )
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
             sub_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
@@ -697,15 +734,23 @@ class StageBuildersMixin:
 
         # GROUP BY __bucket_id (an unambiguous name), so the CASE expression
         # — and its bound parameters — appear exactly once.
+        outer_cols = [
+            "NULL AS id",
+            "__bucket_id AS _id",
+            f"json_object({json_args}) AS data",
+        ]
+        if context.has_root:
+            outer_cols.append("NULL AS root_data")
         sql = (
-            f"SELECT NULL AS id, __bucket_id AS _id, "
-            f"json_object({json_args}) AS data "
+            f"SELECT {', '.join(outer_cols)} "
             f"FROM (SELECT {', '.join(sub_parts)} FROM {prev_stage} "
             f"GROUP BY __bucket_id)"
         )
         return sql, all_params
 
-    def _build_bucket_auto_sql(self, spec, prev_stage, context):
+    def _build_bucket_auto_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         group_by = spec.get("groupBy")
         buckets = spec.get("buckets", 10)
         output = spec.get("output", {"count": {"$sum": 1}})
@@ -717,8 +762,11 @@ class StageBuildersMixin:
         if granularity:
             return None, []
 
+        agg_ctx = self._make_agg_context(context, preserve_root)
         all_params = []
-        key_sql, key_params = self.evaluator.build_select_expression(group_by)
+        key_sql, key_params = self.evaluator.build_select_expression(
+            group_by, context=agg_ctx
+        )
         all_params.extend(key_params)
 
         min_max_sql = f"""
@@ -753,7 +801,9 @@ class StageBuildersMixin:
             if not agg_result:
                 return None, []
             sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
+            expr_sql, expr_params = self.evaluator.build_select_expression(
+                expr, context=agg_ctx
+            )
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
             grouped_parts.append(
@@ -779,11 +829,14 @@ class StageBuildersMixin:
             ]
         )
 
+        root_select_col = (
+            ",\n                NULL AS root_data" if context.has_root else ""
+        )
         sql = f"""
             SELECT
                 NULL AS id,
                 json_object('min', __bmin, 'max', __bmax) AS _id,
-                json_object({json_args}) AS data
+                json_object({json_args}) AS data{root_select_col}
             FROM (
                 SELECT
                     i.bucket_id AS __bucket_id,
@@ -816,7 +869,9 @@ class StageBuildersMixin:
         """
         return sql, all_params
 
-    def _build_union_with_sql(self, spec, prev_stage, context):
+    def _build_union_with_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         coll_name: str | None
         if isinstance(spec, str):
             coll_name = spec
@@ -850,8 +905,8 @@ class StageBuildersMixin:
 
         select_parts = ["id", "_id", "data"]
         union_parts = ["id", "_id", "data"]
+        _append_root_column(select_parts, context, preserve_root)
         if context.has_root:
-            select_parts.append("root_data")
             union_parts.append("data AS root_data")
 
         cols = ", ".join(select_parts)
@@ -859,19 +914,28 @@ class StageBuildersMixin:
         sql = f"SELECT {cols} FROM {prev_stage} UNION ALL SELECT {union_cols} FROM {union_from}"
         return sql, union_params
 
-    def _build_redact_sql(self, spec, prev_stage, context):
+    def _build_redact_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         """
         Build SQL for $redact stage.
         Optimizes KEEP/PRUNE patterns into a WHERE clause.
         Falls back to Python for DESCEND pattern as it requires recursive JSON modification.
         """
-        where_clause, expr_params = build_redact_where_sql(self.evaluator, spec)
+        agg_ctx = self._make_agg_context(context, preserve_root)
+        old_ctx = self.evaluator._current_context
+        self.evaluator._current_context = agg_ctx
+        try:
+            where_clause, expr_params = build_redact_where_sql(
+                self.evaluator, spec
+            )
+        finally:
+            self.evaluator._current_context = old_ctx
         if where_clause is None:
             return None, []
 
         select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
 
         sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage}"
         if where_clause:
@@ -943,10 +1007,9 @@ class StageBuildersMixin:
             data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
             select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
-            if preserve_root:
-                select_parts.append("t1.data AS root_data")
-            elif context.has_root:
-                select_parts.append("t1.root_data")
+            _append_root_column(
+                select_parts, context, preserve_root, table_alias="t1"
+            )
 
             sql = f"""
                 SELECT {", ".join(select_parts)}
@@ -983,10 +1046,9 @@ class StageBuildersMixin:
             data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
             select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
-            if preserve_root:
-                select_parts.append("t1.data AS root_data")
-            elif context.has_root:
-                select_parts.append("t1.root_data")
+            _append_root_column(
+                select_parts, context, preserve_root, table_alias="t1"
+            )
 
             sql = f"""
                 SELECT {", ".join(select_parts)}
@@ -1009,10 +1071,9 @@ class StageBuildersMixin:
         data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
         select_parts = ["t1.id", "t1._id", f"{data_expr} AS data"]
-        if preserve_root:
-            select_parts.append("t1.data AS root_data")
-        elif context.has_root:
-            select_parts.append("t1.root_data")
+        _append_root_column(
+            select_parts, context, preserve_root, table_alias="t1"
+        )
 
         sql = f"""
             SELECT {", ".join(select_parts)}
@@ -1023,7 +1084,9 @@ class StageBuildersMixin:
     def _build_merge_sql(self, spec, prev_stage, context):
         return None, []
 
-    def _build_densify_sql(self, spec, prev_stage, context):
+    def _build_densify_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         """
         Build SQL for $densify stage - fills gaps in numeric sequences.
 
@@ -1116,6 +1179,9 @@ class StageBuildersMixin:
             ]
         )
 
+        orig_cols = ["t.id", "t._id", "t.data"]
+        _append_root_column(orig_cols, context, preserve_root, table_alias="t")
+        synth_root_col = ", NULL AS root_data" if context.has_root else ""
         sql = f"""
             WITH RECURSIVE existing AS (
                 SELECT DISTINCT {key_sql} as val
@@ -1130,29 +1196,32 @@ class StageBuildersMixin:
                 FROM series
                 WHERE idx < 1000 AND ? + (idx + 1) * ? <= ?
             )
-            SELECT t.id, t._id, t.data
+            SELECT {', '.join(orig_cols)}
             FROM {prev_stage} t
             UNION ALL
-            SELECT NULL as id, NULL as _id, json_object(?, s.val) as data
+            SELECT NULL as id, NULL as _id, json_object(?, s.val) as data{synth_root_col}
             FROM series s
             WHERE NOT EXISTS (SELECT 1 FROM existing e WHERE e.val = s.val)
         """
         return sql, all_params
 
-    def _build_group_sql(self, spec, prev_stage, context):
+    def _build_group_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         """Build $group SQL preserving the (id, _id, data) CTE invariant (#94).
 
         Downstream stages read fields via json_extract(data, ...) and the
         final wrapper selects id/_id/data, so the aggregate SELECT is wrapped
         in an outer projection that materializes those columns.
         """
+        agg_ctx = self._make_agg_context(context, preserve_root)
         all_params = []
         agg_select_parts = []
         group_by_parts = []
         group_id = spec.get("_id")
         if group_id is not None:
             key_sql, key_params = self.evaluator.build_select_expression(
-                group_id
+                group_id, context=agg_ctx
             )
             agg_select_parts.append(f"{key_sql} AS _id")
             group_by_parts.append(key_sql)
@@ -1180,7 +1249,9 @@ class StageBuildersMixin:
             if not agg_result:
                 return None, []
             sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(expr)
+            expr_sql, expr_params = self.evaluator.build_select_expression(
+                expr, context=agg_ctx
+            )
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
             agg_select_parts.append(
@@ -1278,7 +1349,9 @@ class StageBuildersMixin:
         return translator
 
     def _translate_match_spec(
-        self, spec: dict[str, Any]
+        self,
+        spec: dict[str, Any],
+        agg_ctx: AggregationContext | None = None,
     ) -> tuple[list[str] | None, list[Any]]:
         """Translate a $match query dictionary into SQL WHERE predicates."""
         from ..objectid import ObjectId
@@ -1333,7 +1406,9 @@ class StageBuildersMixin:
                 for sub_spec in value:
                     if not isinstance(sub_spec, dict) or not sub_spec:
                         return None, []
-                    parts, sub_params = self._translate_match_spec(sub_spec)
+                    parts, sub_params = self._translate_match_spec(
+                        sub_spec, agg_ctx=agg_ctx
+                    )
                     if parts is None:
                         return None, []
                     sub_clauses.append(
@@ -1363,7 +1438,9 @@ class StageBuildersMixin:
             elif field == "$not":
                 if not isinstance(value, dict) or not value:
                     return None, []
-                parts, not_params = self._translate_match_spec(value)
+                parts, not_params = self._translate_match_spec(
+                    value, agg_ctx=agg_ctx
+                )
                 if parts is None or not parts:
                     return None, []
                 inner = " AND ".join(f"({p})" for p in parts)
@@ -1372,7 +1449,7 @@ class StageBuildersMixin:
             elif field.startswith("$") and _is_expression({field: value}):
                 # Handle direct expression (no $expr wrapper)
                 expr_sql, expr_params = self.evaluator.build_select_expression(
-                    {field: value}
+                    {field: value}, context=agg_ctx
                 )
                 if not expr_sql:
                     return None, []
@@ -1414,7 +1491,7 @@ class StageBuildersMixin:
                             ):
                                 return None, []
                             sub_parts, sub_params = self._translate_match_spec(
-                                {field: arg}
+                                {field: arg}, agg_ctx=agg_ctx
                             )
                             if sub_parts is None or not sub_parts:
                                 return None, []
@@ -1526,8 +1603,18 @@ class StageBuildersMixin:
 
         return where_clauses, all_params
 
-    def _build_match_sql(self, spec, prev_stage, context):
-        where_clauses, all_params = self._translate_match_spec(spec)
+    def _build_match_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
+        agg_ctx = self._make_agg_context(context, preserve_root)
+        old_ctx = self.evaluator._current_context
+        self.evaluator._current_context = agg_ctx
+        try:
+            where_clauses, all_params = self._translate_match_spec(
+                spec, agg_ctx=agg_ctx
+            )
+        finally:
+            self.evaluator._current_context = old_ctx
         if where_clauses is None:
             return None, []
 
@@ -1535,14 +1622,15 @@ class StageBuildersMixin:
             f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         )
         select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return (
             f"SELECT {', '.join(select_parts)} FROM {prev_stage} {where_clause}",
             all_params,
         )
 
-    def _build_sort_sql(self, spec, prev_stage, context):
+    def _build_sort_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         order_parts = []
         for field, direction in spec.items():
             order_dir = "DESC" if direction == -1 else "ASC"
@@ -1555,38 +1643,46 @@ class StageBuildersMixin:
                 )
             order_parts.append(f"{field_sql} {order_dir}")
         select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return (
             f"SELECT {', '.join(select_parts)} FROM {prev_stage} ORDER BY {', '.join(order_parts)}",
             [],
         )
 
-    def _build_skip_sql(self, spec, prev_stage, context):
+    def _build_skip_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return (
             f"SELECT {', '.join(select_parts)} FROM {prev_stage} LIMIT -1 OFFSET ?",
             [int(spec)],
         )
 
-    def _build_limit_sql(self, spec, prev_stage, context):
+    def _build_limit_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         if not isinstance(spec, int) or isinstance(spec, bool) or spec < 0:
             raise ValueError(
                 f"The $limit stage requires a non-negative integer, got {spec}"
             )
         select_parts = ["id", "_id", "data"]
-        if context.has_root:
-            select_parts.append("root_data")
+        _append_root_column(select_parts, context, preserve_root)
         return (
             f"SELECT {', '.join(select_parts)} FROM {prev_stage} LIMIT ?",
             [int(spec)],
         )
 
     def _build_count_sql(self, spec, prev_stage, context):
+        select_parts = [
+            "NULL as id",
+            "NULL as _id",
+            "json_object(?, COUNT(*)) as data",
+        ]
+        if context.has_root:
+            select_parts.append("NULL AS root_data")
         return (
-            f"SELECT NULL as id, NULL as _id, json_object(?, COUNT(*)) as data FROM {prev_stage}",
+            f"SELECT {', '.join(select_parts)} FROM {prev_stage}",
             [spec],
         )
 
@@ -1596,6 +1692,7 @@ class StageBuildersMixin:
         partition_by = spec.get("partitionBy")
         sort_by = spec.get("sortBy", {})
         output = spec.get("output", {})
+        agg_ctx = self._make_agg_context(context, preserve_root)
 
         all_params = []
         partition_clause = ""
@@ -1606,7 +1703,7 @@ class StageBuildersMixin:
             ):
                 return None, []
             expr_sql, expr_params = self.evaluator.build_select_expression(
-                partition_by
+                partition_by, context=agg_ctx
             )
             partition_clause = f"PARTITION BY {expr_sql}"
             all_params.extend(expr_params)
@@ -1648,7 +1745,9 @@ class StageBuildersMixin:
                 )
             elif op_name in ("$first", "$last"):
                 inner_sql, inner_params = (
-                    self.evaluator.build_select_expression(op_spec)
+                    self.evaluator.build_select_expression(
+                        op_spec, context=agg_ctx
+                    )
                 )
                 all_params.extend(inner_params)
                 frame = (
@@ -1691,15 +1790,17 @@ class StageBuildersMixin:
         }
         return mapping.get(op)
 
-    def _build_graph_lookup_sql(self, spec, prev_stage, context):
+    def _build_graph_lookup_sql(
+        self, spec, prev_stage, context, preserve_root: bool = False
+    ):
         """Build Tier-1 CTE SQL for $graphLookup using top-level recursive CTE."""
         uid = context.next_aux_id()
         src_cte = f"{context.cte_prefix}_glsrc_{uid}"
         rec_cte = f"{context.cte_prefix}_glrec_{uid}"
 
-        src_cols = (
-            "id, _id, data, root_data" if context.has_root else "id, _id, data"
-        )
+        src_col_parts = ["id", "_id", "data"]
+        _append_root_column(src_col_parts, context, preserve_root)
+        src_cols = ", ".join(src_col_parts)
 
         parts = build_graph_lookup_parts(
             self.collection,

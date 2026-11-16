@@ -394,9 +394,9 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         """
         match var_name:
             case "$$ROOT":
-                # Return the entire document as JSON
-                # In aggregation context, this is the data column itself
-                return self.data_column, []
+                # In multi-stage SQL pipelines, $$ROOT lives in root_data once
+                # stage 0 has preserved the original document.
+                return context.root_column or self.data_column, []
             case "$$CURRENT":
                 # Return the current document state
                 # For SQL tier, this is the same as $$ROOT since we don't
