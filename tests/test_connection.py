@@ -405,6 +405,18 @@ class TestDatabaseCommand:
         assert isinstance(result["pid"], int)
         assert result["pid"] > 0
 
+    def test_command_server_status_prefers_wrapped_sqlite(self, connection):
+        """serverStatus must report neosqlite._sqlite version, not stdlib sqlite3."""
+        import sqlite3 as stdlib_sqlite3
+
+        with patch("neosqlite.connection.sqlite3") as wrapped_sqlite:
+            wrapped_sqlite.sqlite_version = "3.99.0-pysqlite3"
+            assert (
+                stdlib_sqlite3.sqlite_version != wrapped_sqlite.sqlite_version
+            )
+            result = connection.command("serverStatus")
+            assert result["version"] == "3.99.0-pysqlite3"
+
     def test_command_db_stats(self, connection):
         """Test command('dbStats')."""
         conn = connection

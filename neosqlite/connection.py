@@ -1227,8 +1227,6 @@ def _command_ping(
 def _command_serverstatus(
     self: Connection, _command: dict, **__: Any
 ) -> dict[str, Any]:
-    import sqlite3
-
     return {
         "ok": 1,
         "version": sqlite3.sqlite_version,
