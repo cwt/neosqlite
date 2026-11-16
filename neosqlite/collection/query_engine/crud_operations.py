@@ -139,17 +139,20 @@ class CRUDOperationsMixin(QueryEngineProtocol):
                         )
                 else:
                     row = self.collection.db.execute(
-                        f"SELECT id, (json(data) IS NOT json({data_expr})) "
+                        f"SELECT id, ({data_expr}) "
                         f"FROM {tbl} {where_clause} LIMIT 1",
                         expr_params + params,
                     ).fetchone()
                     if row is not None:
-                        int_id, is_modified = row
-                        if is_modified:
-                            self.collection.db.execute(
-                                f"UPDATE {tbl} SET data = {data_expr} WHERE id = ?",
-                                expr_params + [int_id],
-                            )
+                        int_id, new_data = row
+                        # Evaluate data_expr once in SELECT, then write only when
+                        # serialized JSON differs so triggers/modified_count match.
+                        cursor = self.collection.db.execute(
+                            f"UPDATE {tbl} SET data = ? "
+                            f"WHERE id = ? AND (json(data) IS NOT json(?))",
+                            (new_data, int_id, new_data),
+                        )
+                        is_modified = max(cursor.rowcount, 0) > 0
                         self._notify_tier_change(op_tier, [filter, update])
                         return UpdateResult(
                             matched_count=1,

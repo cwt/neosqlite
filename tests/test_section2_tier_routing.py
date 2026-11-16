@@ -720,6 +720,41 @@ class TestSection2CCRUDAndUpdates:
         assert type(doc["b"]) is bool
         assert doc["scores"] == [10]
 
+    def test_update_one_evaluates_complex_expr_once(self, conn):
+        """update_one must evaluate {data_expr} once and keep no-ops write-free."""
+        coll = conn.u1_single_eval
+        coll.insert_one({"_id": 1, "scores": [10, 50, 90]})
+
+        executed_sql: list[str] = []
+
+        def record_sql(stmt: str) -> None:
+            executed_sql.append(stmt)
+
+        conn.db.set_trace_callback(record_sql)
+        try:
+            r_mod = coll.update_one({"_id": 1}, {"$pullAll": {"scores": [50]}})
+            assert r_mod.matched_count == 1
+            assert r_mod.modified_count == 1
+
+            pull_stmts = [s for s in executed_sql if "json_each" in s]
+            assert len(pull_stmts) == 1
+
+            executed_sql.clear()
+            changes_before = conn.db.total_changes
+            r_noop = coll.update_one(
+                {"_id": 1}, {"$pullAll": {"scores": [999]}}
+            )
+            assert r_noop.matched_count == 1
+            assert r_noop.modified_count == 0
+            assert conn.db.total_changes == changes_before
+            assert sum(1 for s in executed_sql if "json_each" in s) == 1
+        finally:
+            conn.db.set_trace_callback(None)
+
+        doc = coll.find_one({"_id": 1})
+        assert doc is not None
+        assert doc["scores"] == [10, 90]
+
     def test_update_many_set_based_and_inc_mul_validation(self, conn):
         coll = conn.umany
         coll.insert_many(
