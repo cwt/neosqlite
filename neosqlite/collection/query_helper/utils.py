@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _SQLITE_FEATURES: dict[str, bool | None] = {
     "relative_indexing": None,
     "returning_clause": None,
+    "heap_parser_stack": None,
 }
 
 
@@ -67,6 +68,24 @@ def _supports_relative_json_indexing() -> bool:
     if val is None:
         val = _check_sqlite_version("3.42.0")
         _SQLITE_FEATURES["relative_indexing"] = val
+    return val
+
+
+def _supports_heap_parser_stack() -> bool:
+    """Check whether SQLite grows its expression parser stack from the heap.
+
+    SQLite before 3.46.0 uses a fixed-size parser stack (100 entries). Deeply
+    nested JSON update expressions can raise ``parser stack overflow`` on
+    those versions; 3.46.0+ allocates the stack dynamically, removing the
+    limit. The result is cached in ``_SQLITE_FEATURES``.
+
+    Returns:
+        bool: True when the parser stack is heap-grown (SQLite >= 3.46.0).
+    """
+    val = _SQLITE_FEATURES["heap_parser_stack"]
+    if val is None:
+        val = _check_sqlite_version("3.46.0")
+        _SQLITE_FEATURES["heap_parser_stack"] = val
     return val
 
 

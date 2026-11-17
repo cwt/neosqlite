@@ -10,6 +10,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from ..._sqlite import sqlite3
 from ...binary import Binary
 from ...sql_utils import quote_table_name
 from ..json_helpers import (
@@ -25,6 +26,7 @@ from ..type_utils import (
 )
 from .utils import (
     _convert_bytes_to_binary,
+    _supports_heap_parser_stack,
     _supports_relative_json_indexing,
     get_force_fallback,
 )
@@ -2761,5 +2763,28 @@ class SqlUpdatesMixin:
                         if res is None:
                             return None
                         cur_expr, cur_params = res
+
+        # SQLite before 3.46 uses a fixed 100-entry expression parser stack.
+        # A deeply nested chain of json_set()/CASE fragments (for example
+        # $rename + $min + $max + $bit + $currentDate in one update) can
+        # overflow it and fail at prepare time with "parser stack overflow".
+        # Let the real parser decide; if it declines, fall back to the
+        # per-document Python update path used by all callers of this method.
+        if not _supports_heap_parser_stack():
+            try:
+                self.collection.db.execute(
+                    f"EXPLAIN SELECT ({cur_expr})", cur_params
+                )
+            except sqlite3.OperationalError as exc:
+                if "parser stack overflow" in str(exc).lower():
+                    logger.warning(
+                        "SQLite update expression exceeds the parser stack "
+                        "on %s; falling back to Python updates",
+                        sqlite3.sqlite_version,
+                    )
+                    return None
+                logger.debug("Update EXPLAIN probe skipped: %s", exc)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Update EXPLAIN probe failed: %s", exc)
 
         return cur_expr, cur_params, tier
