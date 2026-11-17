@@ -112,8 +112,12 @@ class ArrayMixin(BaseSqlMixin):
                     operands[0]
                 )
                 sql_agg = operator[1:].upper()
-                if operator in ("$sum", "$avg"):
-                    sql = f"(SELECT {sql_agg}(value) FROM {json_each}({array_sql}) WHERE typeof(value) IN ('integer', 'real'))"
+                if operator == "$sum":
+                    # MongoDB returns 0 for an empty array; SQLite SUM() is
+                    # NULL, which json_patch would treat as a key removal.
+                    sql = f"COALESCE((SELECT SUM(value) FROM {json_each}({array_sql}) WHERE typeof(value) IN ('integer', 'real')), 0)"
+                elif operator == "$avg":
+                    sql = f"(SELECT AVG(value) FROM {json_each}({array_sql}) WHERE typeof(value) IN ('integer', 'real'))"
                 else:
                     sql = f"(SELECT {sql_agg}(value) FROM {json_each}({array_sql}))"
                 return sql, array_params

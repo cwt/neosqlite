@@ -347,7 +347,12 @@ class StringMixin(BaseSqlMixin):
                     operands[0]
                 )
                 # Literal delimiter: use replace() to convert to JSON array.
-                if isinstance(operands[1], str):
+                # A leading "$" denotes a field reference in MongoDB
+                # expressions, not a literal string, so it must not take this
+                # branch — those delimiters are resolved at runtime in Python.
+                if isinstance(operands[1], str) and not operands[1].startswith(
+                    "$"
+                ):
                     delim = operands[1]
                     # Escape delimiter for safe embedding in SQL string literal.
                     delim_sql = delim.replace("'", "''")

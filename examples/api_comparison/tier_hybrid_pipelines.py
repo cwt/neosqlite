@@ -55,11 +55,16 @@ _DOCUMENTS = [
 
 _PIPELINES = [
     (
-        "split_eval",
+        "dynamic_split_eval",
         [
             {
                 "$project": {
-                    "first": {"$arrayElemAt": [{"$split": ["$name", ","]}, 0]}
+                    "first": {
+                        "$arrayElemAt": [
+                            {"$split": ["$name", "$delimiter"]},
+                            0,
+                        ]
+                    }
                 }
             },
             {"$sort": {"_id": 1}},
@@ -70,7 +75,12 @@ _PIPELINES = [
         [
             {
                 "$replaceRoot": {
-                    "newRoot": {"$mergeObjects": ["$nested", {"total": 7}]}
+                    "newRoot": {
+                        "$mergeObjects": [
+                            "$nested",
+                            {"total": {"$sum": "$values"}},
+                        ]
+                    }
                 }
             },
             {"$sort": {"_id": 1}},

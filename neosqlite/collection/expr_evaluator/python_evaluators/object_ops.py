@@ -23,6 +23,48 @@ class ObjectPythonMixin(BasePythonMixin):
     is delegated to ``BasePythonMixin`` helpers.
     """
 
+    def _evaluate_object_operand_python(
+        self, operand: Any, document: dict[str, Any]
+    ) -> Any:
+        """Evaluate a ``$mergeObjects`` argument, including nested expressions.
+
+        A plain dict passed to ``$mergeObjects`` is an object expression whose
+        field values are evaluated, matching MongoDB. Operator dicts and
+        field/variable references delegate to the normal operand evaluator.
+
+        Args:
+            operand: Object expression operand to evaluate.
+            document: Document supplying field values.
+
+        Returns:
+            Any: Evaluated object, subexpression result, or literal value.
+        """
+        if (
+            isinstance(operand, dict)
+            and operand
+            and not str(next(iter(operand))).startswith("$")
+            and self._contains_expression_value(operand)
+        ):
+            return {
+                key: self._evaluate_operand_python(value, document)
+                for key, value in operand.items()
+            }
+        return self._evaluate_operand_python(operand, document)
+
+    def _contains_expression_value(self, value: Any) -> bool:
+        """Return whether a literal value contains an expression to evaluate."""
+        if isinstance(value, str):
+            return value.startswith("$")
+        if isinstance(value, dict):
+            if value and str(next(iter(value))).startswith("$"):
+                return True
+            return any(
+                self._contains_expression_value(v) for v in value.values()
+            )
+        if isinstance(value, list):
+            return any(self._contains_expression_value(v) for v in value)
+        return False
+
     def _evaluate_object_python(
         self, operator: str, operands: Any, document: dict[str, Any]
     ) -> Any:
@@ -51,7 +93,9 @@ class ObjectPythonMixin(BasePythonMixin):
                     raise ValueError("$mergeObjects requires a list of objects")
                 result: dict[str, Any] = {}
                 for obj in operands:
-                    obj_val = self._evaluate_operand_python(obj, document)
+                    obj_val = self._evaluate_object_operand_python(
+                        obj, document
+                    )
                     if isinstance(obj_val, dict):
                         result |= obj_val
                 return result

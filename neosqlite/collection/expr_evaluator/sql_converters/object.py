@@ -21,6 +21,51 @@ class ObjectMixin(BaseSqlMixin):
     ``$let`` into SQLite JSON/JSONB function calls and bound parameters.
     """
 
+    def _convert_object_literal_to_sql(self, obj: Any) -> tuple[str, list[Any]]:
+        """Convert an object expression operand, evaluating nested values.
+
+        A plain dict used as a ``$mergeObjects`` argument is an object
+        expression: its field values are themselves expressions and must be
+        evaluated (for example ``{"total": {"$sum": "$values"}}``). Single-key
+        dicts with a ``$`` operator and field/variable references are handled
+        by the normal operand converter.
+
+        Args:
+            obj: Object expression operand to convert.
+
+        Returns:
+            tuple[str, list[Any]]: SQL expression and bound parameters.
+        """
+        if (
+            isinstance(obj, dict)
+            and obj
+            and not next(iter(obj)).startswith("$")
+            and self._contains_expression_value(obj)
+        ):
+            parts: list[str] = []
+            params: list[Any] = []
+            for key, value in obj.items():
+                escaped_key = str(key).replace("'", "''")
+                value_sql, value_params = self._convert_operand_to_sql(value)
+                parts.extend([f"'{escaped_key}'", value_sql])
+                params.extend(value_params)
+            return f"json_object({', '.join(parts)})", params
+        return self._convert_operand_to_sql(obj)
+
+    def _contains_expression_value(self, value: Any) -> bool:
+        """Return whether a literal value contains an expression to evaluate."""
+        if isinstance(value, str):
+            return value.startswith("$")
+        if isinstance(value, dict):
+            if value and str(next(iter(value))).startswith("$"):
+                return True
+            return any(
+                self._contains_expression_value(v) for v in value.values()
+            )
+        if isinstance(value, list):
+            return any(self._contains_expression_value(v) for v in value)
+        return False
+
     def _convert_object_operator(
         self, operator: str, operands: Any
     ) -> tuple[str, list[Any]]:
@@ -55,7 +100,9 @@ class ObjectMixin(BaseSqlMixin):
                 sql_parts = []
                 all_params = []
                 for obj in operands:
-                    obj_sql, obj_params = self._convert_operand_to_sql(obj)
+                    obj_sql, obj_params = self._convert_object_literal_to_sql(
+                        obj
+                    )
                     sql_parts.append(obj_sql)
                     all_params.extend(obj_params)
                 # Use json_patch to merge objects (works with both JSON and JSONB)
