@@ -43,9 +43,11 @@ from .find_and_modify import compare_find_and_modify
 from .find_option_kwargs import compare_find_option_kwargs
 from .graphlookup import compare_graph_lookup
 from .gridfs import compare_gridfs_operations
+from .id_range_operators import compare_id_range_operators
 from .index_operations import compare_index_operations
 from .json_schema import compare_json_schema
 from .math_operators import compare_math_operators
+from .meta_expression import compare_meta_expression
 from .mod_operator import compare_mod_operator
 from .nested_queries import compare_nested_field_queries
 from .object_field_operators import compare_object_operators
@@ -84,6 +86,8 @@ COMPARISON_FUNCTIONS = [
     # Core Operations
     ("CRUD Operations", compare_crud_operations),
     ("Query Operators", compare_query_operators),
+    ("_id Range Operators", compare_id_range_operators),
+    ("$meta Expression", compare_meta_expression),
     ("$expr (Core Operators)", compare_expr_operator),
     ("Update (Field Operators)", compare_update_operators),
     # Aggregation

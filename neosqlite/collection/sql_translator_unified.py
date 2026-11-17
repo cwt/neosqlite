@@ -205,6 +205,17 @@ class SQLOperatorTranslator:
         ):
             return None, []
 
+        # _id ranges need BSON type guards that this translator does not
+        # build. Leave them to the normal SQL query builder (or Python) so
+        # mixed-type collections do not produce spurious matches.
+        if field_access == "_id" and operator in (
+            "$gt",
+            "$gte",
+            "$lt",
+            "$lte",
+        ):
+            return None, []
+
         extracted = _parse_extract_expr(field_access)
         is_jsonb = extracted[3] if extracted else False
         each_is_jsonb = self._json_each_function == "jsonb_each"

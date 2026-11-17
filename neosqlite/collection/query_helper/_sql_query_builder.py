@@ -370,16 +370,101 @@ class SqlQueryBuilderMixin:
 
         return regex_to_sql_pattern(value, options)
 
+    def _build_id_range_clause(
+        self, op: str, op_val: Any, id_col: str
+    ) -> tuple[str, list[Any]] | None:
+        """Build a BSON-aware range predicate for ``_id``.
+
+        MongoDB range comparisons only match values of the operand's BSON
+        type. NeoSQLite stores booleans, ObjectIds, and datetimes as text in
+        the ``_id`` column while keeping their extended JSON representation in
+        ``data``, so the guard must use ``json_type(data, '$._id')`` rather than
+        ``typeof(_id)`` alone. Numeric operands also cover auto-generated ids
+        that are absent from ``data``.
+
+        Args:
+            op: One of ``$gt``, ``$gte``, ``$lt``, or ``$lte``.
+            op_val: The comparison operand.
+            id_col: Quoted reference to the ``_id`` column.
+
+        Returns:
+            tuple[str, list[Any]] | None: SQL predicate and parameters, or
+            ``None`` when the operand type must fall back to Python.
+        """
+        from datetime import datetime
+
+        from ...objectid import ObjectId
+
+        sql_op = {
+            "$gt": ">",
+            "$gte": ">=",
+            "$lt": "<",
+            "$lte": "<=",
+        }[op]
+
+        if op_val is None:
+            if op in ("$gt", "$lt"):
+                return "0", []
+            return f"{id_col} IS NULL", []
+
+        extract = self.jsonb.function("extract")
+        id_path = "'$._id'"
+
+        match op_val:
+            case bool():
+                guard = f"json_type(data, {id_path}) IN ('true', 'false')"
+                return (
+                    f"({guard} AND {extract}(data, {id_path}) {sql_op} ?)",
+                    [1 if op_val else 0],
+                )
+            case int() | float():
+                return (
+                    f"(typeof({id_col}) IN ('integer', 'real') "
+                    f"AND {id_col} {sql_op} ?)",
+                    [op_val],
+                )
+            case str():
+                guard = (
+                    f"typeof({id_col}) = 'text' AND "
+                    f"json_type(data, {id_path}) = 'text'"
+                )
+                return (
+                    f"({guard} AND {id_col} {sql_op} ?)",
+                    [_normalize_id_value(op_val)],
+                )
+            case ObjectId():
+                oid_path = "'$._id.id'"
+                guard = (
+                    f"json_type(data, {id_path}) = 'object' AND "
+                    f"{extract}(data, {oid_path}) IS NOT NULL"
+                )
+                return (
+                    f"({guard} AND {extract}(data, {oid_path}) {sql_op} ?)",
+                    [str(op_val)],
+                )
+            case datetime():
+                date_path = "'$._id.\"$date\"'"
+                guard = (
+                    f"json_type(data, {id_path}) = 'object' AND "
+                    f"{extract}(data, {date_path}) IS NOT NULL"
+                )
+                return (
+                    f"({guard} AND julianday({extract}(data, {date_path})) "
+                    f"{sql_op} julianday(?))",
+                    [op_val.isoformat()],
+                )
+            case _:
+                return None
+
     def _build_id_operator_clause(
         self, value: dict
     ) -> tuple[str, list[Any]] | None:
         """Build a SQL WHERE clause for ``_id`` with query operators.
 
         Supports ``$in``, ``$nin`` (handling ``None`` elements with ``IS NULL``
-        / ``IS NOT NULL``), ``$ne``, ``$eq``, ``$regex``, and ``$options``.
-        Falls back to ``None`` for range operators (``$gt``, ``$gte``, ``$lt``,
-        ``$lte``) because mixed-type SQLite ordering differs from BSON, as well
-        as unsupported or malformed operator values.
+        / ``IS NOT NULL``), ``$ne``, ``$eq``, ``$regex``, ``$options``, and
+        BSON-aware range operators (``$gt``, ``$gte``, ``$lt``, ``$lte``).
+        Falls back to ``None`` for unsupported or malformed operator values.
 
         Args:
             value: Dictionary mapping MongoDB query operators to operands.
@@ -464,12 +549,12 @@ class SqlQueryBuilderMixin:
                 clauses.append(f"{id_col} REGEXP ?")
                 params.append(pattern)
             elif op in ("$gt", "$gte", "$lt", "$lte"):
-                # Fall back to Python for range comparisons on _id.
-                # The _id column may contain mixed types (int, str, ObjectId).
-                # SQLite JSONB ordering (numbers < strings) differs from MongoDB
-                # BSON ordering, which only compares within the same type.
-                # Python evaluation handles these correctly.
-                return None
+                range_clause = self._build_id_range_clause(op, op_val, id_col)
+                if range_clause is None:
+                    return None
+                clause, range_params = range_clause
+                clauses.append(clause)
+                params.extend(range_params)
             else:
                 return None  # Fall back to Python for unsupported operators
 

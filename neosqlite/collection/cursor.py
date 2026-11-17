@@ -1510,6 +1510,15 @@ class Cursor:
             return False
 
         for field, value in query.items():
+            if (
+                field == "_id"
+                and isinstance(value, dict)
+                and any(op in value for op in ("$gt", "$gte", "$lt", "$lte"))
+            ):
+                # BSON-aware _id ranges are handled by the normal SQL query
+                # builder. The datetime processor's translator does not apply
+                # BSON type guards and would match unrelated _id types.
+                continue
             if field in ("$and", "$or", "$nor"):
                 if isinstance(value, list):
                     for condition in value:

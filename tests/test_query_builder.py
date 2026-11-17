@@ -723,16 +723,22 @@ class TestBuildIdOperatorClause:
         assert "_id != ?" in clause
         assert str(oid) in params
 
-    def test_id_gt_with_int_falls_back(self, query_helper):
-        """Test _id $gt with integer falls back to Python (mixed-type safety)."""
-        result = query_helper._build_id_operator_clause({"$gt": 100})
-        assert result is None
+    def test_id_gt_with_int_builds_typed_sql(self, query_helper):
+        """Test _id $gt with integer builds a type-guarded SQL clause."""
+        clause, params = query_helper._build_id_operator_clause({"$gt": 100})
+        assert clause is not None
+        assert "typeof(" in clause and "IN ('integer', 'real')" in clause
+        assert "> ?" in clause
+        assert params == [100]
 
-    def test_id_lt_with_objectid_falls_back(self, query_helper):
-        """Test _id $lt with ObjectId falls back to Python (mixed-type safety)."""
+    def test_id_lt_with_objectid_builds_typed_sql(self, query_helper):
+        """Test _id $lt with ObjectId builds an ObjectId-scoped SQL clause."""
         oid = ObjectId()
-        result = query_helper._build_id_operator_clause({"$lt": oid})
-        assert result is None
+        clause, params = query_helper._build_id_operator_clause({"$lt": oid})
+        assert clause is not None
+        assert "json_type(data, '$._id') = 'object'" in clause
+        assert "< ?" in clause
+        assert params == [str(oid)]
 
     def test_id_in_empty_list_fallback(self, query_helper):
         """Test _id $in with empty list falls back."""
