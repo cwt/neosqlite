@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .operators_advanced import OperatorsAdvancedMixin
 from .operators_group import OperatorsGroupMixin
+from .operators_hybrid import OperatorsHybridMixin
 from .operators_lookup import HASH_JOIN_MEMORY_THRESHOLD, OperatorsLookupMixin
 from .operators_match import OperatorsMatchMixin
 from .operators_sort_proj import OperatorsSortProjMixin
@@ -19,11 +20,13 @@ class OperatorsMixin(
     OperatorsGroupMixin,
     OperatorsTextMixin,
     OperatorsAdvancedMixin,
+    OperatorsHybridMixin,
 ):
     """Compose all temporary-table aggregation stage operator mixins.
 
     Combines ``OperatorsMatchMixin``, ``OperatorsLookupMixin``,
     ``OperatorsSortProjMixin``, ``OperatorsGroupMixin``,
-    ``OperatorsTextMixin``, and ``OperatorsAdvancedMixin`` into a single
-    mixin class without defining additional method bodies here.
+    ``OperatorsTextMixin``, ``OperatorsAdvancedMixin``, and
+    ``OperatorsHybridMixin`` into a single mixin class without defining
+    additional method bodies here.
     """

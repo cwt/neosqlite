@@ -10,6 +10,7 @@ from ..._sqlite import sqlite3
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
 from .operators_base import OperatorsBaseMixin
+from .operators_hybrid import python_hybrid_fallback
 from .utils import (
     _json_extract_field_with_objectid_support,
     _sanitize_params,
@@ -379,6 +380,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                 return None
         return val
 
+    @python_hybrid_fallback("$lookup")
     def _process_lookup_stage(
         self,
         create_temp: Callable,

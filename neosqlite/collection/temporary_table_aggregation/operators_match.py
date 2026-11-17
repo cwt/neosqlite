@@ -8,6 +8,7 @@ from typing import Any
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
 from .operators_base import OperatorsBaseMixin
+from .operators_hybrid import python_hybrid_fallback
 from .utils import (
     _contains_text_search,
     _sanitize_params,
@@ -23,6 +24,7 @@ class OperatorsMatchMixin(OperatorsBaseMixin):
     and sequential ``$unwind`` array expansion over temporary SQLite tables.
     """
 
+    @python_hybrid_fallback("$match")
     def _process_match_stage(
         self,
         create_temp: Callable,

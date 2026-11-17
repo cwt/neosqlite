@@ -10,6 +10,7 @@ from ...sql_utils import quote_table_name
 from ..expr_evaluator import AggregationContext, _is_expression
 from ..json_path_utils import parse_json_path
 from .operators_base import OperatorsBaseMixin
+from .operators_hybrid import python_hybrid_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
     ``$first``/``$last`` CTE builders and typed result extraction.
     """
 
+    @python_hybrid_fallback("$group")
     def _process_group_stage(
         self,
         create_temp: Callable,
@@ -953,6 +955,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 results.append(doc)
         return results
 
+    @python_hybrid_fallback("$bucket")
     def _process_bucket_stage(self, create_temp, current_table, bucket_spec):
         """Process a ``$bucket`` stage grouping documents by boundary ranges.
 
@@ -1064,6 +1067,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             return f"CAST({json_extract}(data, '{json_path}') AS REAL)"
         return "1"
 
+    @python_hybrid_fallback("$bucketAuto")
     def _process_bucket_auto_stage(
         self, create_temp, current_table, bucket_auto_spec
     ):

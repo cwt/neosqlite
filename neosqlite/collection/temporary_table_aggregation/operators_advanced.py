@@ -14,6 +14,7 @@ from .._stage_builders import (
 from ..json_path_utils import parse_json_path
 from ..query_helper.utils import _check_sqlite_version
 from .operators_base import OperatorsBaseMixin
+from .operators_hybrid import python_hybrid_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
     evaluation.
     """
 
+    @python_hybrid_fallback("$densify")
     def _process_densify_stage(self, create_temp, current_table, densify_spec):
         """Process a ``$densify`` stage for numeric series in SQLite.
 
@@ -236,6 +238,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         """
         return create_temp({"$densify": densify_spec}, select_clause, params)
 
+    @python_hybrid_fallback("$facet")
     def _process_facet_stage(self, create_temp, current_table, facet_spec):
         """Process a ``$facet`` stage across multiple sub-pipelines.
 
@@ -369,6 +372,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     )
             raise e
 
+    @python_hybrid_fallback("$unionWith")
     def _process_union_with_stage(self, create_temp, current_table, union_spec):
         """Process a ``$unionWith`` stage combining documents from two sources.
 
@@ -528,6 +532,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             target_coll._initialize_table()
         return target_coll
 
+    @python_hybrid_fallback("$out")
     def _process_out_stage(self, create_temp, current_table, out_spec):
         """Process an ``$out`` stage by replacing a target collection.
 
@@ -578,6 +583,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             [],
         )
 
+    @python_hybrid_fallback("$merge")
     def _process_merge_stage(self, create_temp, current_table, merge_spec):
         """Process a ``$merge`` stage by merging rows into a collection.
 
@@ -794,6 +800,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         return current_table
 
+    @python_hybrid_fallback("$redact")
     def _process_redact_stage(self, create_temp, current_table, redact_spec):
         """Process a ``$redact`` stage in SQL for ``$$KEEP``/``$$PRUNE``.
 
@@ -838,6 +845,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             sql = f"{sql} {where_clause}"
         return create_temp({"$redact": redact_spec}, sql, params)
 
+    @python_hybrid_fallback("$setWindowFields")
     def _process_set_window_fields_stage(
         self,
         create_temp: Callable[[dict[str, Any], str, list[Any]], str],
@@ -1163,6 +1171,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         return ""
 
+    @python_hybrid_fallback("$graphLookup")
     def _process_graph_lookup_stage(
         self,
         create_temp: Callable[[dict[str, Any], str, list[Any]], str],
@@ -1202,6 +1211,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         stage_sql = f"WITH RECURSIVE {rec_cte} AS ({recurse_sql}) {select_sql}"
         return create_temp({"$graphLookup": spec}, stage_sql, rec_params)
 
+    @python_hybrid_fallback("$fill")
     def _process_fill_stage(
         self,
         create_temp: Callable[[dict[str, Any], str, list[Any]], str],

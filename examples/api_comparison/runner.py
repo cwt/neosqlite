@@ -63,6 +63,7 @@ from .search_index import compare_search_index_operations
 from .session_transactions import compare_session_methods
 from .string_operators import compare_string_operators
 from .text_search import compare_text_search
+from .tier_hybrid_pipelines import compare_tier_hybrid_pipelines
 from .ttl_index_expiry import compare_ttl_index_expiry
 from .type_operator import compare_type_operator
 from .type_operators import compare_type_operators
@@ -88,6 +89,7 @@ COMPARISON_FUNCTIONS = [
     ("Query Operators", compare_query_operators),
     ("_id Range Operators", compare_id_range_operators),
     ("$meta Expression", compare_meta_expression),
+    ("Tier-2 Hybrid Pipelines", compare_tier_hybrid_pipelines),
     ("$expr (Core Operators)", compare_expr_operator),
     ("Update (Field Operators)", compare_update_operators),
     # Aggregation

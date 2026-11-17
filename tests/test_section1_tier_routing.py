@@ -470,11 +470,11 @@ class TestExprAndTier1AggregationRouting:
             expected_tier="tier1",
         )
 
-        # $round in aggregation $project also intentionally runs on Tier 3
+        # $round is evaluated per-stage in Python but the pipeline stays in Tier 2
         _assert_aggregate_parity(
             coll,
             [{"$project": {"rounded": {"$round": ["$price", 1]}}}],
-            expected_tier="tier3",
+            expected_tier="tier2",
         )
 
     def test_union_with_and_tier1_match_operators(self, conn):

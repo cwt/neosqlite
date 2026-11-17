@@ -30,6 +30,10 @@
 # fresh-document expiry behavior (examples/api_comparison/ttl_index_expiry.py),
 # and get_database()/drop_database() (examples/api_comparison/database_methods.py).
 #
+# This comparison also validates complex pipelines whose stages rely on
+# Python expression evaluation inside the temporary-table tier
+# (examples/api_comparison/tier_hybrid_pipelines.py).
+#
 # This comparison also validates BSON-aware _id range queries
 # (examples/api_comparison/id_range_operators.py): $gt/$gte/$lt/$lte match only
 # values of the operand's BSON type across int, string, bool, ObjectId, and date ids.

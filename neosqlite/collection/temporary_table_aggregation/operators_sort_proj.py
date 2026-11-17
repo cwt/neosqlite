@@ -14,6 +14,7 @@ from ..expr_evaluator import (
 )
 from ..json_path_utils import parse_json_path
 from .operators_base import OperatorsBaseMixin
+from .operators_hybrid import python_hybrid_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -449,6 +450,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             return True
         return False
 
+    @python_hybrid_fallback("$project")
     def _process_project_stage(
         self,
         create_temp: Callable,
@@ -739,6 +741,13 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         json_extract = f"{self.jsonb.json_function_prefix}_extract"
         return f"COALESCE({json_extract}(data, '$._textScore'), 0.0)"
 
+    @python_hybrid_fallback(
+        lambda spec: (
+            "$replaceRoot"
+            if isinstance(spec, dict) and "newRoot" in spec
+            else "$replaceWith"
+        )
+    )
     def _process_replace_root_stage(
         self,
         create_temp: Callable,

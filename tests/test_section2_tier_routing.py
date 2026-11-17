@@ -420,7 +420,7 @@ class TestSection2AAggregationStages:
                 }
             }
         ]
-        red_res_t3 = _assert_aggregate_parity(src, redact_descend, "tier3")
+        red_res_t3 = _assert_aggregate_parity(src, redact_descend, "tier2")
         assert [d["_id"] for d in red_res_t3] == [1]
 
         out_pipe = [{"$match": {"level": 1}}, {"$out": "redact_out"}]
@@ -1272,7 +1272,7 @@ class TestStep2Sqlite354And326Fixes:
                     }
                 }
             ],
-            "tier3",
+            "tier2",
         )
 
 
@@ -1360,16 +1360,16 @@ class TestStep3SqlTierRegressions:
             ],
             "tier1",
         )
-        # Dotted inclusion and exclusion fallback cleanly to Tier 3 and match Python
+        # Dotted inclusion and exclusion use the Tier-2 Python hybrid and match Python
         _assert_aggregate_parity(
-            coll, [{"$project": {"meta.a": 1, "_id": 0}}], "tier3"
+            coll, [{"$project": {"meta.a": 1, "_id": 0}}], "tier2"
         )
-        _assert_aggregate_parity(coll, [{"$project": {"meta.b": 0}}], "tier3")
+        _assert_aggregate_parity(coll, [{"$project": {"meta.b": 0}}], "tier2")
         # Inclusion with _id: 1 and field exclusion {"_id": 1, "x": 0}
         _assert_aggregate_parity(
             coll, [{"$project": {"_id": 1, "x": 0}}], "tier1"
         )
-        # Tier-2 preceded by Tier-2 $fill with $$ROOT in $project falls back to Tier 3 cleanly
+        # $fill followed by $project with $$ROOT uses the Tier-2 Python hybrid
         _assert_aggregate_parity(
             coll,
             [
@@ -1381,7 +1381,7 @@ class TestStep3SqlTierRegressions:
                 },
                 {"$project": {"orig": "$$ROOT", "x": 1}},
             ],
-            "tier3",
+            "tier2",
         )
         # Tier-2 $fill followed by $project with $$CURRENT stays in Tier 2
         _assert_aggregate_parity(
@@ -1493,7 +1493,7 @@ class TestStep3SqlTierRegressions:
                     }
                 }
             ],
-            "tier3",
+            "tier2",
         )
 
     def test_min_max_type_guard_and_rename_ordering(self, conn):
