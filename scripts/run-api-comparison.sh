@@ -30,6 +30,9 @@
 # fresh-document expiry behavior (examples/api_comparison/ttl_index_expiry.py),
 # and get_database()/drop_database() (examples/api_comparison/database_methods.py).
 #
+# This comparison also validates the $indexStats metadata stage
+# (examples/api_comparison/index_stats.py), including its first-stage-only rule.
+#
 # This comparison also validates complex pipelines whose stages rely on
 # Python expression evaluation inside the temporary-table tier
 # (examples/api_comparison/tier_hybrid_pipelines.py).

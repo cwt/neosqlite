@@ -183,11 +183,25 @@ def execute_python_aggregation(
         {"__doc__": doc, "__root__": deepcopy(doc)} for doc in docs
     ]
 
-    for stage in pipeline:
+    for stage_index, stage in enumerate(pipeline):
         if not stage:
             raise MalformedQueryException("Empty pipeline stage")
         stage_name = next(iter(stage.keys())).strip()
+        if stage_name == "$indexStats" and stage_index != 0:
+            raise MalformedQueryException(
+                "$indexStats is only valid as the first stage in a pipeline"
+            )
         match stage_name:
+            case "$indexStats":
+                from ..index_stats import build_index_stats_documents
+
+                stats_docs = build_index_stats_documents(
+                    query_engine.collection
+                )
+                docs_with_context = [
+                    {"__doc__": doc, "__root__": deepcopy(doc)}
+                    for doc in stats_docs
+                ]
             case "$match":
                 query = stage["$match"]
                 docs_with_context = [

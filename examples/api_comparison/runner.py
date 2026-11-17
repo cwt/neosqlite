@@ -45,6 +45,7 @@ from .graphlookup import compare_graph_lookup
 from .gridfs import compare_gridfs_operations
 from .id_range_operators import compare_id_range_operators
 from .index_operations import compare_index_operations
+from .index_stats import compare_index_stats
 from .json_schema import compare_json_schema
 from .math_operators import compare_math_operators
 from .meta_expression import compare_meta_expression
@@ -103,6 +104,7 @@ COMPARISON_FUNCTIONS = [
     ("Aggregation (Cursor Properties)", compare_aggregation_cursor_methods),
     # Indexing
     ("Index Operations", compare_index_operations),
+    ("$indexStats", compare_index_stats),
     ("Compound Index Operations", compare_compound_indexes),
     ("Search Index", compare_search_index_operations),
     ("Reindex", compare_reindex_operation),
