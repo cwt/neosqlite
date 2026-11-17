@@ -30,6 +30,11 @@
 # fresh-document expiry behavior (examples/api_comparison/ttl_index_expiry.py),
 # and get_database()/drop_database() (examples/api_comparison/database_methods.py).
 #
+# This comparison also validates MongoDB-compatible $meta aggregation semantics
+# (examples/api_comparison/meta_expression.py): $meta: "textScore" requires a
+# preceding $text match, $meta: "indexKey" is a no-op, unknown fields raise, and
+# the internal _textScore field never leaks into aggregation results.
+#
 # Additionally, $log2 is a NeoSQLite extension using SQLite's native log2() function.
 # It raises a UserWarning about MongoDB incompatibility. For MongoDB compatibility,
 # use { $log: [ <number>, 2 ] } instead.

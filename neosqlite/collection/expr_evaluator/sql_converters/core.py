@@ -210,10 +210,43 @@ class CoreMixin(BaseSqlMixin):
                 return self._convert_type_operator(operator, operands)
             case "$binarySize" | "$bsonSize":
                 return self._convert_data_size_operator(operator, operands)
+            case "$meta":
+                return self._convert_meta_operator(operands)
             case _:
                 raise NotImplementedError(
                     f"Operator {operator} not supported in SQL tier"
                 )
+
+    def _convert_meta_operator(self, operands: Any) -> tuple[str, list[Any]]:
+        """Translate ``$meta: "textScore"`` into a stored-score JSON extract.
+
+        Text-search stages persist the FTS5 BM25 relevance score inside each
+        document as ``_textScore``. Reading it back is therefore a plain JSON
+        extraction with a ``0.0`` fallback for documents that were never
+        scored. Keeping this in the SQL converter lets ``$meta`` participate in
+        Tier-1 CTE compilation instead of dropping to the temporary-table
+        path. Any other ``$meta`` argument raises ``NotImplementedError`` so
+        the caller falls back to Python, matching the Python evaluator's
+        behavior.
+
+        Args:
+            operands: The ``$meta`` argument, expected to be ``"textScore"``.
+
+        Returns:
+            tuple[str, list[Any]]: SQL expression and an empty parameter list.
+
+        Raises:
+            NotImplementedError: If ``operands`` is not ``"textScore"``.
+        """
+        if operands != "textScore":
+            raise NotImplementedError(
+                f"$meta with '{operands}' not supported in SQL tier"
+            )
+        extract = self.jsonb.function("extract")
+        return (
+            f"COALESCE({extract}({self.data_column}, '$._textScore'), 0.0)",
+            [],
+        )
 
     def _convert_operand_to_sql(self, operand: Any) -> tuple[str, list[Any]]:
         """Convert an operand into a parameterized SQL expression.

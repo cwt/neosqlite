@@ -343,19 +343,20 @@ def test_cursor_datetime_expr_minmax_text_parity():
 
             no_fts = conn["no_fts"]
             no_fts.insert_one({"_id": 1, "body": "Python without index"})
-            no_fts_res = list(
-                no_fts.aggregate(
-                    [
-                        {"$match": {"body": {"$regex": "Python"}}},
-                        {
-                            "$project": {
-                                "body": 1,
-                                "score": {"$meta": "textScore"},
-                            }
-                        },
-                    ]
+            with pytest.raises(Exception, match="text score metadata"):
+                list(
+                    no_fts.aggregate(
+                        [
+                            {"$match": {"body": {"$regex": "Python"}}},
+                            {
+                                "$project": {
+                                    "body": 1,
+                                    "score": {"$meta": "textScore"},
+                                }
+                            },
+                        ]
+                    )
                 )
-            )
 
             outputs[fallback] = {
                 "dt_ids": [d["_id"] for d in dt_docs],
@@ -365,7 +366,7 @@ def test_cursor_datetime_expr_minmax_text_parity():
                 "text_clean_has_score": any(
                     "_textScore" in d for d in text_clean
                 ),
-                "no_fts_scores": [d["score"] for d in no_fts_res],
+                "no_fts_requires_metadata": True,
             }
 
     assert outputs[True] == outputs[False]
@@ -373,7 +374,7 @@ def test_cursor_datetime_expr_minmax_text_parity():
     assert outputs[True]["minmax_ids"] == [2, 4]
     assert outputs[True]["text_order"][0] == 1
     assert outputs[True]["text_clean_has_score"] is False
-    assert outputs[True]["no_fts_scores"] == [0.0]
+    assert outputs[True]["no_fts_requires_metadata"] is True
 
 
 def test_aggregation_count_facet_collstats_and_explain():

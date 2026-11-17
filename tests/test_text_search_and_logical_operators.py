@@ -2509,8 +2509,12 @@ class TestMetaTextScore:
         assert all("relevance" in r for r in results)
         assert all(r["relevance"] > 0 for r in results)
 
-    def test_meta_textscore_no_fts_index(self):
-        """Test $meta: textScore without FTS index returns 0.0."""
+    def test_meta_textscore_no_text_match_raises(self):
+        """$meta: textScore without $text metadata raises like MongoDB."""
+        import pytest
+
+        from neosqlite.exceptions import MalformedQueryException
+
         db = self.db
         db.docs.insert_many(
             [
@@ -2519,16 +2523,16 @@ class TestMetaTextScore:
             ]
         )
 
-        # No FTS index created - should still work with score 0.0
+        # No $text match - MongoDB rejects this instead of returning 0.0.
         pipeline = [
             {"$match": {"title": {"$regex": "Python"}}},
             {"$project": {"title": 1, "score": {"$meta": "textScore"}}},
         ]
 
-        results = list(db.docs.aggregate(pipeline))
-        assert len(results) == 2
-        # Without FTS, score should be 0.0
-        assert all(r["score"] == 0.0 for r in results)
+        with pytest.raises(
+            MalformedQueryException, match="text score metadata"
+        ):
+            list(db.docs.aggregate(pipeline))
 
     def test_meta_textscore_multiple_fields(self):
         """Test $meta: textScore with multiple FTS indexes."""

@@ -14,6 +14,7 @@ from ...requests import _parse_bulk_request
 from ...results import BulkWriteResult
 from ..expr_evaluator import ExprEvaluator
 from ..query_helper import QueryHelper, get_force_fallback
+from ..query_helper.meta_validation import normalize_meta_pipeline
 from ..raw_batch_cursor import RawBatchCursor
 from ..sql_tier_aggregator import SQLTierAggregator
 from ..sql_translator_unified import SQLTranslator
@@ -175,6 +176,30 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
         )
 
     def aggregate_with_constraints(
+        self,
+        pipeline: list[dict[str, Any]],
+        batch_size: int = 101,
+        memory_constrained: bool = False,
+        session: ClientSession | None = None,
+    ) -> list[dict[str, Any]] | CompressedQueue:
+        """Validate ``$meta`` semantics, then execute across the tiers.
+
+        MongoDB never exposes its internal ``_textScore`` field in aggregation
+        output, so it is stripped here for every tier in one place.
+        """
+        result = self._aggregate_with_constraints_impl(
+            normalize_meta_pipeline(pipeline),
+            batch_size=batch_size,
+            memory_constrained=memory_constrained,
+            session=session,
+        )
+        if isinstance(result, list):
+            for doc in result:
+                if isinstance(doc, dict):
+                    doc.pop("_textScore", None)
+        return result
+
+    def _aggregate_with_constraints_impl(
         self,
         pipeline: list[dict[str, Any]],
         batch_size: int = 101,
@@ -410,6 +435,8 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
             dict[str, Any]: Execution plan dictionary containing ``tier``,
                 ``type``, and tier-specific SQL/plan or ``pipeline`` details.
         """
+        pipeline = normalize_meta_pipeline(pipeline)
+
         # 1. Try SQL Tier 1 optimization
         if self.sql_tier_aggregator.can_optimize_pipeline(pipeline):
             try:
