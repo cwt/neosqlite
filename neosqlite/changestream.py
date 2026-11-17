@@ -435,6 +435,26 @@ class ChangeStream:
             ).fetchone()
             self._last_id = row[0] if row else 0
 
+    def _changelog_table_exists(self) -> bool:
+        """Return whether the shared changelog table still exists.
+
+        ``dropDatabase`` removes internal ``_neosqlite_*`` tables, including
+        the changelog, while watchers may still be registered. Cleanup and
+        pruning must therefore tolerate the table being gone.
+
+        Returns:
+            bool: ``True`` when ``_neosqlite_changestream`` is present in
+                ``sqlite_master``, ``False`` otherwise.
+        """
+        try:
+            row = self._collection.db.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='_neosqlite_changestream'"
+            ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
     def _cleanup_triggers(self):
         """Drop shared triggers on last close and prune unconsumable rows.
 
@@ -467,18 +487,19 @@ class ChangeStream:
                 self._collection.db.execute(
                     f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_delete_trigger"
                 )
-                self._collection.db.execute(
-                    "DELETE FROM _neosqlite_changestream "
-                    "WHERE collection_name = ? AND id NOT IN ("
-                    "SELECT id FROM _neosqlite_changestream "
-                    "WHERE collection_name = ? "
-                    "ORDER BY id DESC LIMIT ?)",
-                    (
-                        self._collection.name,
-                        self._collection.name,
-                        _RESUME_RETENTION_ROWS,
-                    ),
-                )
+                if self._changelog_table_exists():
+                    self._collection.db.execute(
+                        "DELETE FROM _neosqlite_changestream "
+                        "WHERE collection_name = ? AND id NOT IN ("
+                        "SELECT id FROM _neosqlite_changestream "
+                        "WHERE collection_name = ? "
+                        "ORDER BY id DESC LIMIT ?)",
+                        (
+                            self._collection.name,
+                            self._collection.name,
+                            _RESUME_RETENTION_ROWS,
+                        ),
+                    )
             else:
                 # Other streams still active: prune only rows every active
                 # stream has already consumed.
@@ -514,7 +535,7 @@ class ChangeStream:
                 if not st._closed and sid != id(self)
             ]
             watermark = min(marks + [self._last_id])
-            if watermark > 0:
+            if watermark > 0 and self._changelog_table_exists():
                 self._collection.db.execute(
                     "DELETE FROM _neosqlite_changestream WHERE collection_name = ? AND id < ?",
                     (self._collection.name, watermark),

@@ -507,6 +507,27 @@ def test_close_idempotent(collection):
     assert stream._closed is True
 
 
+def test_close_after_changelog_table_dropped_no_warning(collection, caplog):
+    """Closing a watcher after dropDatabase is silent and safe.
+
+    ``dropDatabase`` drops the internal ``_neosqlite_changestream`` table
+    while watchers may still be registered on the connection. Cleanup must
+    tolerate a missing changelog table instead of logging a WARNING (#NX).
+    """
+    import logging
+
+    stream = collection.watch()
+    # Simulate dropDatabase removing the internal changelog table.
+    collection.db.execute("DROP TABLE IF EXISTS _neosqlite_changestream")
+    collection.db.commit()
+
+    with caplog.at_level(logging.WARNING, logger="neosqlite.changestream"):
+        stream.close()
+
+    assert stream._closed is True
+    assert "Error during ChangeStream cleanup" not in caplog.text
+
+
 def test_changestream_ensures_id_column_exists():
     """Test that ChangeStream ensures _id column exists before creating triggers.
 
