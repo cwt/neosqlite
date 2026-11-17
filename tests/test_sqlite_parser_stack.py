@@ -42,6 +42,22 @@ def test_parser_stack_overflow_selects_python_fallback(monkeypatch):
         assert helpers._build_set_data_expression(_COMPLEX_UPDATE) is None
 
 
+def test_legacy_sql_path_declines_rename():
+    """The lossy legacy $rename SQL must never be selected.
+
+    It creates JSON null for missing sources and deletes self-renamed fields,
+    so updates containing $rename must use the unified builder or Python.
+    """
+    with neosqlite.Connection(":memory:") as conn:
+        helpers = conn.ops.query_engine.helpers
+        assert not helpers._can_use_sql_updates(
+            {"$rename": {"a": "b"}}, doc_id=1
+        )
+        assert not helpers._can_use_sql_updates(_COMPLEX_UPDATE, doc_id=1)
+        # Without $rename the legacy path is still available.
+        assert helpers._can_use_sql_updates({"$set": {"a": 1}}, doc_id=1)
+
+
 def test_probe_error_other_than_overflow_does_not_change_selection(monkeypatch):
     """Only 'parser stack overflow' forces the fallback; other errors don't."""
 

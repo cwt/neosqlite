@@ -452,11 +452,11 @@ def test_can_use_sql_updates_with_binary_values():
         # Should return True for supported operations
         assert result
 
-        # Test with $rename (now supported in SQL)
+        # The unified builder handles $rename in SQL, but the legacy path is
+        # lossy for self-renames and missing sources; it must defer to Python.
         update_spec = {"$rename": {"old": "new"}}
         result = helper._can_use_sql_updates(update_spec, 1)
-        # Should return True now that $rename is supported in SQL
-        assert result
+        assert not result
 
         # Test with upsert (doc_id = 0, should return False)
         update_spec = {"$set": {"data": "regular_data"}}

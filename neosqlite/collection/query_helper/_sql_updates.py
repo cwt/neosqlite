@@ -554,6 +554,15 @@ class SqlUpdatesMixin:
         ``Binary`` restrictions for ``$min``/``$max``/``$pull``/``$pullAll``,
         and existing list preconditions when ``original_doc`` is supplied.
 
+        ``$rename`` is intentionally excluded: the legacy enhanced-SQL path
+        implements it as an unconditional ``json_set(new, extract(old))``
+        followed by ``json_remove(old)``, which creates a JSON ``null`` for a
+        missing source field and deletes the field on a self-rename. The
+        unified :meth:`_build_set_data_expression` handles both cases
+        correctly, so when it declines (for example on a parser-stack
+        overflow on SQLite < 3.46) the per-document Python path is used
+        instead of this lossy legacy path.
+
         Args:
             update_spec: MongoDB update specification dictionary.
             doc_id: Document ID; ``0`` indicates an upsert requiring fallback.
@@ -579,7 +588,6 @@ class SqlUpdatesMixin:
             "$pull",
             "$pullAll",
             "$currentDate",
-            "$rename",
             "$setOnInsert",
         }
 

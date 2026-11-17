@@ -608,6 +608,10 @@ class TestModernComposableSqlUpdatesEndToEnd:
             d1_after = coll.find_one({"_id": 1})
             d2_after = coll.find_one({"_id": 2})
             assert "src" not in d1_after and d1_after["dst"] == "keep"
+            # Self-rename must keep the field; missing source must not create
+            # a JSON null at the target (#review parser-stack fallback).
+            assert d1_after["bits"] == 13
+            assert "nowhere" not in d1_after
             assert d1_after["lo"] == 5 and d1_after["hi"] == 20
             assert d1_after["str_lo"] == "mango"
             assert d2_after["str_lo"] == "apple"
