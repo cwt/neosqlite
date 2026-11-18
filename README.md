@@ -23,8 +23,9 @@
 - **TTL Indexes**: `expireAfterSeconds` expiry with lazy auto-purge and an opt-in background sweeper.
 - **ACID Transactions**: Full `ClientSession` API with PyMongo 4.x parity using SQLite SAVEPOINTs.
 - **Change Streams**: Native SQLite triggers for `watch()` — no replica set required.
-- **Advanced Aggregation**: `$setWindowFields`, `$graphLookup`, `$fill`, streaming `$facet`, and more.
-- **Tier-1 SQL Optimization**: Dozens of operators translated to native SQL for 10-100x speedup.
+- **Advanced Aggregation**: `$setWindowFields`, `$graphLookup`, `$fill`, streaming `$facet`, `$indexStats`, and more.
+- **Tier-1 SQL Optimization**: Dozens of operators translated to native SQL for 10-100x speedup, including BSON-aware `_id` range queries.
+- **JavaScript Operators**: `$function` and `$where` run in a sandboxed external Node.js worker — enabled only with a patched, supported Node runtime (see [JavaScript Operators](#javascript-operators)).
 - **Native `$jsonSchema`**: Query filtering and write-time validation via SQLite CHECK constraints.
 - **Window Functions**: Complete MongoDB 5.0+ suite (`$rank`, `$top`, `$bottom`, math operators).
 - **MongoDB-compatible ObjectId**: Full 12-byte specification with automatic generation.
@@ -60,6 +61,10 @@ NeoSQLite supports Python 3.12, 3.13, 3.14, and 3.15.
 SQLite 3.26+ is supported. JSONB, aggregate ORDER BY, `RETURNING`, and the
 3.35+ math functions are used when available; older SQLite builds fall back to
 the Python tier or register compatible SQL functions automatically.
+
+The optional JavaScript operators (`$function`, `$where`) need an external
+Node.js executable on `PATH`. **Node v26.13.1 (LTS) is preferred.** See
+[JavaScript Operators](#javascript-operators) for the full version gate.
 
 ```bash
 pip install neosqlite
@@ -159,13 +164,13 @@ collection.insert_one({"name": "test"})  # Works!
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 381 |
-| **Passed** | 363 |
-| **Skipped** | 18 (architectural differences) |
+| **Total Tests** | 435 |
+| **Passed** | 416 |
+| **Skipped** | 19 (architectural differences) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-Skipped tests are due to MongoDB requiring a replica set (change streams, transactions) or NeoSQLite extensions (`$log2`, `$contains`). All comparable APIs pass. Tested against MongoDB 8.x (`mongo:8.2.12` pinned container image).
+Skipped tests are due to MongoDB requiring a replica set (change streams, transactions), NeoSQLite extensions (`$log2`, `$contains`), or JavaScript operators when no supported Node.js runtime is installed. All comparable APIs pass. Tested against MongoDB 8.x (`mongo:8.2.12` pinned container image).
 
 Run the comparison yourself: `./scripts/run-api-comparison.sh`
 
@@ -177,7 +182,7 @@ NeoSQLite uses a **strict MongoDB-compatible `_id` column**:
 - **String `_id` values** are kept verbatim (e.g., `"5"` is a string, not converted to integer `5`).
 - **Auto-generated `_id`** produces MongoDB-compatible 12-byte ObjectIds stored in the `_id` column.
 - **Legacy collections** (created before the `_id` column existed) fall back to the `id` column via an automatic resolver.
-- **Range queries** (`$gt`, `$lt`, etc.) on `_id` use Python evaluation to preserve correct cross-type comparison semantics (MongoDB BSON ordering).
+- **Range queries** (`$gt`, `$lt`, etc.) on `_id` are compiled to native SQL with BSON type guards, so only values of the operand's BSON type match — matching MongoDB semantics without a Python fallback.
 
 ## Key APIs
 
@@ -198,14 +203,61 @@ users.create_search_index('bio')
 `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$ne`, `$in`, `$nin`, `$and`, `$or`, `$not`, `$nor`,
 `$exists`, `$type`, `$regex`, `$elemMatch`, `$size`, `$mod`,
 `$bitsAllSet`, `$bitsAllClear`, `$bitsAnySet`, `$bitsAnyClear`,
-`$text` (FTS5), `$jsonSchema`, and more.
+`$text` (FTS5), `$jsonSchema`, and `$where` (JavaScript, requires Node.js — see below).
+
+### JavaScript Operators
+
+The `$function` aggregation expression and the `$where` query predicate execute
+JavaScript in a **sandboxed out-of-process Node.js worker**. No Python binding
+or native extension is required; Node.js is discovered on `PATH` at runtime.
+
+**Node v26.13.1 (LTS) is preferred.** Only patched, supported release lines are
+accepted:
+
+| Node.js line | Minimum patched version |
+|--------------|-------------------------|
+| 22.x (Maintenance LTS) | 22.23.5 |
+| 24.x (Active LTS) | 24.22.3 |
+| **26.x (LTS, preferred)** | **26.13.1** |
+
+EOL lines (18, 20, odd-numbered 21/23/25, and older) and unpatched releases of
+active lines are **rejected**. These minimums address CVE-2026-111497
+("Node2Shell") and the November 2026 HTTP/2 and TLS security fixes.
+
+> If `node` is missing, end-of-life, or older than the gate, the JavaScript
+> operators are **not enabled** — `$function` and `$where` keep raising
+> `NotImplementedError` with a message explaining which Node version is
+> required. No other functionality is affected.
+
+```python
+# Requires a supported Node.js on PATH (e.g. v26.13.1)
+docs.aggregate([
+    {"$addFields": {
+        "total": {
+            "$function": {
+                "body": "function(a, b) { return a * b; }",
+                "args": ["$price", "$qty"],
+                "lang": "js",
+            }
+        }
+    }}
+])
+
+docs.find({"$where": "this.price > 100"})
+```
+
+The worker starts with `node --permission` (file, network, and child-process
+access denied), bounds each call with a timeout and an address-space limit, and
+is only used for these two operators. `$accumulator` and Atlas-only `$script`
+remain unsupported.
 
 ### Aggregation Stages
 
 `$match`, `$project`, `$group`, `$sort`, `$skip`, `$limit`, `$unwind`,
 `$lookup`, `$facet`, `$bucket`, `$bucketAuto`, `$sample`, `$merge`,
 `$setWindowFields`, `$graphLookup`, `$fill`, `$densify`, `$unionWith`,
-`$replaceRoot`, `$replaceWith`, `$unset`, `$count`, `$redact`, `$addFields`, `$switch`.
+`$replaceRoot`, `$replaceWith`, `$unset`, `$count`, `$redact`, `$addFields`, `$switch`,
+`$indexStats` (MongoDB-shaped index metadata).
 
 ### Transactions
 
