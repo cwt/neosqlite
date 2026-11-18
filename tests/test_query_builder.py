@@ -603,11 +603,15 @@ class TestBuildSimpleWhereClause:
         assert params == []
 
     def test_where_query_raises_on_where_operator(self, query_helper):
-        """Test $where raises NotImplementedError."""
-        with pytest.raises(NotImplementedError, match="\\$where"):
-            query_helper._build_simple_where_clause(
-                {"$where": "function() { return true; }"}
-            )
+        """$where defers to Python evaluation when Node.js is supported."""
+        from neosqlite.js_runtime import find_node_runtime
+
+        query = {"$where": "function() { return true; }"}
+        if find_node_runtime() is None:
+            with pytest.raises(NotImplementedError, match="\\$where"):
+                query_helper._build_simple_where_clause(query)
+        else:
+            assert query_helper._build_simple_where_clause(query) is None
 
     def test_where_query_raises_on_function_operator(self, query_helper):
         """Test $function raises NotImplementedError."""

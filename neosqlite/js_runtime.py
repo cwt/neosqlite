@@ -110,6 +110,9 @@ def reset_node_runtime_cache() -> None:
 
 def node_unavailable_reason() -> str:
     """Explain why JavaScript operators cannot be used."""
+    supported = find_node_runtime()
+    if supported is not None:
+        return f"available (Node.js {supported.version_string})"
     path = shutil.which("node")
     if path is None:
         return "Node.js executable not found on PATH"

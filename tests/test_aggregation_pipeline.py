@@ -3440,29 +3440,33 @@ def test_aggregate_pymongo_compatibility_params(collection):
 
 
 def test_function_operator_raises_not_implemented(collection):
-    """Test that the $function operator in aggregation raises NotImplementedError."""
+    """$function works when a vetted Node.js runtime is installed."""
+    from neosqlite.js_runtime import find_node_runtime
+
     collection.insert_many([{"value": i} for i in range(10)])
-    with pytest.raises(
-        NotImplementedError,
-        match=r"The '\$function' operator is not supported",
-    ):
-        list(
-            collection.aggregate(
-                [
-                    {
-                        "$project": {
-                            "result": {
-                                "$function": {
-                                    "body": "function(x) { return x + 1; }",
-                                    "args": ["$value"],
-                                    "lang": "js",
-                                }
-                            }
-                        }
+    pipeline = [
+        {
+            "$project": {
+                "result": {
+                    "$function": {
+                        "body": "function(x) { return x + 1; }",
+                        "args": ["$value"],
+                        "lang": "js",
                     }
-                ]
-            )
-        )
+                }
+            }
+        },
+        {"$sort": {"_id": 1}},
+    ]
+    if find_node_runtime() is None:
+        with pytest.raises(
+            NotImplementedError,
+            match=r"The '\$function' operator is not supported",
+        ):
+            list(collection.aggregate(pipeline))
+    else:
+        results = list(collection.aggregate(pipeline))
+        assert [doc["result"] for doc in results] == list(range(1, 11))
 
 
 def test_accumulator_operator_raises_not_implemented(collection):

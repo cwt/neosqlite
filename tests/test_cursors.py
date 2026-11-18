@@ -1774,12 +1774,19 @@ class TestCursorWhere:
         )
 
     def test_where_operator_raises_not_implemented(self, collection):
-        """Test that the $where operator in a query dictionary raises NotImplementedError."""
-        with pytest.raises(
-            NotImplementedError,
-            match=r"The '\$where' operator .* is not supported",
-        ):
-            list(collection.find({"$where": "this.value > 10"}))
+        """$where works when a vetted Node.js runtime is installed."""
+        from neosqlite.js_runtime import find_node_runtime
+
+        collection.insert_many([{"_id": i, "value": i} for i in range(15)])
+        if find_node_runtime() is None:
+            with pytest.raises(
+                NotImplementedError,
+                match=r"The '\$where' operator .* is not supported",
+            ):
+                list(collection.find({"$where": "this.value > 10"}))
+        else:
+            results = list(collection.find({"$where": "this.value > 10"}))
+            assert [doc["_id"] for doc in results] == list(range(11, 15))
 
     def test_function_operator_raises_not_implemented(self, collection):
         """Test that the $function operator in a query raises NotImplementedError."""
