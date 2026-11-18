@@ -30,6 +30,12 @@
 # fresh-document expiry behavior (examples/api_comparison/ttl_index_expiry.py),
 # and get_database()/drop_database() (examples/api_comparison/database_methods.py).
 #
+# This comparison also validates server-side JavaScript operators ($function,
+# $where) when a patched Node.js runtime is on PATH (examples/api_comparison/
+# js_operators.py). Accepted lines: 22.x >= 22.23.5, 24.x >= 24.22.3,
+# 26.x >= 26.13.1 (CVE-2026-111497 / Nov 2026 security fixes). With no vetted
+# runtime the checks are reported as skipped.
+#
 # This comparison also validates the $indexStats metadata stage
 # (examples/api_comparison/index_stats.py), including its first-stage-only rule.
 #

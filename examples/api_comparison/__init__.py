@@ -60,6 +60,7 @@ from . import (
     id_range_operators,
     index_operations,
     index_stats,
+    js_operators,
     json_schema,
     math_operators,
     meta_expression,
@@ -159,6 +160,7 @@ __all__ = [
     "id_range_operators",
     "fill_stage",
     "json_schema",
+    "js_operators",
     "window_math",
     # Additional operator modules
     "aggregation_bucket_stages",

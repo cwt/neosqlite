@@ -46,6 +46,7 @@ from .gridfs import compare_gridfs_operations
 from .id_range_operators import compare_id_range_operators
 from .index_operations import compare_index_operations
 from .index_stats import compare_index_stats
+from .js_operators import compare_js_operators
 from .json_schema import compare_json_schema
 from .math_operators import compare_math_operators
 from .meta_expression import compare_meta_expression
@@ -88,6 +89,7 @@ COMPARISON_FUNCTIONS = [
     # Core Operations
     ("CRUD Operations", compare_crud_operations),
     ("Query Operators", compare_query_operators),
+    ("JavaScript Operators", compare_js_operators),
     ("_id Range Operators", compare_id_range_operators),
     ("$meta Expression", compare_meta_expression),
     ("Tier-2 Hybrid Pipelines", compare_tier_hybrid_pipelines),
