@@ -158,7 +158,13 @@ def test_worker_does_not_inherit_parent_environment(
     monkeypatch.setenv("NEOSQLITE_SECRET_MARKER", "SHOULD_NOT_LEAK")
     worker = get_worker(supported_node)
     assert worker is not None
-    assert worker.call("function(){return Object.keys(process.env)}", []) == []
+    env_keys = worker.call("function(){return Object.keys(process.env)}", [])
+    if sys.platform == "darwin":
+        # CoreFoundation injects __CF_USER_TEXT_ENCODING during dyld init even
+        # when spawned with env={}; it is OS-synthesized, not parent-inherited.
+        assert [k for k in env_keys if k != "__CF_USER_TEXT_ENCODING"] == []
+    else:
+        assert env_keys == []
     assert (
         worker.call(
             "function(){return process.env.NEOSQLITE_SECRET_MARKER || 'ABSENT'}",
@@ -236,7 +242,7 @@ def test_worker_heap_cap_defaults_and_clamping(supported_node):
 
 def test_worker_platform_popen_flags(monkeypatch):
     runtime = NodeRuntime(path="/usr/bin/node", version=(26, 13, 1))
-    recorded: list[tuple[list[str], object]] = []
+    recorded: list[tuple[list[str], object, object]] = []
 
     class _FakeProc:
         def __init__(self) -> None:
@@ -261,7 +267,9 @@ def test_worker_platform_popen_flags(monkeypatch):
             pass
 
     def fake_popen(args, **kwargs):
-        recorded.append((list(args), kwargs.get("preexec_fn")))
+        recorded.append(
+            (list(args), kwargs.get("preexec_fn"), kwargs.get("env"))
+        )
         return _FakeProc()
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
@@ -279,6 +287,7 @@ def test_worker_platform_popen_flags(monkeypatch):
         "--max-old-space-size=512",
     ]
     assert recorded[-1][1] is None
+    assert recorded[-1][2] == {}
 
     monkeypatch.setattr(sys, "platform", "linux")
     with NodeWorker(runtime) as linux_worker:
@@ -289,6 +298,7 @@ def test_worker_platform_popen_flags(monkeypatch):
         "--permission",
         "--max-old-space-size=512",
     ]
+    assert recorded[-1][2] == {}
 
 
 def test_worker_heap_limit_crash_and_recovery(supported_node):
