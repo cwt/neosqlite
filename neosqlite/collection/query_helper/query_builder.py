@@ -192,6 +192,35 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                     )
                     result = evaluator._evaluate_expr_python(value, document)
                     matches.append(bool(result))
+                case "$where":
+                    from ...js_runtime import (
+                        find_node_runtime,
+                        node_unavailable_reason,
+                    )
+                    from ...js_worker import JsWorkerError, get_worker
+
+                    worker = get_worker(find_node_runtime())
+                    if worker is None:
+                        raise NotImplementedError(
+                            "The '$where' operator is not supported in NeoSQLite "
+                            f"(no supported Node.js runtime: {node_unavailable_reason()})."
+                        )
+                    if not isinstance(value, str):
+                        raise ValueError("$where requires a JavaScript string")
+                    stripped = value.strip()
+                    code = (
+                        stripped
+                        if stripped.startswith("function")
+                        else f"function() {{ return ({stripped}); }}"
+                    )
+                    try:
+                        matches.append(
+                            bool(worker.call(code, this_arg=document))
+                        )
+                    except JsWorkerError as exc:
+                        raise ValueError(
+                            f"JavaScript error in $where: {exc}"
+                        ) from exc
                 case "$gt" | "$lt" | "$gte" | "$lte" | "$eq" | "$ne" | "$cmp":
                     # Handle direct comparison expressions (without $expr wrapper)
                     # These are expressions like {"$gt": [{"$sin": "$angle"}, 0.5]}

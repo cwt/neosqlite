@@ -241,10 +241,43 @@ class CorePythonMixin(BasePythonMixin):
             case "$literal":
                 return self._evaluate_literal_python(operands, document)
             case "$function":
-                raise NotImplementedError(
-                    "The '$function' operator is not supported in NeoSQLite. "
-                    "Please use '$expr' with Python expressions, or post-process results in Python."
+                from ....js_runtime import (
+                    find_node_runtime,
+                    node_unavailable_reason,
                 )
+                from ....js_worker import JsWorkerError, get_worker
+
+                worker = get_worker(find_node_runtime())
+                if worker is None:
+                    raise NotImplementedError(
+                        "The '$function' operator is not supported in NeoSQLite "
+                        f"(no supported Node.js runtime: {node_unavailable_reason()}). "
+                        "Please use '$expr' with Python expressions, or post-process results in Python."
+                    )
+                if not isinstance(operands, dict):
+                    raise ValueError(
+                        "$function requires a specification object"
+                    )
+                body = operands.get("body")
+                lang = operands.get("lang", "js")
+                if lang != "js":
+                    raise ValueError(f"Unsupported $function language: {lang}")
+                if hasattr(body, "__str__") and not isinstance(body, str):
+                    body = str(body)
+                if not isinstance(body, str):
+                    raise ValueError(
+                        "$function body must be a JavaScript string"
+                    )
+                args = [
+                    self._evaluate_operand_python(item, document)
+                    for item in (operands.get("args") or [])
+                ]
+                try:
+                    return worker.call(body, args)
+                except JsWorkerError as exc:
+                    raise ValueError(
+                        f"JavaScript error in $function: {exc}"
+                    ) from exc
             case "$accumulator":
                 raise NotImplementedError(
                     "The '$accumulator' operator is not supported in NeoSQLite. "

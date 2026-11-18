@@ -917,11 +917,17 @@ class SqlQueryBuilderMixin:
             return None
 
         if "$where" in query:
-            raise NotImplementedError(
-                "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
-                "Please use the '$expr' operator for field-to-field comparisons, "
-                "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
-            )
+            from ...js_runtime import find_node_runtime
+
+            if find_node_runtime() is None:
+                raise NotImplementedError(
+                    "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
+                    "Please use the '$expr' operator for field-to-field comparisons, "
+                    "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
+                )
+            # A vetted Node.js runtime is available: defer to the Python
+            # evaluation path, which executes $where in the sandbox worker.
+            return None
 
         if "$function" in query:
             raise NotImplementedError(

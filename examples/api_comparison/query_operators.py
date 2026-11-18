@@ -240,6 +240,12 @@ def compare_query_operators():
             skip_reason = None
             if op_name == "$contains":
                 skip_reason = "NeoSQLite extension not in MongoDB"
+            elif op_name == "$where (NotImplementedError)":
+                from neosqlite.js_runtime import node_unavailable_reason
+
+                skip_reason = (
+                    "JavaScript disabled: " + node_unavailable_reason()
+                )
             elif "(NotImplementedError)" in op_name:
                 skip_reason = (
                     "Not supported in NeoSQLite (raises NotImplementedError)"
