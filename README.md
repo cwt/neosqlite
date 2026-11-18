@@ -247,10 +247,12 @@ docs.find({"$where": "this.price > 100"})
 ```
 
 The worker starts with `node --permission` (file, network, and child-process
-access denied), bounds each call with a timeout and a 512 MB V8 heap cap on all
-platforms, and additionally caps the process address space with `RLIMIT_AS` on
-Linux. It is only used for these two operators. `$accumulator` and Atlas-only
-`$script` remain unsupported.
+access denied) and an **empty environment**, so `process.env` cannot expose
+parent-process secrets. Each evaluation is bounded by a 5-second timeout and a
+512 MB V8 heap cap on all platforms, with an additional `RLIMIT_AS` cap on
+Linux. The timeout is per evaluation, so a query matching many documents can
+take proportionally longer. The worker is only used for these two operators;
+`$accumulator` and Atlas-only `$script` remain unsupported.
 
 ### Aggregation Stages
 

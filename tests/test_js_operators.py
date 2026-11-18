@@ -149,6 +149,83 @@ def test_worker_unit_call(supported_node):
     assert worker.call("function(a,b){return a+b}", [2, 3]) == 5
 
 
+def test_worker_does_not_inherit_parent_environment(
+    supported_node, monkeypatch
+):
+    """process.env must not expose parent secrets (CVE-2026-111497 hardening)."""
+    from neosqlite.js_worker import get_worker
+
+    monkeypatch.setenv("NEOSQLITE_SECRET_MARKER", "SHOULD_NOT_LEAK")
+    worker = get_worker(supported_node)
+    assert worker is not None
+    assert worker.call("function(){return Object.keys(process.env)}", []) == []
+    assert (
+        worker.call(
+            "function(){return process.env.NEOSQLITE_SECRET_MARKER || 'ABSENT'}",
+            [],
+        )
+        == "ABSENT"
+    )
+    # The constructor escape path must not reach it either.
+    assert (
+        worker.call(
+            "function(){return this.constructor.constructor("
+            "\"return process.env.NEOSQLITE_SECRET_MARKER\")() || 'ABSENT'}",
+            [],
+            this_arg={"x": 1},
+        )
+        == "ABSENT"
+    )
+
+
+def test_env_secret_not_readable_via_function(supported_node, monkeypatch):
+    monkeypatch.setenv("NEOSQLITE_SECRET_MARKER", "SHOULD_NOT_LEAK")
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.docs
+        coll.insert_one({"_id": 1, "n": 1})
+        results = list(
+            coll.aggregate(
+                [
+                    {
+                        "$project": {
+                            "secret": {
+                                "$function": {
+                                    "body": (
+                                        "function(){return "
+                                        "process.env.NEOSQLITE_SECRET_MARKER "
+                                        "|| 'ABSENT'}"
+                                    ),
+                                    "args": [],
+                                    "lang": "js",
+                                }
+                            }
+                        }
+                    }
+                ]
+            )
+        )
+    assert results[0]["secret"] == "ABSENT"
+
+
+def test_async_function_resolves(supported_node):
+    from neosqlite.js_worker import get_worker
+
+    worker = get_worker(supported_node)
+    assert worker is not None
+    assert worker.call("async function(){return 42}", []) == 42
+
+
+def test_rejected_promise_does_not_kill_worker(supported_node):
+    from neosqlite.js_worker import JsWorkerError, get_worker
+
+    worker = get_worker(supported_node)
+    assert worker is not None
+    with pytest.raises(JsWorkerError):
+        worker.call("async function(){throw new Error('rejected')}", [])
+    # Still usable: the worker survived the rejection.
+    assert worker.call("function(){return 7}", []) == 7
+
+
 def test_worker_heap_cap_defaults_and_clamping(supported_node):
     assert NodeWorker(supported_node).heap_mb == 512
     assert NodeWorker(supported_node, memory_mb=128).heap_mb == 128

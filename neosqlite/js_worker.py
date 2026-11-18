@@ -56,8 +56,15 @@ function fromJSONSafe(value) {
   return value;
 }
 
+// process.env cannot be frozen in Node; the parent must launch us with an
+// empty environment (see NodeWorker._start). Guard against stray rejections
+// so one bad expression cannot take down the shared worker.
+process.on('unhandledRejection', (err) => {
+  process.stderr.write('Unhandled rejection: ' + String(err && err.message || err) + '\n');
+});
+
 const rl = readline.createInterface({input: process.stdin, crlfDelay: Infinity});
-rl.on('line', (line) => {
+rl.on('line', async (line) => {
   if (!line.trim()) return;
   let id = null;
   try {
@@ -66,7 +73,9 @@ rl.on('line', (line) => {
     const fn = eval('(' + req.code + ')');
     if (typeof fn !== 'function') throw new Error('JS body is not a function');
     const args = (req.args || []).map(fromJSONSafe);
-    const value = fn.apply(req.thisArg === undefined ? null : req.thisArg, args);
+    // Await so async functions resolve instead of leaking a raw Promise and
+    // triggering an unhandled rejection that kills the worker.
+    const value = await fn.apply(req.thisArg === undefined ? null : req.thisArg, args);
     process.stdout.write(JSON.stringify({id, ok: true, value: toJSONSafe(value)}) + '\n');
   } catch (err) {
     const message = err && err.message ? String(err.message) : String(err);
@@ -139,6 +148,10 @@ class NodeWorker:
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
+            # Never pass the parent's environment: --permission does not
+            # restrict process.env, and secrets there would be readable by
+            # any JS expression via $function / $where.
+            env={},
             preexec_fn=(
                 self._preexec if sys.platform.startswith("linux") else None
             ),
