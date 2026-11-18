@@ -20,17 +20,23 @@ This package tests NeoSQLite's MongoDB API compatibility by running the same ope
 
 *Note: Tested against MongoDB 8.x using the pinned `mongo:8.2.12` container image.*
 
-**Note on Skipped Tests**: The 20 skipped tests are due to architectural differences or environment limitations, not missing implementations:
+**Note on Skipped Tests**: The 19 skipped tests are due to architectural differences or environment limitations, not missing implementations:
 1. `options()` - NeoSQLite returns detailed SQLite schema info (`{'columns': [...], 'indexes': [...]}`) while MongoDB returns `{}`. Backend-specific difference.
 2. `$log2` - **NeoSQLite extension** using SQLite's native `log2()` function. Raises `UserWarning` about MongoDB incompatibility.
 3. `watch()` (Collection & Database) - **Fully implemented in NeoSQLite** via SQLite triggers but cannot be compared because MongoDB requires a replica set for change streams. Same for the v1.16.0 `watch resume_after` and `watch $match pipeline` checks (NeoSQLite side exercised; MongoDB semantics covered in unit tests).
 4. `transaction_commit` / `transaction_abort` / `with_transaction` - **Fully implemented in NeoSQLite** via `ClientSession` but skipped in comparison because MongoDB requires a replica set for multi-document transactions.
 5. `db_path` (Collection & Database) - **NeoSQLite extension** providing the underlying SQLite database file path. No MongoDB equivalent.
 6. `initialize_ordered_bulk_op()` / `initialize_unordered_bulk_op()` - **Deprecated in NeoSQLite** to match PyMongo 4.x behavior.
-7. `where()` - **NeoSQLite implementation** using Python function filter. MongoDB uses JavaScript `$where` which requires a JS engine.
-8. `$function` - **Not supported in NeoSQLite**. Raises `NotImplementedError` with guidance to use `$expr` or Python post-processing.
+7. `where()` - **NeoSQLite implementation** using a Python function filter (distinct from the `$where` query operator).
+8. Query-level `$function` / `$accumulator` - accepted as query predicates only by MongoDB's JavaScript engine; use `$function` as an aggregation expression instead (see below).
 9. `$accumulator` - **Not supported in NeoSQLite**. Raises `NotImplementedError` with guidance to use built-in accumulators or Python post-processing.
 10. `$contains` - **NeoSQLite extension** for substring search.
+
+JavaScript operators `$function` (aggregation expression) and `$where` (query
+predicate) are implemented and compared against MongoDB when a patched Node.js
+runtime is available (see `js_operators.py`). Without a supported runtime they
+are reported as skipped and raise `NotImplementedError` at runtime. Stage
+aliases `$set` and `$sortByCount` are covered in `stage_aliases.py`.
 
 All comparable MongoDB APIs are tested with 100% compatibility.
 

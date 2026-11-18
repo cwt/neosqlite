@@ -164,8 +164,8 @@ collection.insert_one({"name": "test"})  # Works!
 
 | Metric | Result |
 |--------|--------|
-| **Total Tests** | 435 |
-| **Passed** | 416 |
+| **Total Tests** | 439 |
+| **Passed** | 420 |
 | **Skipped** | 19 (architectural differences) |
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
@@ -260,7 +260,7 @@ take proportionally longer. The worker is only used for these two operators;
 `$lookup`, `$facet`, `$bucket`, `$bucketAuto`, `$sample`, `$merge`,
 `$setWindowFields`, `$graphLookup`, `$fill`, `$densify`, `$unionWith`,
 `$replaceRoot`, `$replaceWith`, `$unset`, `$count`, `$redact`, `$addFields`, `$switch`,
-`$indexStats` (MongoDB-shaped index metadata).
+`$set` (alias for `$addFields`), `$sortByCount`, `$indexStats` (MongoDB-shaped index metadata).
 
 ### Transactions
 

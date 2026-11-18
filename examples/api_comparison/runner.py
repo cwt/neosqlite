@@ -63,6 +63,7 @@ from .raw_batches import compare_raw_batch_operations
 from .reindex import compare_reindex_operation
 from .search_index import compare_search_index_operations
 from .session_transactions import compare_session_methods
+from .stage_aliases import compare_stage_aliases
 from .string_operators import compare_string_operators
 from .text_search import compare_text_search
 from .tier_hybrid_pipelines import compare_tier_hybrid_pipelines
@@ -89,6 +90,7 @@ COMPARISON_FUNCTIONS = [
     # Core Operations
     ("CRUD Operations", compare_crud_operations),
     ("Query Operators", compare_query_operators),
+    ("Stage Aliases", compare_stage_aliases),
     ("JavaScript Operators", compare_js_operators),
     ("_id Range Operators", compare_id_range_operators),
     ("$meta Expression", compare_meta_expression),

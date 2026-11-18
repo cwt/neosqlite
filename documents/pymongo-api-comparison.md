@@ -499,8 +499,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 | Operator | Description | Priority | Status | Notes |
 |----------|-------------|----------|--------|-------|
-| `$where` | JavaScript expression | Medium | ❌ Not Supported | Raises NotImplementedError; use `$expr` |
-| `$function` | Custom JavaScript function | Medium | ❌ Not Supported | Raises NotImplementedError; use `$expr` or Python post-processing |
+| `$where` | JavaScript expression | Medium | ✅ **Implemented** | Sandboxed Node.js worker; requires patched Node >= 22.23.5 / 24.22.3 / 26.13.1 |
+| `$function` | Custom JavaScript function | Medium | ✅ **Implemented** | Aggregation expression via sandboxed Node.js worker (same version gate) |
 | `$accumulator` | Custom accumulator | Medium | ❌ Not Supported | Raises NotImplementedError; use built-in accumulators or Python post-processing |
 | `$jsonSchema` | JSON Schema validation | Medium | ✅ **Implemented** | Query filtering and native SQL write validation |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas feature |
@@ -527,6 +527,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | `$graphLookup` | Recursive search | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
 | `$merge` | Write to collection | Medium | ✅ **Implemented** | Python fallback |
 | `$setWindowFields` | Window functions | Medium | ✅ **Implemented** | SQL, Temp Table and Python fallback |
+| `$set` | Stage alias for `$addFields` | Medium | ✅ **Implemented** | Normalized before tier dispatch |
+| `$sortByCount` | Group and sort by count | Medium | ✅ **Implemented** | Rewritten to `$group` + `$sort` |
 | `$unionWith` | Combine collections | Medium | ✅ **Implemented** | SQL and Python fallback |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas 7.0.2+ |
 | `$redact` | Field-level redaction | Medium | ✅ **Implemented** | Python fallback |
@@ -536,8 +538,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 | Stage | Reason Not Applicable |
 |-------|----------------------|
-| `$collStats` | MongoDB-specific statistics |
-| `$indexStats` | MongoDB-specific index stats |
+| `$collStats` | ✅ Implemented — collection statistics |
+| `$indexStats` | ✅ Implemented — MongoDB-shaped index stats |
 | `$planCacheStats` | MongoDB-specific plan cache |
 | `$querySettings` | MongoDB 8.0+ specific |
 | `$queryStats` | MongoDB 7.0+ (unstable) |

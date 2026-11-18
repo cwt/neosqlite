@@ -36,6 +36,9 @@
 # 26.x >= 26.13.1 (CVE-2026-111497 / Nov 2026 security fixes). With no vetted
 # runtime the checks are reported as skipped.
 #
+# This comparison also validates the $set and $sortByCount stage aliases
+# (examples/api_comparison/stage_aliases.py).
+#
 # This comparison also validates the $indexStats metadata stage
 # (examples/api_comparison/index_stats.py), including its first-stage-only rule.
 #
