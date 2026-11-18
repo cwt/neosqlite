@@ -4,16 +4,17 @@ A single long-lived Node.js process speaks newline-delimited JSON over
 stdin/stdout. Spawning per document is ~50 ms/call; a persistent worker keeps
 it under 0.1 ms/call. The worker is started with ``node --permission`` so file,
 network, and child-process access are denied, and calls are bounded by a
-wall-clock timeout and an address-space limit.
+wall-clock timeout, V8's ``--max-old-space-size`` heap cap across all
+platforms, and an ``RLIMIT_AS`` address-space limit on Linux.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import selectors
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -75,9 +76,14 @@ rl.on('line', (line) => {
 """
 
 _DEFAULT_TIMEOUT = 5.0
-# V8 reserves roughly 2 GB of virtual address space at startup, so the
+# V8 reserves roughly 2 GB of virtual address space at startup on Linux, so the
 # RLIMIT_AS cap must leave headroom even though actual RSS is much smaller.
+# On macOS, processes map ~466 GiB of virtual address space (dyld shared cache /
+# VM reservations), so setrlimit(RLIMIT_AS) below that footprint raises EINVAL
+# (surfaced by Python as ValueError); V8's heap is capped cross-platform via
+# --max-old-space-size instead.
 _DEFAULT_MEMORY_MB = 4096
+_DEFAULT_HEAP_MB = 512
 
 
 class JsWorkerError(Exception):
@@ -92,35 +98,50 @@ class NodeWorker:
         runtime: NodeRuntime,
         timeout: float = _DEFAULT_TIMEOUT,
         memory_mb: int = _DEFAULT_MEMORY_MB,
+        heap_mb: int | None = None,
     ) -> None:
         self.runtime = runtime
         self.timeout = timeout
         self.memory_mb = memory_mb
+        self.heap_mb = (
+            min(_DEFAULT_HEAP_MB, memory_mb) if heap_mb is None else heap_mb
+        )
         self._proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
         self._next_id = 1
         self._selector: selectors.BaseSelector | None = None
 
     def _preexec(self) -> None:
-        """Cap the worker's address space on POSIX."""
-        if os.name != "posix":
+        """Cap the worker's virtual address space on Linux."""
+        if not sys.platform.startswith("linux"):
             return
         import resource
 
         limit = self.memory_mb * 1024 * 1024
+        _, hard = resource.getrlimit(resource.RLIMIT_AS)
+        if hard != resource.RLIM_INFINITY:
+            limit = min(limit, hard)
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
     def _start(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
             return
         self._proc = subprocess.Popen(
-            [self.runtime.path, "--permission", "-e", _WORKER_SCRIPT],
+            [
+                self.runtime.path,
+                "--permission",
+                f"--max-old-space-size={self.heap_mb}",
+                "-e",
+                _WORKER_SCRIPT,
+            ],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             bufsize=1,
-            preexec_fn=self._preexec if os.name == "posix" else None,
+            preexec_fn=(
+                self._preexec if sys.platform.startswith("linux") else None
+            ),
         )
         stdout = self._proc.stdout
         assert stdout is not None
@@ -166,10 +187,16 @@ class NodeWorker:
                 )
             line = self._proc.stdout.readline()
             if not line:
-                self._restart()
+                proc = self._proc
                 stderr = ""
-                if self._proc.stderr is not None:
-                    stderr = self._proc.stderr.read()
+                try:
+                    proc.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+                if proc.stderr is not None:
+                    stderr = proc.stderr.read()
+                self._restart()
                 raise JsWorkerError(
                     f"JS worker exited unexpectedly: {stderr.strip()}"
                 )

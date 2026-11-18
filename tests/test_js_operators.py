@@ -1,12 +1,15 @@
 """Tests for JavaScript expression/query operators via the Node worker."""
 
+import io
 import shutil
+import subprocess
+import sys
 
 import pytest
 
 import neosqlite
 from neosqlite.js_runtime import NodeRuntime
-from neosqlite.js_worker import close_worker
+from neosqlite.js_worker import JsWorkerError, NodeWorker, close_worker
 
 _NODE = shutil.which("node")
 
@@ -144,3 +147,77 @@ def test_worker_unit_call(supported_node):
     worker = get_worker(supported_node)
     assert worker is not None
     assert worker.call("function(a,b){return a+b}", [2, 3]) == 5
+
+
+def test_worker_heap_cap_defaults_and_clamping(supported_node):
+    assert NodeWorker(supported_node).heap_mb == 512
+    assert NodeWorker(supported_node, memory_mb=128).heap_mb == 128
+    assert (
+        NodeWorker(supported_node, memory_mb=4096, heap_mb=256).heap_mb == 256
+    )
+
+
+def test_worker_platform_popen_flags(monkeypatch):
+    runtime = NodeRuntime(path="/usr/bin/node", version=(26, 13, 1))
+    recorded: list[tuple[list[str], object]] = []
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO()
+            self.stderr = io.StringIO()
+
+        def poll(self) -> int | None:
+            return None
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    class _FakeSelector:
+        def register(self, fileobj: object, events: int) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    def fake_popen(args, **kwargs):
+        recorded.append((list(args), kwargs.get("preexec_fn")))
+        return _FakeProc()
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(
+        "neosqlite.js_worker.selectors.DefaultSelector", _FakeSelector
+    )
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    with NodeWorker(runtime) as mac_worker:
+        mac_worker._preexec()  # Must be a no-op on macOS
+        mac_worker._start()
+    assert recorded[-1][0][:3] == [
+        "/usr/bin/node",
+        "--permission",
+        "--max-old-space-size=512",
+    ]
+    assert recorded[-1][1] is None
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    with NodeWorker(runtime) as linux_worker:
+        linux_worker._start()
+        assert recorded[-1][1] == linux_worker._preexec
+    assert recorded[-1][0][:3] == [
+        "/usr/bin/node",
+        "--permission",
+        "--max-old-space-size=512",
+    ]
+
+
+def test_worker_heap_limit_crash_and_recovery(supported_node):
+    with NodeWorker(supported_node, heap_mb=32) as worker:
+        with pytest.raises(JsWorkerError, match="exited unexpectedly"):
+            worker.call(
+                "function(){const a=[];while(true)a.push('x'.repeat(1048576));}"
+            )
+        assert worker.call("function(a,b){return a+b}", [2, 3]) == 5
