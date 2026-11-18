@@ -48,7 +48,10 @@ from .index_operations import compare_index_operations
 from .index_stats import compare_index_stats
 from .js_operators import compare_js_operators
 from .json_schema import compare_json_schema
-from .large_collection import compare_large_collection
+from .large_collection import (
+    compare_large_collection,
+    compare_large_collection_indexes,
+)
 from .math_operators import compare_math_operators
 from .meta_expression import compare_meta_expression
 from .mod_operator import compare_mod_operator
@@ -179,7 +182,8 @@ COMPARISON_FUNCTIONS = [
 # Benchmark-only categories. Deliberately excluded from COMPARISON_FUNCTIONS
 # so run-api-comparison.sh never seeds or runs the large dataset.
 BENCHMARK_ONLY_FUNCTIONS = [
-    ("Large Collection", compare_large_collection),
+    ("Large Collection (Reads & Updates)", compare_large_collection),
+    ("Large Collection (Index Operations)", compare_large_collection_indexes),
 ]
 
 

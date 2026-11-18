@@ -37,5 +37,8 @@ def test_benchmark_only_module_not_in_comparison_functions():
 
     names = {name for name, _ in runner.COMPARISON_FUNCTIONS}
     bench_names = {name for name, _ in runner.BENCHMARK_ONLY_FUNCTIONS}
-    assert bench_names == {"Large Collection"}
+    assert bench_names == {
+        "Large Collection (Reads & Updates)",
+        "Large Collection (Index Operations)",
+    }
     assert not (bench_names & names)
