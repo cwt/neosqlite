@@ -62,6 +62,7 @@ from . import (
     index_stats,
     js_operators,
     json_schema,
+    large_collection,
     math_operators,
     meta_expression,
     mod_operator,
@@ -163,6 +164,7 @@ __all__ = [
     "fill_stage",
     "json_schema",
     "js_operators",
+    "large_collection",
     "window_math",
     # Additional operator modules
     "aggregation_bucket_stages",

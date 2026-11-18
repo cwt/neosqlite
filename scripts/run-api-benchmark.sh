@@ -22,6 +22,12 @@
 #   ./run-api-benchmark.sh --benchmark   # Run with default 10 iterations
 #   ./run-api-benchmark.sh -b 100       # Run with 100 iterations
 #   ./run-api-benchmark.sh --benchmark 50
+#   ./run-api-benchmark.sh --docs 50000 # Seed 50K docs for Large Collection benchmarks
+#
+# Benchmark-only "Large Collection" categories seed both backends with
+# NEOSQLITE_BENCH_DOCS documents (default 10000) per iteration and time
+# selective reads, counts, aggregation, and updates. These categories are
+# never run by run-api-comparison.sh.
 #
 
 set -e
@@ -43,6 +49,7 @@ COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
 # Benchmark settings (can be overridden via CLI)
 BENCHMARK_ITERATIONS=10
 BENCHMARK_SILENT=false
+BENCHMARK_DOCS=10000
 
 # Container runtime (on macOS: Apple container > podman > docker; otherwise podman > docker)
 CONTAINER_RUNTIME=""
@@ -205,13 +212,22 @@ parse_args() {
                 BENCHMARK_SILENT=true
                 shift
                 ;;
+            -d|--docs)
+                BENCHMARK_DOCS="${2:-10000}"
+                if ! [[ "$BENCHMARK_DOCS" =~ ^[0-9]+$ ]] || [ "$BENCHMARK_DOCS" -lt 1 ]; then
+                    error "Invalid document count: $BENCHMARK_DOCS"
+                    exit 1
+                fi
+                shift 2
+                ;;
             -h|--help)
                 echo "Usage: $0 [OPTIONS]"
                 echo ""
                 echo "Options:"
                 echo "  -b, --benchmark [N]    Run benchmark with N iterations (default: 10)"
-                echo "  -s, --silent          Run in silent mode (suppress output)"
-                echo "  -h, --help            Show this help message"
+                echo "  -d, --docs [N]         Seed N docs in Large Collection benchmarks (default: 10000)"
+                echo "  -s, --silent           Run in silent mode (suppress output)"
+                echo "  -h, --help             Show this help message"
                 echo ""
                 echo "Examples:"
                 echo "  $0                     # Run with default 10 iterations"
@@ -219,6 +235,7 @@ parse_args() {
                 echo "  $0 -b 100              # Run with 100 iterations"
                 echo "  $0 --benchmark 50     # Run with 50 iterations"
                 echo "  $0 --silent -b 100    # Run 100 iterations silently"
+                echo "  $0 --docs 50000       # Benchmark against 50K seeded documents"
                 exit 0
                 ;;
             *)
@@ -531,6 +548,7 @@ run_benchmark() {
     fi
 
     # Run the benchmark script from the examples directory
+    export NEOSQLITE_BENCH_DOCS="$BENCHMARK_DOCS"
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
@@ -558,6 +576,7 @@ main() {
     echo "NeoSQLite vs MongoDB API Benchmark"
     echo "========================================"
     benchmark_info "Iterations: $BENCHMARK_ITERATIONS"
+    benchmark_info "Large Collection documents: $BENCHMARK_DOCS"
     echo ""
 
     # Step 1: Check MongoDB availability (native or container)

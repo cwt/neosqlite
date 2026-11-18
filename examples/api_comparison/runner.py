@@ -48,6 +48,7 @@ from .index_operations import compare_index_operations
 from .index_stats import compare_index_stats
 from .js_operators import compare_js_operators
 from .json_schema import compare_json_schema
+from .large_collection import compare_large_collection
 from .math_operators import compare_math_operators
 from .meta_expression import compare_meta_expression
 from .mod_operator import compare_mod_operator
@@ -175,6 +176,12 @@ COMPARISON_FUNCTIONS = [
     ("Options Classes", compare_options_classes),
 ]
 
+# Benchmark-only categories. Deliberately excluded from COMPARISON_FUNCTIONS
+# so run-api-comparison.sh never seeds or runs the large dataset.
+BENCHMARK_ONLY_FUNCTIONS = [
+    ("Large Collection", compare_large_collection),
+]
+
 
 class TimingContext:
     """Context manager for timing operations"""
@@ -267,7 +274,7 @@ def run_benchmark(iterations: int = 10, silent: bool = False):
         # Ensure shared MongoDB client is connected before benchmarking
         mongo_client = get_mongo_client()
 
-        for category, func in COMPARISON_FUNCTIONS:
+        for category, func in COMPARISON_FUNCTIONS + BENCHMARK_ONLY_FUNCTIONS:
             # Skip categories that are compatibility-only (no timing)
             if category == "Options Classes":
                 if not silent:
