@@ -20,6 +20,14 @@ class TestAliasNormalization:
             {"$addFields": {"x": "$y"}}
         ]
 
+    def test_set_with_non_dict_spec_raises_clear_error(self):
+        import pytest
+
+        from neosqlite.exceptions import MalformedQueryException
+
+        with pytest.raises(MalformedQueryException, match="must be an object"):
+            normalize_pipeline_aliases([{"$set": "foo"}])
+
     def test_sort_by_count_is_rewritten(self):
         pipeline = [{"$sortByCount": "$cat"}]
         assert normalize_pipeline_aliases(pipeline) == [

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...exceptions import MalformedQueryException
+
 _SORT_BY_COUNT_FIELD = "count"
 
 
@@ -25,7 +27,11 @@ def _normalize_aliases(stages: list[Any]) -> tuple[list[Any], bool]:
         stage_name = next(iter(stage))
         spec = stage[stage_name]
 
-        if stage_name == "$set" and isinstance(spec, dict):
+        if stage_name == "$set":
+            if not isinstance(spec, dict):
+                raise MalformedQueryException(
+                    "$set specification must be an object"
+                )
             changed = True
             result.append({"$addFields": spec})
             continue
