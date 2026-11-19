@@ -450,13 +450,23 @@ def test_enhanced_datetime_processor_complex(setup_test_db):
 
 def test_sql_tier_exception_handling(setup_test_db):
     """Test SQL tier exception handling."""
+    from neosqlite.js import is_js_available, use_js_engine
+
     collection, db, db_path = setup_test_db
     processor = DateTimeQueryProcessor(collection)
 
-    # Use $where which now raises NotImplementedError
-    invalid_query = {"$where": "invalid_sql"}
+    # $accumulator always raises NotImplementedError in SQL translation.
     with pytest.raises(NotImplementedError):
-        processor._process_with_sql_tier(invalid_query)
+        processor._process_with_sql_tier({"$accumulator": {}})
+
+    # $where raises NotImplementedError when JS is disabled, and defers to
+    # Python fallback (returning None) when a JS engine is available.
+    where_query = {"$where": "this.x > 1"}
+    with use_js_engine("none"):
+        with pytest.raises(NotImplementedError):
+            processor._process_with_sql_tier(where_query)
+    if is_js_available():
+        assert processor._process_with_sql_tier(where_query) is None
 
 
 def test_process_with_enhanced_python_tier(setup_test_db):

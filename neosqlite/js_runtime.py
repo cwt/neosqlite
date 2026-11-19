@@ -1,8 +1,9 @@
-"""Safe detection of an external Node.js executable for JS operators.
+"""Safe detection of an external Node.js executable for the Node JS engine.
 
 NeoSQLite evaluates server-side JavaScript in a sandboxed out-of-process
-worker rather than embedding a JS engine. Only patched, supported Node.js
-lines are accepted:
+worker (preferring ``jsbox`` by default and falling back to Node.js; see
+:mod:`neosqlite.js`). When the Node.js backend is used, only patched, supported
+Node.js lines are accepted:
 
 - 22.x >= 22.23.5 (Maintenance LTS)
 - 24.x >= 24.22.3 (Active LTS)
@@ -105,7 +106,9 @@ def find_node_runtime() -> NodeRuntime | None:
 
 def reset_node_runtime_cache() -> None:
     """Clear the cached result (primarily for tests)."""
-    find_node_runtime.cache_clear()
+    cache_clear = getattr(find_node_runtime, "cache_clear", None)
+    if cache_clear is not None:
+        cache_clear()
 
 
 def node_unavailable_reason() -> str:

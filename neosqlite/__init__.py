@@ -27,6 +27,16 @@ from .exceptions import (
     MalformedQueryException,
 )
 from .index_model import IndexModel
+from .js import (
+    JsEngineInfo,
+    JsWorkerError,
+    close_js_workers,
+    get_active_js_engine,
+    get_js_engine,
+    list_js_engines,
+    set_js_engine,
+    use_js_engine,
+)
 from .options import (
     AutoVacuumMode,
     CodecOptions,
@@ -62,6 +72,7 @@ else:
 
 __all__ = [
     "ASCENDING",
+    "DESCENDING",
     "AggregationCursor",
     "AutoVacuumMode",
     "Binary",
@@ -74,15 +85,16 @@ __all__ = [
     "CollectionInvalid",
     "Connection",
     "Cursor",
-    "DESCENDING",
     "DeleteMany",
     "DeleteOne",
     "DeleteResult",
+    "IndexModel",
     "InsertManyResult",
     "InsertOne",
     "InsertOneResult",
     "InvalidOperation",
-    "IndexModel",
+    "JsEngineInfo",
+    "JsWorkerError",
     "MalformedDocument",
     "MalformedQueryException",
     "RawBatchCursor",
@@ -93,8 +105,14 @@ __all__ = [
     "UpdateOne",
     "UpdateResult",
     "WriteConcern",
+    "close_js_workers",
+    "get_active_js_engine",
+    "get_js_engine",
+    "list_js_engines",
+    "set_js_engine",
+    "use_js_engine",
 ]
 
 # Add GridFS to __all__ if available
 if _HAS_GRIDFS:
-    __all__.extend(["GridFSBucket", "GridFS"])
+    __all__.extend(["GridFS", "GridFSBucket"])

@@ -241,17 +241,17 @@ class CorePythonMixin(BasePythonMixin):
             case "$literal":
                 return self._evaluate_literal_python(operands, document)
             case "$function":
-                from ....js_runtime import (
-                    find_node_runtime,
-                    node_unavailable_reason,
+                from ....js import (
+                    JsWorkerError,
+                    get_js_worker,
+                    js_unavailable_reason,
                 )
-                from ....js_worker import JsWorkerError, get_worker
 
-                worker = get_worker(find_node_runtime())
+                worker = get_js_worker()
                 if worker is None:
                     raise NotImplementedError(
                         "The '$function' operator is not supported in NeoSQLite "
-                        f"(no supported Node.js runtime: {node_unavailable_reason()}). "
+                        f"(no supported JS engine: {js_unavailable_reason()}). "
                         "Please use '$expr' with Python expressions, or post-process results in Python."
                     )
                 if not isinstance(operands, dict):

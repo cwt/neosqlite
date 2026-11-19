@@ -622,6 +622,24 @@ MarkupSafe = ">=2.0"
 i18n = ["Babel (>=2.7)"]
 
 [[package]]
+name = "jsbox"
+version = "0.1.3"
+description = "Embedded JavaScript for Python, powered by QuickJS (rquickjs) and Rust."
+optional = true
+python-versions = ">=3.10"
+groups = ["main"]
+markers = "extra == \"js\""
+files = [
+    {file = "jsbox-0.1.3-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:3a44d578939324c46ae44890ee9b6fcdc8d1062ce66ece28b9d88a216a60990d"},
+    {file = "jsbox-0.1.3-cp310-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:8a59397b6bb51798c2916bd5dc090d2f18427a552822e88278f4c6b170def6b9"},
+    {file = "jsbox-0.1.3-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1977c92bc77eb63e3966a095bddb6915b917adb93e6063672f1a75f97e49c49e"},
+    {file = "jsbox-0.1.3-cp310-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:ab00f3bd002156da68f53ba8b991a673252b151ce13fa4a4da7fe59f3a2d5b66"},
+    {file = "jsbox-0.1.3-cp310-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:4c40bb3441a914e26b40795b7430b8f7d367de83418f4474bd35fb94ed635e36"},
+    {file = "jsbox-0.1.3-cp310-abi3-win_amd64.whl", hash = "sha256:733abd9d1460b7674802e7dcd2334ecb7779638efa348c5b2855178283c04e44"},
+    {file = "jsbox-0.1.3.tar.gz", hash = "sha256:d4d7cd9cbc03d2808540279b9fd437c17751b0f3e2ca0c7f564819dd1980268a"},
+]
+
+[[package]]
 name = "librt"
 version = "0.16.0"
 description = "Mypyc runtime library"
@@ -1373,15 +1391,15 @@ files = [
 
 [[package]]
 name = "soupsieve"
-version = "4.1.1"
+version = "4.1.2"
 description = "A modern CSS selector implementation for Beautiful Soup."
 optional = true
 python-versions = ">=3.11.5"
 groups = ["main"]
 markers = "extra == \"docs\""
 files = [
-    {file = "soupsieve-4.1.1-py3-none-any.whl", hash = "sha256:8ff3422dab0b720fb667ee79864d80531a0e57994a13eb701697719ffcb751f6"},
-    {file = "soupsieve-4.1.1.tar.gz", hash = "sha256:b296bd2d2f65b1a78149f3d7bf6736a147d2c9e2dfbde0e4404639d748a02e03"},
+    {file = "soupsieve-4.1.2-py3-none-any.whl", hash = "sha256:96b4115212a3abee1f572d62da706cca090b088cb5effa278db5702122e63a2c"},
+    {file = "soupsieve-4.1.2.tar.gz", hash = "sha256:c6539a2638f26991463527337e39d630e3cbb86d024f52282a510535b8a7e09f"},
 ]
 
 [[package]]
@@ -1692,6 +1710,7 @@ test = ["aiohttp (>=3.10.5)", "flake8 (>=6.1,<7.0)", "mypy (>=0.800)", "psutil",
 
 [extras]
 docs = ["furo", "sphinx"]
+js = ["jsbox"]
 jsonb = ["pysqlite3-binary"]
 memory-constrained = ["quez"]
 nx27017 = ["nx-27017", "pymongo"]
@@ -1700,4 +1719,4 @@ nx27017-speed = ["nx-27017", "pymongo", "uvloop"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12, <3.16"
-content-hash = "7a2eb620160816b265d085b475f78d012da409581bd2e6b984046ab4cdc61ef2"
+content-hash = "15802cb94d37b57ae2dbac03f84969284e81290b5be6246bbd44fbfcf6a7e5a1"

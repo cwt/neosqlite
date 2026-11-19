@@ -1057,11 +1057,16 @@ class SQLClauseBuilder:
 
         for field, value in query.items():
             if field == "$where":
-                raise NotImplementedError(
-                    "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
-                    "Please use the '$expr' operator for field-to-field comparisons, "
-                    "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
-                )
+                from ..js import is_js_available
+
+                if not is_js_available():
+                    raise NotImplementedError(
+                        "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
+                        "Please use the '$expr' operator for field-to-field comparisons, "
+                        "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
+                    )
+                # A sandboxed JS engine is available: defer to Python fallback.
+                return None, []
 
             if field == "$function":
                 raise NotImplementedError(

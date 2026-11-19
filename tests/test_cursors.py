@@ -1774,11 +1774,11 @@ class TestCursorWhere:
         )
 
     def test_where_operator_raises_not_implemented(self, collection):
-        """$where works when a vetted Node.js runtime is installed."""
-        from neosqlite.js_runtime import find_node_runtime
+        """$where works when a sandboxed JS engine is available."""
+        from neosqlite.js import is_js_available
 
         collection.insert_many([{"_id": i, "value": i} for i in range(15)])
-        if find_node_runtime() is None:
+        if not is_js_available():
             with pytest.raises(
                 NotImplementedError,
                 match=r"The '\$where' operator .* is not supported",

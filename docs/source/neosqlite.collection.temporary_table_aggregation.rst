@@ -13,6 +13,7 @@ Submodules
    neosqlite.collection.temporary_table_aggregation.operators_advanced
    neosqlite.collection.temporary_table_aggregation.operators_base
    neosqlite.collection.temporary_table_aggregation.operators_group
+   neosqlite.collection.temporary_table_aggregation.operators_hybrid
    neosqlite.collection.temporary_table_aggregation.operators_lookup
    neosqlite.collection.temporary_table_aggregation.operators_match
    neosqlite.collection.temporary_table_aggregation.operators_sort_proj

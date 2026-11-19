@@ -24,6 +24,7 @@ Submodules
    neosqlite.collection.datetime_utils
    neosqlite.collection.expr_temp_table
    neosqlite.collection.index_manager
+   neosqlite.collection.index_stats
    neosqlite.collection.json_helpers
    neosqlite.collection.json_path_utils
    neosqlite.collection.jsonb_support

@@ -12,6 +12,8 @@ Submodules
    neosqlite.collection.query_helper.fill_stage
    neosqlite.collection.query_helper.graph_lookup
    neosqlite.collection.query_helper.helpers
+   neosqlite.collection.query_helper.meta_validation
+   neosqlite.collection.query_helper.pipeline_aliases
    neosqlite.collection.query_helper.positional_update
    neosqlite.collection.query_helper.query_builder
    neosqlite.collection.query_helper.query_optimizer

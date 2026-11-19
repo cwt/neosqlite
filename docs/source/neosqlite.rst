@@ -9,6 +9,7 @@ Subpackages
 
    neosqlite.collection
    neosqlite.gridfs
+   neosqlite.js
 
 Submodules
 ----------
@@ -23,6 +24,8 @@ Submodules
    neosqlite.connection
    neosqlite.exceptions
    neosqlite.index_model
+   neosqlite.js_runtime
+   neosqlite.js_worker
    neosqlite.migration
    neosqlite.migration_cli
    neosqlite.objectid

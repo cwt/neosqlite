@@ -1,8 +1,9 @@
 """Compare server-side JavaScript operators against PyMongo.
 
-Enabled only when a patched, supported Node.js runtime is available. The
-NeoSQLite side runs JS in a sandboxed out-of-process worker; MongoDB runs it
-with its embedded SpiderMonkey engine. Results are compared as plain values.
+Enabled whenever a supported sandboxed JavaScript engine is available
+(``jsbox`` preferred by default, with a patched Node.js runtime as fallback).
+The NeoSQLite side runs JS in a sandboxed out-of-process worker; MongoDB runs
+it with its embedded SpiderMonkey engine. Results are compared as plain values.
 """
 
 from __future__ import annotations
@@ -65,19 +66,22 @@ def compare_js_operators() -> None:
     """Compare $function and $where against PyMongo when JS is available."""
     print("\n=== JavaScript Operators Comparison ===")
 
-    from neosqlite.js_runtime import find_node_runtime, node_unavailable_reason
+    from neosqlite.js import get_active_js_engine, js_unavailable_reason
 
-    runtime = find_node_runtime()
-    skip = None if runtime is not None else node_unavailable_reason()
-    if runtime is not None:
-        print(f"Node.js runtime: {runtime.version_string} ({runtime.path})")
+    engine = get_active_js_engine()
+    skip = None if engine is not None else js_unavailable_reason()
+    if engine is not None:
+        print(
+            f"JavaScript engine: {engine.name} {engine.version or ''} "
+            f"({engine.path or engine.detail})"
+        )
     else:
-        print(f"Node.js runtime unavailable: {skip}")
+        print(f"JavaScript engine unavailable: {skip}")
 
     neo_function = None
     neo_where_expr = None
     neo_where_func = None
-    if runtime is not None:
+    if engine is not None:
         with neosqlite.Connection(":memory:") as conn:
             collection = conn.js_docs
             collection.insert_many([dict(doc) for doc in _DOCUMENTS])
@@ -104,7 +108,7 @@ def compare_js_operators() -> None:
     mongo_where_expr = None
     mongo_where_func = None
     client = get_mongo_client()
-    if runtime is not None and client is not None:
+    if engine is not None and client is not None:
         collection = client.test_database.js_docs
         collection.delete_many({})
         collection.insert_many([dict(doc) for doc in _DOCUMENTS])
@@ -126,7 +130,7 @@ def compare_js_operators() -> None:
             )
         finally:
             end_mongo_timing()
-    elif runtime is not None and client is None:
+    elif engine is not None and client is None:
         skip = "MongoDB not available"
 
     reporter.record_comparison(

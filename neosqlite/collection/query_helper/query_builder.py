@@ -193,17 +193,17 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                     result = evaluator._evaluate_expr_python(value, document)
                     matches.append(bool(result))
                 case "$where":
-                    from ...js_runtime import (
-                        find_node_runtime,
-                        node_unavailable_reason,
+                    from ...js import (
+                        JsWorkerError,
+                        get_js_worker,
+                        js_unavailable_reason,
                     )
-                    from ...js_worker import JsWorkerError, get_worker
 
-                    worker = get_worker(find_node_runtime())
+                    worker = get_js_worker()
                     if worker is None:
                         raise NotImplementedError(
                             "The '$where' operator is not supported in NeoSQLite "
-                            f"(no supported Node.js runtime: {node_unavailable_reason()})."
+                            f"(no supported JS engine: {js_unavailable_reason()})."
                         )
                     if not isinstance(value, str):
                         raise ValueError("$where requires a JavaScript string")

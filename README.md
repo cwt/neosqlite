@@ -25,7 +25,7 @@
 - **Change Streams**: Native SQLite triggers for `watch()` — no replica set required.
 - **Advanced Aggregation**: `$setWindowFields`, `$graphLookup`, `$fill`, streaming `$facet`, `$indexStats`, and more.
 - **Tier-1 SQL Optimization**: Dozens of operators translated to native SQL for 10-100x speedup, including BSON-aware `_id` range queries.
-- **JavaScript Operators**: `$function` and `$where` run in a sandboxed external Node.js worker — enabled only with a patched, supported Node runtime (see [JavaScript Operators](#javascript-operators)).
+- **JavaScript Operators**: `$function` and `$where` run in an isolated out-of-process sandbox with selectable engines — preferring [`jsbox`](https://pypi.org/project/jsbox/) (QuickJS) over a patched Node.js runtime (see [JavaScript Operators](#javascript-operators)).
 - **Native `$jsonSchema`**: Query filtering and write-time validation via SQLite CHECK constraints.
 - **Window Functions**: Complete MongoDB 5.0+ suite (`$rank`, `$top`, `$bottom`, math operators).
 - **MongoDB-compatible ObjectId**: Full 12-byte specification with automatic generation.
@@ -62,9 +62,12 @@ SQLite 3.26+ is supported. JSONB, aggregate ORDER BY, `RETURNING`, and the
 3.35+ math functions are used when available; older SQLite builds fall back to
 the Python tier or register compatible SQL functions automatically.
 
-The optional JavaScript operators (`$function`, `$where`) need an external
-Node.js executable on `PATH`. **Node v26.13.1 (LTS) is preferred.** See
-[JavaScript Operators](#javascript-operators) for the full version gate.
+The optional JavaScript operators (`$function`, `$where`) run inside a
+sandboxed child process using either [`jsbox`](https://pypi.org/project/jsbox/)
+(QuickJS, **preferred**, install via `pip install "neosqlite[js]"`) or a
+patched external Node.js executable on `PATH` (fallback). See
+[JavaScript Operators](#javascript-operators) for engine selection and
+special-platform installation instructions.
 
 ```bash
 pip install neosqlite
@@ -73,6 +76,9 @@ pip install neosqlite
 ### Optional Extras
 
 ```bash
+# Sandboxed JavaScript operators ($function, $where) via jsbox (QuickJS, preferred)
+pip install "neosqlite[js]"
+
 # Enhanced JSON/JSONB support (only needed if your SQLite lacks JSON functions)
 pip install neosqlite[jsonb]
 
@@ -170,7 +176,7 @@ collection.insert_one({"name": "test"})  # Works!
 | **Failed** | 0 |
 | **Compatibility** | **100%** |
 
-Skipped tests are due to MongoDB requiring a replica set (change streams, transactions), NeoSQLite extensions (`$log2`, `$contains`), or JavaScript operators when no supported Node.js runtime is installed. All comparable APIs pass. Tested against MongoDB 8.x (`mongo:8.2.12` pinned container image).
+Skipped tests are due to MongoDB requiring a replica set (change streams, transactions), NeoSQLite extensions (`$log2`, `$contains`), or JavaScript operators when no supported JS engine (`jsbox` or patched Node.js) is installed. All comparable APIs pass. Tested against MongoDB 8.x (`mongo:8.2.12` pinned container image).
 
 Run the comparison yourself: `./scripts/run-api-comparison.sh`
 
@@ -203,15 +209,30 @@ users.create_search_index('bio')
 `$eq`, `$gt`, `$gte`, `$lt`, `$lte`, `$ne`, `$in`, `$nin`, `$and`, `$or`, `$not`, `$nor`,
 `$exists`, `$type`, `$regex`, `$elemMatch`, `$size`, `$mod`,
 `$bitsAllSet`, `$bitsAllClear`, `$bitsAnySet`, `$bitsAnyClear`,
-`$text` (FTS5), `$jsonSchema`, and `$where` (JavaScript, requires Node.js — see below).
+`$text` (FTS5), `$jsonSchema`, and `$where` (JavaScript, sandboxed via `jsbox` or Node.js — see below).
 
 ### JavaScript Operators
 
 The `$function` aggregation expression and the `$where` query predicate execute
-JavaScript in a **sandboxed out-of-process Node.js worker**. No Python binding
-or native extension is required; Node.js is discovered on `PATH` at runtime.
+JavaScript in an **isolated out-of-process sandbox** communicating over
+JSON-lines IPC (never `pickle`). Because the JS engine runs in a separate child
+OS process—and `jsbox`'s native extension is never loaded into the host Python
+process—any C-level memory corruption, segfault, out-of-memory crash, or
+uninterruptible native operation inside the JS engine is strictly contained to
+the disposable worker process and cannot affect the main NeoSQLite engine or
+SQLite database.
 
-**Node v26.13.1 (LTS) is preferred.** Only patched, supported release lines are
+#### Supported Engines & Default Priority
+
+NeoSQLite supports pluggable JavaScript engines and selects **`jsbox` over
+`node` by default** (`engine="auto"`):
+
+| Engine | Backend | Default Priority | How to Enable |
+|--------|---------|------------------|---------------|
+| **`jsbox` (preferred)** | Embedded QuickJS via Rust/PyO3 in an isolated `python -I` subprocess | **1 (preferred)** | `pip install "neosqlite[js]"` |
+| `node` (fallback) | External Node.js (`--permission` + per-call `vm.createContext`) | 2 (fallback) | Install a patched Node.js on `PATH` |
+
+When using the **`node`** engine, only patched, supported release lines are
 accepted:
 
 | Node.js line | Minimum patched version |
@@ -224,13 +245,15 @@ EOL lines (18, 20, odd-numbered 21/23/25, and older) and unpatched releases of
 active lines are **rejected**. These minimums address CVE-2026-111497
 ("Node2Shell") and the November 2026 HTTP/2 and TLS security fixes.
 
-> If `node` is missing, end-of-life, or older than the gate, the JavaScript
-> operators are **not enabled** — `$function` and `$where` keep raising
-> `NotImplementedError` with a message explaining which Node version is
-> required. No other functionality is affected.
+> If neither `jsbox` nor a vetted Node.js binary is available (or if JavaScript
+> is disabled with `engine="none"`), `$function` and `$where` raise
+> `NotImplementedError` explaining why each engine is unavailable. No other
+> functionality is affected.
 
 ```python
-# Requires a supported Node.js on PATH (e.g. v26.13.1)
+import neosqlite
+
+# Uses jsbox when installed (neosqlite[js]), otherwise falls back to patched Node.js
 docs.aggregate([
     {"$addFields": {
         "total": {
@@ -246,13 +269,101 @@ docs.aggregate([
 docs.find({"$where": "this.price > 100"})
 ```
 
-The worker starts with `node --permission` (file, network, and child-process
-access denied) and an **empty environment**, so `process.env` cannot expose
-parent-process secrets. Each evaluation is bounded by a 5-second timeout and a
-512 MB V8 heap cap on all platforms, with an additional `RLIMIT_AS` cap on
-Linux. The timeout is per evaluation, so a query matching many documents can
-take proportionally longer. The worker is only used for these two operators;
-`$accumulator` and Atlas-only `$script` remain unsupported.
+#### Selecting or Disabling a JS Engine
+
+Select an engine programmatically or via the `NEOSQLITE_JS_ENGINE` environment
+variable (`auto`, `jsbox`, `node`, `none`, or any custom engine registered via
+`neosqlite.js.register_js_engine`):
+
+```python
+import neosqlite
+
+# Inspect detected engines in priority order
+for engine in neosqlite.list_js_engines():
+    print(engine.name, engine.available, engine.version, engine.detail)
+
+# Pin a specific engine (does not silently fall back if unavailable)
+neosqlite.set_js_engine("jsbox")   # Require QuickJS (jsbox)
+neosqlite.set_js_engine("node")    # Require patched Node.js (V8 JIT)
+neosqlite.set_js_engine("none")    # Disable $function and $where completely
+neosqlite.set_js_engine("auto")    # Default: prefer jsbox, fall back to node
+
+# Scoped override for a single block
+with neosqlite.use_js_engine("node"):
+    rows = list(docs.find({"$where": "this.price > 100"}))
+```
+
+```bash
+# Override engine selection via environment variable
+NEOSQLITE_JS_ENGINE=jsbox python myapp.py
+NEOSQLITE_JS_ENGINE=node  python myapp.py
+NEOSQLITE_JS_ENGINE=none  python myapp.py
+```
+
+#### Sandbox Guarantees
+
+- **Process & memory isolation:** Both `jsbox` and `node` run in dedicated
+  child processes with a scrubbed environment (`env={}` on Linux/macOS; only
+  `SYSTEMROOT`/`SYSTEMDRIVE`/`WINDIR` on Windows) so parent secrets never enter
+  the worker. Workers that crash or hit OOM are automatically restarted.
+- **Zero ambient authority & per-call realm isolation:** Each evaluation runs
+  in a fresh JS realm (`jsbox.Runtime()` / `vm.createContext(Object.create(null))`)
+  with no `process`, `env`, `require`, filesystem, network, or timer access and
+  no cross-call prototype/global leakage.
+- **Resource & timeout limits:** Each call is bounded by a 5-second timeout
+  (with hard `SIGKILL` escalation by the supervisor), engine heap caps (64 MB
+  default for `jsbox`; 512 MB V8 heap for `node`), and Linux `RLIMIT_AS` caps
+  (512 MB for `jsbox`; 4096 MB for `node`). Workers shut down automatically at
+  interpreter exit (or explicitly via `neosqlite.close_js_workers()`).
+- **Scope:** Only `$function` and `$where` use the JS worker; `$accumulator`
+  and Atlas-only `$script` remain unsupported.
+
+#### Installing `jsbox` on Special (sdist) Platforms
+
+Prebuilt `cp310-abi3` wheels for `jsbox` are published on PyPI for standard
+(GIL-enabled) **CPython 3.12–3.15** on:
+
+- **Linux:** `x86_64` and `aarch64` (`manylinux` and `musllinux`)
+- **macOS:** `arm64` (Apple Silicon, macOS 11+)
+- **Windows:** `amd64`
+
+On these platforms, `pip install "neosqlite[js]"` installs a ~0.7 MB wheel with
+no compiler or Rust toolchain needed.
+
+For platforms without a prebuilt wheel (such as **Intel macOS `x86_64`** or
+**Windows `arm64`**), `pip` falls back to building `jsbox` from its source
+distribution (`sdist`):
+
+1. **Install build prerequisites:**
+   - Rust toolchain (`rustup` / `cargo`): <https://rustup.rs/>
+   - C compiler: Xcode Command Line Tools (`xcode-select --install`) on macOS,
+     Visual Studio C++ Build Tools on Windows, or `gcc`/`clang` on Linux.
+2. **Install on Python 3.12–3.14:**
+
+   ```bash
+   pip install "neosqlite[js]"
+   ```
+
+3. **Install from sdist on Python 3.15:**
+   `jsbox 0.1.3` pins `pyo3 = "0.27"`, whose build-time check caps native
+   compilation at Python 3.14. Enable Stable ABI forward compatibility so Cargo
+   builds cleanly against the `abi3-py310` limited C API:
+
+   ```bash
+   # macOS / Linux (Intel Mac, non-wheel Linux arches)
+   PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 pip install "neosqlite[js]"
+   ```
+
+   ```powershell
+   # Windows PowerShell (Windows ARM64)
+   $env:PYO3_USE_ABI3_FORWARD_COMPATIBILITY = "1"
+   pip install "neosqlite[js]"
+   ```
+
+4. **Free-threaded CPython (`3.13t` / `3.14t` / `3.15t`):**
+   Traditional `abi3` wheels cannot be loaded by free-threaded builds. Install
+   core `neosqlite` without `[js]` and use a patched Node.js binary on `PATH`
+   (automatic fallback under `engine="auto"`, or explicit `NEOSQLITE_JS_ENGINE=node`).
 
 ### Aggregation Stages
 

@@ -3440,8 +3440,8 @@ def test_aggregate_pymongo_compatibility_params(collection):
 
 
 def test_function_operator_raises_not_implemented(collection):
-    """$function works when a vetted Node.js runtime is installed."""
-    from neosqlite.js_runtime import find_node_runtime
+    """$function works when a sandboxed JS engine is available."""
+    from neosqlite.js import is_js_available
 
     collection.insert_many([{"value": i} for i in range(10)])
     pipeline = [
@@ -3458,7 +3458,7 @@ def test_function_operator_raises_not_implemented(collection):
         },
         {"$sort": {"_id": 1}},
     ]
-    if find_node_runtime() is None:
+    if not is_js_available():
         with pytest.raises(
             NotImplementedError,
             match=r"The '\$function' operator is not supported",
