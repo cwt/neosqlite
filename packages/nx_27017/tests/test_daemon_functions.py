@@ -62,7 +62,7 @@ class TestDaemonFunctions:
         """Test daemonize function (basic coverage)."""
         from nx_27017.nx_27017 import daemonize
 
-        with patch("os.fork") as mock_fork:
+        with patch("os.fork", create=True) as mock_fork:
             mock_fork.side_effect = OSError("Cannot fork")
             with pytest.raises(SystemExit):
                 daemonize()
@@ -104,7 +104,7 @@ class TestDaemonFunctions:
         args.threaded = False
         args.log_file = str(tmp_path / "test.log")
 
-        with patch("os.fork") as mock_fork:
+        with patch("os.fork", create=True) as mock_fork:
             mock_fork.side_effect = OSError("Cannot fork")
             with pytest.raises(SystemExit):
                 run_as_daemon(args)

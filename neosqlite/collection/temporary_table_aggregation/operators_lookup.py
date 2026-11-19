@@ -322,9 +322,13 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         try:
             import resource
 
-            soft, hard = resource.getrlimit(resource.RLIMIT_AS)
-            if soft != resource.RLIM_INFINITY:
-                return int(soft * 0.3)
+            getrlimit = getattr(resource, "getrlimit", None)
+            rlimit_as = getattr(resource, "RLIMIT_AS", None)
+            rlim_infinity = getattr(resource, "RLIM_INFINITY", None)
+            if getrlimit is not None and rlimit_as is not None:
+                soft, _hard = getrlimit(rlimit_as)
+                if soft != rlim_infinity:
+                    return int(soft * 0.3)
         except Exception as e:
             logger.debug(f"{e=}")
             pass

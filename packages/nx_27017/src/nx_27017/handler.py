@@ -3190,25 +3190,30 @@ class NeoSQLiteHandler:
             try:
                 with open("/proc/self/statm") as statm:
                     parts = statm.read().split()
-                page_size = os.sysconf("SC_PAGE_SIZE")
-                virtual_mem = int(parts[0]) * page_size
-                resident_mem = int(parts[1]) * page_size
+                sysconf = getattr(os, "sysconf", None)
+                if sysconf is not None:
+                    page_size = sysconf("SC_PAGE_SIZE")
+                    virtual_mem = int(parts[0]) * page_size
+                    resident_mem = int(parts[1]) * page_size
             except (OSError, ValueError, IndexError):
                 pass
         if resident_mem == 0 and virtual_mem == 0:
             try:
                 import resource
 
-                rusage = resource.getrusage(resource.RUSAGE_SELF)
-                if (
-                    platform.system() == "Darwin"
-                    or platform.system().startswith("FreeBSD")
-                ):
-                    resident_mem = rusage.ru_maxrss
-                    virtual_mem = rusage.ru_maxrss
-                else:
-                    resident_mem = rusage.ru_maxrss * 1024
-                    virtual_mem = rusage.ru_maxrss * 1024
+                getrusage = getattr(resource, "getrusage", None)
+                rusage_self = getattr(resource, "RUSAGE_SELF", None)
+                if getrusage is not None and rusage_self is not None:
+                    rusage = getrusage(rusage_self)
+                    if (
+                        platform.system() == "Darwin"
+                        or platform.system().startswith("FreeBSD")
+                    ):
+                        resident_mem = rusage.ru_maxrss
+                        virtual_mem = rusage.ru_maxrss
+                    else:
+                        resident_mem = rusage.ru_maxrss * 1024
+                        virtual_mem = rusage.ru_maxrss * 1024
             except (ImportError, AttributeError):
                 resident_mem = 0
                 virtual_mem = 0

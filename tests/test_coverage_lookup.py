@@ -1,7 +1,9 @@
 """Comprehensive coverage tests for $lookup temporary-table SQL optimization."""
 
 import sqlite3
-from unittest.mock import patch
+import sys
+import types
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -141,17 +143,22 @@ class TestLookupHelpersAndFallback:
                     raise sqlite3.OperationalError("pragma failed")
 
             with patch.object(proc, "db", _BrokenConn()):
-                with patch(
-                    "resource.getrlimit",
-                    return_value=(1024 * 1024, 1024 * 1024),
-                ):
+                fake_resource = types.SimpleNamespace(
+                    RLIMIT_AS=9,
+                    RLIM_INFINITY=-1,
+                    getrlimit=lambda _res: (1024 * 1024, 1024 * 1024),
+                )
+                with patch.dict(sys.modules, {"resource": fake_resource}):
                     assert proc._get_available_memory() == int(
                         1024 * 1024 * 0.3
                     )
-                with patch(
-                    "resource.getrlimit",
-                    side_effect=ValueError("bad limit"),
-                ):
+
+                fake_resource_err = types.SimpleNamespace(
+                    RLIMIT_AS=9,
+                    RLIM_INFINITY=-1,
+                    getrlimit=MagicMock(side_effect=ValueError("bad limit")),
+                )
+                with patch.dict(sys.modules, {"resource": fake_resource_err}):
                     assert (
                         proc._get_available_memory()
                         == HASH_JOIN_MEMORY_THRESHOLD

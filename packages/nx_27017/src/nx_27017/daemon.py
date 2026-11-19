@@ -65,18 +65,78 @@ def remove_pid_file(pid_file: str):
         pass
 
 
+def _is_pid_running(pid: int) -> bool:
+    """Check whether a process with ``pid`` is currently alive.
+
+    Uses ``OpenProcess`` and ``GetExitCodeProcess`` on Windows because
+    ``os.kill(pid, 0)`` sends ``CTRL_C_EVENT`` to the console process group
+    on Windows rather than probing process existence. On POSIX, probes via
+    ``os.kill(pid, 0)``.
+
+    Args:
+        pid: Process ID to check.
+
+    Returns:
+        bool: ``True`` if the process appears alive, ``False`` otherwise.
+    """
+    if pid <= 0:
+        return False
+
+    if sys.platform == "win32":
+        import ctypes
+        import ctypes.wintypes
+
+        process_query_limited_information = 0x1000
+        error_access_denied = 5
+        still_active = 259
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.BOOL,
+            ctypes.wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [
+            ctypes.wintypes.HANDLE,
+            ctypes.POINTER(ctypes.wintypes.DWORD),
+        ]
+        kernel32.GetExitCodeProcess.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+
+        handle = kernel32.OpenProcess(
+            process_query_limited_information, False, pid
+        )
+        if not handle:
+            return bool(ctypes.get_last_error() == error_access_denied)
+        try:
+            exit_code = ctypes.wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return False
+            return bool(exit_code.value == still_active)
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def is_running(pid_file: str) -> bool:
     """Check whether a daemon referenced by ``pid_file`` is alive.
 
-    Parses the PID from ``pid_file`` and probes the process via
-    ``os.kill(pid, 0)``.
+    Parses the PID from ``pid_file`` and probes process existence safely
+    across POSIX and Windows.
 
     Args:
         pid_file: Filesystem path to the PID file to inspect.
 
     Returns:
         bool: ``True`` if the PID file exists, parses cleanly, and the
-            process responds to signal ``0``; ``False`` otherwise.
+            process is alive; ``False`` otherwise.
     """
     if not os.path.exists(pid_file):
         return False
@@ -85,11 +145,7 @@ def is_running(pid_file: str) -> bool:
     if pid is None:
         return False
 
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+    return _is_pid_running(pid)
 
 
 def get_pid(pid_file: str) -> int | None:
@@ -137,23 +193,24 @@ def stop_daemon(pid_file: str) -> int:
         print(f"Sent SIGTERM to NX-27017 (PID: {pid})")
 
         for _ in range(SHUTDOWN_RETRY_COUNT):
-            try:
-                os.kill(pid, 0)
-            except OSError:
+            if not _is_pid_running(pid):
                 print("NX-27017 stopped")
                 return 0
             time.sleep(SHUTDOWN_POLL_INTERVAL)
 
-        os.kill(pid, signal.SIGKILL)
+        sigkill = getattr(signal, "SIGKILL", signal.SIGTERM)
+        os.kill(pid, sigkill)
         remove_pid_file(pid_file)
         print(f"Forcefully killed NX-27017 (PID: {pid})")
         return 0
-    except ProcessLookupError:
-        print("NX-27017 is not running")
-        remove_pid_file(pid_file)
-        return 1
     except PermissionError:
         print(f"Permission denied to send signal to PID {pid}")
+        return 1
+    except OSError:
+        # On POSIX this catches ProcessLookupError (ESRCH); on Windows
+        # os.kill() raises OSError (WinError 87) when the PID does not exist.
+        print("NX-27017 is not running")
+        remove_pid_file(pid_file)
         return 1
 
 
@@ -182,8 +239,13 @@ def daemonize():
     starts a new session via ``os.setsid()``, forks a second time so the
     daemon cannot reacquire a controlling terminal, and flushes stdio streams.
     """
+    fork = getattr(os, "fork", None)
+    if fork is None:
+        logger.error("Daemonization is not supported on this platform")
+        sys.exit(1)
+
     try:
-        pid = os.fork()
+        pid = fork()
         if pid > 0:
             sys.exit(0)
     except OSError as e:
@@ -191,10 +253,12 @@ def daemonize():
         sys.exit(1)
 
     os.chdir("/")
-    os.setsid()
+    setsid = getattr(os, "setsid", None)
+    if setsid is not None:
+        setsid()
 
     try:
-        pid = os.fork()
+        pid = fork()
         if pid > 0:
             sys.exit(0)
     except OSError as e:

@@ -22,6 +22,11 @@ poetry update
 # install current project as editable
 poetry run pip install -q -e .[docs,memory-constrained]
 
+# install jsbox if a prebuilt wheel is available for this platform
+if ! poetry run pip install -q --only-binary=jsbox -e ".[js]" 2>/dev/null; then
+  echo "Note: prebuilt jsbox wheel not available for this platform; skipping jsbox."
+fi
+
 # regenerate poetry.lock based on installed/updated packages
 rm -f poetry.lock && poetry lock --no-cache
 

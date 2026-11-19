@@ -133,6 +133,7 @@ def migrate_autovacuum(
         backup_files[shm_path] = shm_backup_path
 
     temp_new_path = f"{db_path}.temp_autovacuum_{timestamp}"
+    snapshot_path = f"{db_path}.snapshot_{timestamp}"
 
     # Escape single quotes for the VACUUM INTO literal (#167); paths with
     # quotes are legal on Unix and previously aborted the migration.
@@ -141,6 +142,7 @@ def migrate_autovacuum(
     conn: sqlite3.Connection | None = None
     snap_conn: sqlite3.Connection | None = None
     out_conn: sqlite3.Connection | None = None
+    replaced_via_rename = False
     try:
         conn = sqlite3.connect(original_backup_path)
         conn.isolation_level = None
@@ -159,7 +161,6 @@ def migrate_autovacuum(
         # streams pages incrementally (no full-RAM load, safe for
         # multi-GB databases) and cannot tear even if another connection
         # commits mid-copy (#167).
-        snapshot_path = f"{db_path}.snapshot_{timestamp}"
         if os.path.exists(snapshot_path):
             os.remove(snapshot_path)
 
@@ -195,7 +196,41 @@ def migrate_autovacuum(
             out_conn.close()
             out_conn = None
 
-        shutil.move(temp_new_path, db_path)
+        try:
+            os.replace(temp_new_path, db_path)
+            replaced_via_rename = True
+        except PermissionError:
+            # On Windows, replacing an open database file fails while another
+            # connection (e.g., an active WAL reader) holds it open. Stream the
+            # rebuilt database through SQLite's online backup API instead so
+            # active readers stay consistent and SQLite checkpoints the WAL
+            # cleanly once they close.
+            src_conn = sqlite3.connect(temp_new_path)
+            dest_conn: sqlite3.Connection | None = None
+            try:
+                dest_conn = sqlite3.connect(db_path)
+                src_conn.backup(dest_conn)
+                try:
+                    dest_conn.execute(
+                        f"PRAGMA journal_mode={target_journal_mode}"
+                    )
+                except sqlite3.OperationalError as jm_err:
+                    logger.debug(
+                        f"Deferred journal_mode={target_journal_mode} while "
+                        f"other connections are active: {jm_err}"
+                    )
+            finally:
+                if dest_conn is not None:
+                    dest_conn.close()
+                src_conn.close()
+            if os.path.exists(temp_new_path):
+                os.remove(temp_new_path)
+
+        if replaced_via_rename:
+            if os.path.exists(wal_path):
+                os.remove(wal_path)
+            if os.path.exists(shm_path):
+                os.remove(shm_path)
 
         if os.path.exists(snapshot_path):
             os.remove(snapshot_path)
@@ -203,11 +238,6 @@ def migrate_autovacuum(
         for backup_path in backup_files.values():
             if os.path.exists(backup_path):
                 os.remove(backup_path)
-
-        if os.path.exists(wal_path):
-            os.remove(wal_path)
-        if os.path.exists(shm_path):
-            os.remove(shm_path)
 
         return True
 
@@ -228,9 +258,17 @@ def migrate_autovacuum(
             except Exception:
                 pass
         logger.error(f"Migration failed, restoring backup: {e}")
-        for original_path, backup_path in backup_files.items():
-            if os.path.exists(backup_path):
-                shutil.move(backup_path, original_path)
+        if replaced_via_rename:
+            for original_path, backup_path in backup_files.items():
+                if os.path.exists(backup_path):
+                    os.replace(backup_path, original_path)
+        else:
+            for backup_path in backup_files.values():
+                try:
+                    if os.path.exists(backup_path):
+                        os.remove(backup_path)
+                except OSError:
+                    pass
         # Remove transient artifacts so a retry starts clean (#167)
         for leftover in (snapshot_path, temp_new_path):
             try:

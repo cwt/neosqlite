@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
 import io
 import os
 import shutil
@@ -20,21 +19,13 @@ from neosqlite.js import (
     close_js_workers,
     use_js_engine,
 )
+from neosqlite.js.engines.jsbox_engine import probe_jsbox
 from neosqlite.js_runtime import NodeRuntime
 from neosqlite.js_worker import close_worker, get_worker
 from neosqlite.objectid import ObjectId
 
 _NODE = shutil.which("node")
-_HAS_JSBOX = (
-    importlib.util.find_spec("jsbox") is not None
-    and importlib.util.find_spec("jsbox._jsbox") is not None
-)
-
-_AVAILABLE_ENGINES: list[str] = []
-if _HAS_JSBOX:
-    _AVAILABLE_ENGINES.append("jsbox")
-if _NODE:
-    _AVAILABLE_ENGINES.append("node")
+_HAS_JSBOX = probe_jsbox().available
 
 
 @pytest.fixture
@@ -56,13 +47,16 @@ def supported_node(monkeypatch):
     close_worker()
 
 
-@pytest.fixture(params=_AVAILABLE_ENGINES or ["none"])
+@pytest.fixture(params=["jsbox", "node"])
 def active_engine(request, monkeypatch):
-    """Parametrize operator tests over every locally installed JS engine."""
+    """Parametrize operator tests over both jsbox and node (skip if unavailable)."""
     engine_name = request.param
-    if engine_name == "none":
-        pytest.skip("no JS engine installed (neither jsbox nor node)")
-    if engine_name == "node":
+    if engine_name == "jsbox":
+        if not _HAS_JSBOX:
+            pytest.skip("jsbox not installed")
+    elif engine_name == "node":
+        if not _NODE:
+            pytest.skip("node not installed")
         runtime = NodeRuntime(path=_NODE, version=(26, 13, 1))
 
         def _fake_find_node() -> NodeRuntime:
