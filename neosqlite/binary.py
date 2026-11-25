@@ -68,7 +68,7 @@ class Binary(bytes):
         elif not isinstance(data, bytes):
             raise TypeError("data must be bytes, bytearray, or memoryview")
 
-        if not isinstance(subtype, int):
+        if isinstance(subtype, bool) or not isinstance(subtype, int):
             raise TypeError("subtype must be an integer")
 
         if not (0 <= subtype < 256):
@@ -222,7 +222,14 @@ class Binary(bytes):
     def __hash__(self) -> int:
         """Return a hash value for the ``Binary`` instance.
 
+        Subtype 0 matches PyMongo's ``bson.Binary`` contract by delegating to
+        ``bytes.__hash__`` so ``Binary(b"abc", 0) == b"abc"`` preserves hash
+        equality.
+
         Returns:
-            int: Hash computed from the underlying bytes and subtype.
+            int: Hash matching ``bytes`` for ``BINARY_SUBTYPE`` or derived from
+            the underlying bytes and subtype otherwise.
         """
+        if self._subtype == self.BINARY_SUBTYPE:
+            return super().__hash__()
         return hash((bytes(self), self._subtype))

@@ -60,18 +60,12 @@ class ObjectId:
                 self._id = self._generate_new_id()
             case ObjectId():
                 self._id = oid.binary
+            case bool():
+                raise TypeError(
+                    "ObjectId must be a string, bytes, ObjectId, int, or None"
+                )
             case str():
-                if len(oid) != 24:
-                    raise ValueError(
-                        "ObjectId hex string must be exactly 24 characters"
-                    )
-                try:
-                    self._id = bytes.fromhex(oid)
-                except ValueError as e:
-                    logger.debug(f"Invalid ObjectId hex string '{oid}': {e}")
-                    raise ValueError(
-                        "ObjectId hex string contains invalid characters"
-                    )
+                self._id = self._parse_hex(oid)
             case bytes():
                 if len(oid) != 12:
                     raise ValueError("ObjectId must be exactly 12 bytes")
@@ -89,6 +83,26 @@ class ObjectId:
                 raise TypeError(
                     "ObjectId must be a string, bytes, ObjectId, int, or None"
                 )
+
+    @staticmethod
+    def _parse_hex(oid: str) -> bytes:
+        """Strictly parse a 24-character hex string into 12 bytes."""
+        if len(oid) != 24:
+            raise ValueError(
+                "ObjectId hex string must be exactly 24 characters"
+            )
+        try:
+            parsed = bytes.fromhex(oid)
+        except ValueError as e:
+            logger.debug(f"Invalid ObjectId hex string '{oid}': {e}")
+            raise ValueError(
+                "ObjectId hex string contains invalid characters"
+            ) from e
+        # bytes.fromhex ignores ASCII whitespace, so ensure all 24 chars decoded
+        # to a full 12-byte ObjectId.
+        if len(parsed) != 12:
+            raise ValueError("ObjectId hex string contains invalid characters")
+        return parsed
 
     @classmethod
     def _generate_new_id(cls) -> bytes:
@@ -187,14 +201,13 @@ class ObjectId:
         match oid:
             case ObjectId():
                 return True
+            case bool():
+                return False
             case str():
-                if len(oid) != 24:
-                    return False
                 try:
-                    bytes.fromhex(oid)
+                    cls._parse_hex(oid)
                     return True
-                except (TypeError, ValueError) as e:
-                    logger.debug(f"Invalid ObjectId hex string '{oid}': {e}")
+                except (TypeError, ValueError):
                     return False
             case bytes():
                 return len(oid) == 12

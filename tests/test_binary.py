@@ -541,3 +541,22 @@ def test_binary_uuid_in_documents():
         assert retrieved_uuid == test_uuid
     finally:
         conn.close()
+
+
+def test_binary_rejects_bool_subtype_and_matches_bytes_hash():
+    """Binary rejects boolean subtype and subtype-0 matches bytes hashing."""
+    with pytest.raises(TypeError, match="subtype must be an integer"):
+        Binary(b"abc", True)
+    with pytest.raises(TypeError, match="subtype must be an integer"):
+        Binary(b"abc", False)
+
+    b0 = Binary(b"abc", 0)
+    assert b0 == b"abc"
+    assert hash(b0) == hash(b"abc")
+    assert {b0: "found"}.get(b"abc") == "found"
+    assert {b"abc": "found"}.get(b0) == "found"
+
+    b4 = Binary(b"abc", 4)
+    b4_same = Binary(b"abc", 4)
+    assert b4 == b4_same
+    assert hash(b4) == hash(b4_same)

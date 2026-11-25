@@ -181,6 +181,12 @@ def test_autovacuum_mode_validate_invalid():
     with pytest.raises(ValueError):
         AutoVacuumMode.validate("unknown")
 
+    with pytest.raises(ValueError):
+        AutoVacuumMode.validate(True)
+
+    with pytest.raises(ValueError):
+        AutoVacuumMode.validate(False)
+
 
 def test_autovacuum_mode_to_string():
     """Test AutoVacuumMode.to_string conversion."""

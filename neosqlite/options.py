@@ -358,7 +358,11 @@ class AutoVacuumMode:
                     f"Invalid auto_vacuum mode: '{mode}'. Must be one of: NONE, FULL, INCREMENTAL"
                 )
 
-        if mode not in (cls.NONE, cls.FULL, cls.INCREMENTAL):
+        if isinstance(mode, bool) or mode not in (
+            cls.NONE,
+            cls.FULL,
+            cls.INCREMENTAL,
+        ):
             raise ValueError(
                 f"Invalid auto_vacuum mode: {mode}. Must be 0 (NONE), 1 (FULL), or 2 (INCREMENTAL)"
             )

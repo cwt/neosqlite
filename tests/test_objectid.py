@@ -772,3 +772,22 @@ def test_concurrent_objectid_generation_no_duplicates():
 
     assert len(generated) == 40000
     assert len(set(generated)) == 40000
+
+
+def test_objectid_rejects_internal_whitespace_and_booleans():
+    """Hex strings with internal whitespace and booleans must be rejected."""
+    with pytest.raises(ValueError, match="invalid characters"):
+        ObjectId("507f1f77bcf86cd79943  11")
+    with pytest.raises(ValueError, match="invalid characters"):
+        ObjectId("507f1f77bcf86cd7994390\t1")
+
+    assert ObjectId.is_valid("507f1f77bcf86cd79943  11") is False
+    assert ObjectId.is_valid("507f1f77bcf86cd7994390\n1") is False
+
+    with pytest.raises(TypeError):
+        ObjectId(True)
+    with pytest.raises(TypeError):
+        ObjectId(False)
+
+    assert ObjectId.is_valid(True) is False
+    assert ObjectId.is_valid(False) is False
