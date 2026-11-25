@@ -396,11 +396,24 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
                 # In multi-stage SQL pipelines, $$ROOT lives in root_data once
                 # stage 0 has preserved the original document.
                 return context.root_column or self.data_column, []
+            case _ if var_name.startswith("$$ROOT."):
+                sub_path = var_name[len("$$ROOT.") :]
+                src_col = context.root_column or self.data_column
+                return (
+                    f"{self.jsonb.function('extract')}("
+                    f"{src_col}, '{parse_json_path(sub_path, preserve_id=False)}')"
+                ), []
             case "$$CURRENT":
                 # Return the current document state
                 # For SQL tier, this is the same as $$ROOT since we don't
                 # modify documents in-place in SQL
                 return self.data_column, []
+            case _ if var_name.startswith("$$CURRENT."):
+                sub_path = var_name[len("$$CURRENT.") :]
+                return (
+                    f"{self.jsonb.function('extract')}("
+                    f"{self.data_column}, '{parse_json_path(sub_path, preserve_id=False)}')"
+                ), []
             case "$$REMOVE":
                 # Sentinel value for field removal in $project
                 # This is handled at the application level, not SQL

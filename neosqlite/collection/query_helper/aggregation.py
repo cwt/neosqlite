@@ -15,7 +15,6 @@ from itertools import batched
 from typing import TYPE_CHECKING, Any
 
 from ..expr_evaluator import (
-    AggregationContext,
     ExprEvaluator,
     _is_expression,
 )
@@ -581,7 +580,10 @@ class AggregationMixin(SqlAggregationMixin):
         doc = deepcopy(document)
         root_doc = root if root is not None else document
         projected_doc: dict[str, Any] = {}
-        include_id = projection.get("_id", 1) == 1
+        id_spec = projection.get("_id", 1)
+        id_is_flag = isinstance(id_spec, (int, bool)) and id_spec in (0, 1)
+        include_id = not (id_is_flag and id_spec in (0, False))
+        has_computed_id = "_id" in projection and not id_is_flag
 
         def _assign(target: dict[str, Any], field_key: str, val: Any) -> None:
             """Assign a projected value to a top-level or dotted target field.
@@ -596,84 +598,109 @@ class AggregationMixin(SqlAggregationMixin):
             else:
                 target[field_key] = val
 
-        # Check if this is an inclusion projection with expressions or aggregation variables
-        has_expressions = any(
+        # Check if this is an inclusion projection with expressions, variables,
+        # field references, or a computed/aliased _id specification
+        has_expressions = has_computed_id or any(
             _is_expression(value)
             or (isinstance(value, str) and value.startswith("$"))
             for value in projection.values()
         )
 
-        if has_expressions:
-            # Inclusion mode with expressions - evaluate each field
-            evaluator = ExprEvaluator(
-                data_column="data", db_connection=self.collection.db
-            )
-            ctx = AggregationContext()
-            ctx.bind_document(document)
-            eval_doc = {
-                **document,
-                "$$ROOT": root_doc,
-                "$$CURRENT": document,
-            }
+        evaluator = (
+            ExprEvaluator(data_column="data", db_connection=self.collection.db)
+            if has_expressions
+            else None
+        )
+        eval_doc = (
+            {**document, "$$ROOT": root_doc, "$$CURRENT": document}
+            if has_expressions
+            else None
+        )
 
+        def _evaluate_proj_value(
+            value: Any, dest: dict[str, Any], key: str
+        ) -> None:
+            if _is_expression(value):
+                assert evaluator is not None and eval_doc is not None
+                projected_value = evaluator._evaluate_expr_python(
+                    value, eval_doc
+                )
+                if projected_value is not REMOVE_SENTINEL:
+                    _assign(dest, key, projected_value)
+            elif isinstance(value, str) and value.startswith("$"):
+                if value == "$$ROOT":
+                    _assign(dest, key, deepcopy(root_doc))
+                elif value == "$$CURRENT":
+                    _assign(dest, key, deepcopy(document))
+                elif value == "$$REMOVE":
+                    return
+                elif value.startswith("$$ROOT."):
+                    sub_path = value[len("$$ROOT.") :]
+                    if self._field_exists(root_doc, sub_path):
+                        _assign(
+                            dest,
+                            key,
+                            deepcopy(
+                                self.collection._get_val(root_doc, sub_path)
+                            ),
+                        )
+                elif value.startswith("$$CURRENT."):
+                    sub_path = value[len("$$CURRENT.") :]
+                    if self._field_exists(document, sub_path):
+                        _assign(
+                            dest,
+                            key,
+                            deepcopy(
+                                self.collection._get_val(document, sub_path)
+                            ),
+                        )
+                elif value.startswith("$$"):
+                    _assign(dest, key, None)
+                else:
+                    field_name = value[1:]
+                    if self._field_exists(document, field_name):
+                        _assign(
+                            dest,
+                            key,
+                            self.collection._get_val(document, field_name),
+                        )
+            elif value == 1:
+                if self._field_exists(document, key):
+                    _assign(dest, key, self.collection._get_val(document, key))
+            elif key == "_id" and has_computed_id:
+                _assign(dest, key, value)
+
+        is_exclusion_mode = not any(
+            v == 1
+            or _is_expression(v)
+            or (isinstance(v, str) and v.startswith("$"))
+            for k, v in projection.items()
+            if k != "_id"
+        ) and any(v == 0 for k, v in projection.items() if k != "_id")
+
+        if not is_exclusion_mode and has_expressions:
             for key, value in projection.items():
                 if key == "_id":
-                    if include_id and "_id" in doc:
+                    if has_computed_id:
+                        _evaluate_proj_value(value, projected_doc, "_id")
+                    elif include_id and "_id" in doc:
                         projected_doc["_id"] = doc["_id"]
                     continue
+                _evaluate_proj_value(value, projected_doc, key)
 
-                if _is_expression(value):
-                    # Evaluate expression
-                    projected_value = evaluator._evaluate_expr_python(
-                        value, eval_doc
-                    )
-                    # Check for $$REMOVE sentinel
-                    if projected_value is REMOVE_SENTINEL:
-                        # Skip this field (remove it)
-                        continue
-                    _assign(projected_doc, key, projected_value)
-                elif isinstance(value, str) and value.startswith("$"):
-                    # Field reference or aggregation variable
-                    if value.startswith("$$"):
-                        # Aggregation variable
-                        if value == "$$ROOT":
-                            _assign(projected_doc, key, deepcopy(root_doc))
-                        elif value == "$$CURRENT":
-                            _assign(projected_doc, key, deepcopy(document))
-                        elif value == "$$REMOVE":
-                            # Skip this field (remove it)
-                            continue
-                        else:
-                            _assign(projected_doc, key, None)
-                    else:
-                        # Regular field reference
-                        field_name = value[1:]
-                        if self._field_exists(document, field_name):
-                            _assign(
-                                projected_doc,
-                                key,
-                                self.collection._get_val(document, field_name),
-                            )
-                elif value == 1:
-                    # Simple inclusion
-                    if self._field_exists(document, key):
-                        _assign(
-                            projected_doc,
-                            key,
-                            self.collection._get_val(document, key),
-                        )
-                # value == 0 is exclusion, skip it
-
-            if include_id and "_id" in doc:
+            if not has_computed_id and include_id and "_id" in doc:
                 projected_doc["_id"] = doc["_id"]
 
             return projected_doc
 
         # Inclusion mode (no expressions)
-        if any(v == 1 for k, v in projection.items() if k != "_id") or (
-            list(projection.keys()) == ["_id"] and include_id
+        if not is_exclusion_mode and (
+            any(v == 1 for k, v in projection.items() if k != "_id")
+            or (list(projection.keys()) == ["_id"] and include_id)
         ):
             for key, value in projection.items():
+                if key == "_id":
+                    continue
                 if value == 1 and self._field_exists(document, key):
                     _assign(
                         projected_doc,
@@ -700,6 +727,8 @@ class AggregationMixin(SqlAggregationMixin):
                         curr.pop(parts[-1], None)
                 elif key in doc:
                     doc.pop(key, None)
-        if not include_id and "_id" in doc:
+        if has_computed_id:
+            _evaluate_proj_value(id_spec, doc, "_id")
+        elif not include_id and "_id" in doc:
             doc.pop("_id", None)
         return doc

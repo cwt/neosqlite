@@ -268,16 +268,14 @@ class QueryEngine(CRUDOperationsMixin, FindOperationsMixin, QueryMethodsMixin):
                                     neosqlite_json_loads,
                                 )
 
-                                document = neosqlite_json_loads(doc_data)
-                                if (
-                                    "_id" not in document
-                                    and stored_id is not None
-                                ):
-                                    document["_id"] = (
-                                        self.collection._parse_stored_id(
-                                            stored_id
+                                if stored_id is not None:
+                                    document = (
+                                        self.collection._load_with_stored_id(
+                                            doc_id, doc_data, stored_id
                                         )
                                     )
+                                else:
+                                    document = neosqlite_json_loads(doc_data)
                                 results.append(document)
                             else:
                                 # Normal loading via _load

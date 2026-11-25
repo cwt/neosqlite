@@ -469,6 +469,50 @@ class StageBuildersMixin:
             agg_ctx.root_column = "root_data"
         return agg_ctx
 
+    def _preserved_id_json_expr(self) -> str:
+        """Build SQL expression preserving original document ``$._id`` type (e.g., ObjectId)."""
+        json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
+        return (
+            f"CASE "
+            f"WHEN json_type(data, '$._id') IN ('object', 'array') THEN json({json_extract_func}(data, '$._id')) "
+            f"WHEN json_type(data, '$._id') = 'true' THEN json('true') "
+            f"WHEN json_type(data, '$._id') = 'false' THEN json('false') "
+            f"WHEN json_type(data, '$._id') IS NOT NULL THEN {json_extract_func}(data, '$._id') "
+            f"ELSE _id END"
+        )
+
+    def _select_expr_preserving_bool(
+        self, expr: Any, agg_ctx: AggregationContext
+    ) -> tuple[str | None, list[Any]]:
+        """Compile ``expr`` for JSON document construction while preserving booleans."""
+        if isinstance(expr, bool):
+            return ("json('true')" if expr else "json('false')"), []
+        if isinstance(expr, dict) and len(expr) == 1:
+            op_name = next(iter(expr))
+            if op_name == "$literal" and isinstance(expr["$literal"], bool):
+                return (
+                    "json('true')" if expr["$literal"] else "json('false')"
+                ), []
+        expr_sql, expr_params = self.evaluator.build_select_expression(
+            expr, context=agg_ctx
+        )
+        if expr_sql is None:
+            return None, []
+        if (
+            isinstance(expr, dict)
+            and len(expr) == 1
+            and self.evaluator._get_operator_return_type(next(iter(expr)))
+            == "bool"
+        ):
+            expr_sql = (
+                f"(WITH _b(v) AS (SELECT ({expr_sql})) "
+                f"SELECT CASE WHEN v = json('true') THEN json('true') "
+                f"WHEN v = json('false') THEN json('false') "
+                f"WHEN COALESCE(v, 0) != 0 THEN json('true') "
+                f"ELSE json('false') END FROM _b)"
+            )
+        return expr_sql, expr_params
+
     def _build_stage_sequence(
         self,
         pipeline: list[dict[str, Any]],
@@ -669,13 +713,29 @@ class StageBuildersMixin:
                         f"OR _id IS NULL THEN {root_source} "
                         f"ELSE {json_set_func}({root_source}, '$._id', _id) END)"
                     )
+                elif expr.startswith("$$ROOT.") or expr.startswith(
+                    "$$CURRENT."
+                ):
+                    agg_ctx = self._make_agg_context(context, preserve_root)
+                    maybe_sql, expr_params = (
+                        self.evaluator.build_select_expression(
+                            expr, context=agg_ctx
+                        )
+                    )
+                    if maybe_sql is None:
+                        return None, []
+                    expr_sql = maybe_sql
+                    all_params.extend(expr_params)
                 else:
                     return None, []
             else:
                 agg_ctx = self._make_agg_context(context, preserve_root)
-                expr_sql, expr_params = self.evaluator.build_select_expression(
-                    expr, context=agg_ctx
+                maybe_sql, expr_params = self._select_expr_preserving_bool(
+                    expr, agg_ctx
                 )
+                if maybe_sql is None:
+                    return None, []
+                expr_sql = maybe_sql
                 all_params.extend(expr_params)
             json_set_args.append(f"'{parse_json_path(field)}'")
             json_set_args.append(expr_sql)
@@ -716,18 +776,16 @@ class StageBuildersMixin:
         if any("." in k for k in spec if k != "_id"):
             return None, []
         all_params = []
-        select_parts = ["id"]
-
-        # MongoDB includes _id by default in $project unless explicitly excluded (_id: 0) (#144)
-        include_id = spec.get("_id", 1) != 0
-        select_parts.append("_id" if include_id else "NULL AS _id")
-
-        _append_root_column(select_parts, context, preserve_root)
+        id_spec = spec.get("_id", 1)
+        id_is_flag = isinstance(id_spec, (int, bool)) and id_spec in (0, 1)
+        include_id = not (id_is_flag and id_spec in (0, False))
+        has_computed_id = "_id" in spec and not id_is_flag
 
         json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         json_obj_func = f"{self.jsonb.json_function_prefix}_object"
+        json_set_func = self._get_json_set()
 
-        is_exclusion = not any(
+        is_exclusion = not has_computed_id and not any(
             value == 1
             or _is_expression(value)
             or (isinstance(value, str) and value.startswith("$"))
@@ -735,100 +793,190 @@ class StageBuildersMixin:
             if field != "_id"
         )
 
+        def _compile_proj_field(
+            field_name: str,
+            val: Any,
+            parts: list[str],
+            removals: list[str],
+        ) -> tuple[bool, str | None]:
+            """Append a projected field to ``parts`` and ``removals``."""
+            escaped = field_name.replace("'", "''")
+            if _is_expression(val):
+                agg_ctx = self._make_agg_context(context, preserve_root)
+                e_sql, e_params = self._select_expr_preserving_bool(
+                    val, agg_ctx
+                )
+                if e_sql is None:
+                    return False, None
+                all_params.extend(e_params)
+                parts.append(f"'{escaped}'")
+                parts.append(e_sql)
+                if field_name != "_id":
+                    context.add_computed_field(field_name, e_sql)
+                return True, e_sql
+            if val in ("$$ROOT", "$$CURRENT"):
+                src_col = (
+                    "root_data"
+                    if (
+                        val == "$$ROOT"
+                        and context.has_root
+                        and not preserve_root
+                    )
+                    else "data"
+                )
+                doc_sql = (
+                    f"json(CASE WHEN json_type({src_col}, '$._id') IS NOT NULL "
+                    f"OR _id IS NULL THEN {src_col} "
+                    f"ELSE {json_set_func}({src_col}, '$._id', _id) END)"
+                )
+                parts.append(f"'{escaped}'")
+                parts.append(doc_sql)
+                return True, doc_sql
+            if isinstance(val, str) and (
+                val.startswith("$$ROOT.") or val.startswith("$$CURRENT.")
+            ):
+                is_root_ref = val.startswith("$$ROOT.")
+                sub_path = val.split(".", 1)[1]
+                src_col = (
+                    "root_data"
+                    if (is_root_ref and context.has_root and not preserve_root)
+                    else "data"
+                )
+                sub_jpath = parse_json_path(sub_path, preserve_id=False)
+                extract_sql = f"{json_extract_func}({src_col}, '{sub_jpath}')"
+                parts.append(f"'{escaped}'")
+                parts.append(extract_sql)
+                removals.append(
+                    f"CASE WHEN json_type({src_col}, '{sub_jpath}') IS NULL "
+                    f"THEN '{parse_json_path(field_name, preserve_id=False)}' ELSE '$.__none__' END"
+                )
+                return True, extract_sql
+            if val == "$$REMOVE":
+                return True, None
+            if isinstance(val, str) and val.startswith("$$"):
+                return False, None
+            if isinstance(val, str) and val.startswith("$"):
+                src_field = val[1:]
+                if src_field == "_id":
+                    id_sql = self._preserved_id_json_expr()
+                    parts.append(f"'{escaped}'")
+                    parts.append(id_sql)
+                    removals.append(
+                        f"CASE WHEN json_type(data, '$._id') IS NULL AND _id IS NULL "
+                        f"THEN '{parse_json_path(field_name, preserve_id=False)}' ELSE '$.__none__' END"
+                    )
+                    return True, "_id"
+                src_jpath = parse_json_path(src_field)
+                extract_sql = f"{json_extract_func}(data, '{src_jpath}')"
+                parts.append(f"'{escaped}'")
+                parts.append(extract_sql)
+                removals.append(
+                    f"CASE WHEN json_type(data, '{src_jpath}') IS NULL "
+                    f"THEN '{parse_json_path(field_name, preserve_id=False)}' ELSE '$.__none__' END"
+                )
+                return True, extract_sql
+            if val == 1 or (isinstance(val, bool) and val):
+                jpath = parse_json_path(field_name)
+                extract_sql = f"{json_extract_func}(data, '{jpath}')"
+                parts.append(f"'{escaped}'")
+                parts.append(extract_sql)
+                removals.append(
+                    f"CASE WHEN json_type(data, '{jpath}') IS NULL "
+                    f"THEN '{jpath}' ELSE '$.__none__' END"
+                )
+                return True, extract_sql
+            if val == 0 or (isinstance(val, bool) and not val):
+                return True, None
+            # Literal value for _id (e.g. {"_id": "const"})
+            agg_ctx = self._make_agg_context(context, preserve_root)
+            lit_sql, lit_params = self._select_expr_preserving_bool(
+                val, agg_ctx
+            )
+            if lit_sql is None:
+                return False, None
+            all_params.extend(lit_params)
+            parts.append(f"'{escaped}'")
+            parts.append(lit_sql)
+            return True, lit_sql
+
+        id_col_sql = "_id" if include_id else "NULL AS _id"
         if is_exclusion:
             fields_to_remove = [
                 field
                 for field, value in spec.items()
                 if value == 0 and (field != "_id" or not include_id)
             ]
+            if not include_id and "_id" not in fields_to_remove:
+                fields_to_remove.append("_id")
             if fields_to_remove:
                 json_remove_func = f"{self.jsonb.json_function_prefix}_remove"
                 path_args = ", ".join(
-                    f"'{parse_json_path(f)}'" for f in fields_to_remove
+                    f"'{parse_json_path(f, preserve_id=False)}'"
+                    for f in fields_to_remove
                 )
                 data_expr = f"json({json_remove_func}(data, {path_args}))"
             else:
                 data_expr = "data"
+            select_parts = ["id", id_col_sql]
+            _append_root_column(select_parts, context, preserve_root)
+            select_parts.append(f"{data_expr} AS data")
+            return (
+                f"SELECT {', '.join(select_parts)} FROM {prev_stage}",
+                all_params,
+            )
+
+        json_parts: list[str] = []
+        missing_removals: list[str] = []
+        if has_computed_id:
+            ok, _ = _compile_proj_field(
+                "_id", id_spec, json_parts, missing_removals
+            )
+            if not ok:
+                return None, []
+        elif include_id:
+            json_parts.append("'_id'")
+            json_parts.append(self._preserved_id_json_expr())
+            missing_removals.append(
+                "CASE WHEN json_type(data, '$._id') IS NULL AND _id IS NULL "
+                "THEN '$._id' ELSE '$.__none__' END"
+            )
+
+        for field, value in spec.items():
+            if field == "_id":
+                continue
+            ok, _ = _compile_proj_field(
+                field, value, json_parts, missing_removals
+            )
+            if not ok:
+                return None, []
+
+        if json_parts:
+            base_obj = f"{json_obj_func}({', '.join(json_parts)})"
+            if missing_removals:
+                json_remove_func = f"{self.jsonb.json_function_prefix}_remove"
+                base_obj = f"{json_remove_func}({base_obj}, {', '.join(missing_removals)})"
+            data_expr = f"json({base_obj})"
         else:
-            json_parts = []
-            missing_removals = []
+            data_expr = "json('{}')"
 
-            for field, value in spec.items():
-                if field == "_id":
-                    continue
+        if has_computed_id:
+            # Compute data once in subquery so computed _id params aren't duplicated
+            inner_parts = ["id", f"{data_expr} AS _pdata"]
+            _append_root_column(inner_parts, context, preserve_root)
+            outer_parts = [
+                "id",
+                "json_extract(_pdata, '$._id') AS _id",
+                "_pdata AS data",
+            ]
+            if preserve_root or context.has_root:
+                outer_parts.append("root_data")
+            return (
+                f"SELECT {', '.join(outer_parts)} "
+                f"FROM (SELECT {', '.join(inner_parts)} FROM {prev_stage})"
+            ), all_params
 
-                if _is_expression(value):
-                    agg_ctx = self._make_agg_context(context, preserve_root)
-                    expr_sql, expr_params = (
-                        self.evaluator.build_select_expression(
-                            value, context=agg_ctx
-                        )
-                    )
-                    if expr_sql is None:
-                        return None, []
-                    all_params.extend(expr_params)
-                    json_parts.append(
-                        f"'{field.replace(chr(39), chr(39) * 2)}'"
-                    )
-                    json_parts.append(expr_sql)
-                    context.add_computed_field(field, expr_sql)
-                elif value in ("$$ROOT", "$$CURRENT"):
-                    json_set_func = self._get_json_set()
-                    src_col = (
-                        "root_data"
-                        if (
-                            value == "$$ROOT"
-                            and context.has_root
-                            and not preserve_root
-                        )
-                        else "data"
-                    )
-                    json_parts.append(
-                        f"'{field.replace(chr(39), chr(39) * 2)}'"
-                    )
-                    json_parts.append(
-                        f"json(CASE WHEN json_type({src_col}, '$._id') IS NOT NULL "
-                        f"OR _id IS NULL THEN {src_col} "
-                        f"ELSE {json_set_func}({src_col}, '$._id', _id) END)"
-                    )
-                elif isinstance(value, str) and value.startswith("$"):
-                    source_field = value[1:]
-                    escaped_field = field.replace("'", "''")
-                    if source_field == "_id":
-                        json_parts.append(f"'{escaped_field}'")
-                        json_parts.append("_id")
-                    else:
-                        json_parts.append(f"'{escaped_field}'")
-                        json_parts.append(
-                            f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
-                        )
-                        missing_removals.append(
-                            f"CASE WHEN json_type(data, '{parse_json_path(source_field)}') IS NULL "
-                            f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
-                        )
-                elif value == 1:
-                    json_parts.append(
-                        f"'{field.replace(chr(39), chr(39) * 2)}'"
-                    )
-                    json_parts.append(
-                        f"{json_extract_func}(data, '{parse_json_path(field)}')"
-                    )
-                    missing_removals.append(
-                        f"CASE WHEN json_type(data, '{parse_json_path(field)}') IS NULL "
-                        f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
-                    )
-
-            if json_parts:
-                base_obj = f"{json_obj_func}({', '.join(json_parts)})"
-                if missing_removals:
-                    json_remove_func = (
-                        f"{self.jsonb.json_function_prefix}_remove"
-                    )
-                    base_obj = f"{json_remove_func}({base_obj}, {', '.join(missing_removals)})"
-                data_expr = f"json({base_obj})"
-            else:
-                data_expr = "json('{}')"
-
+        select_parts = ["id", id_col_sql]
+        _append_root_column(select_parts, context, preserve_root)
         select_parts.append(f"{data_expr} AS data")
 
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
@@ -853,9 +1001,17 @@ class StageBuildersMixin:
         fields = [spec] if isinstance(spec, str) else spec
         json_remove_func = self.jsonb.function("remove")
         json_set_func = self._get_json_set()
-        json_paths = [f"'{parse_json_path(f)}'" for f in fields]
-        data_expr = f"json({json_set_func}({json_remove_func}(data, {', '.join(json_paths)}), '$._id', _id))"
-        select_parts = ["id", "_id", f"{data_expr} AS data"]
+        json_paths = [
+            f"'{parse_json_path(f, preserve_id=False)}'" for f in fields
+        ]
+        if "_id" in fields:
+            data_expr = (
+                f"json({json_remove_func}(data, {', '.join(json_paths)}))"
+            )
+            select_parts = ["id", "NULL AS _id", f"{data_expr} AS data"]
+        else:
+            data_expr = f"json({json_set_func}({json_remove_func}(data, {', '.join(json_paths)}), '$._id', _id))"
+            select_parts = ["id", "_id", f"{data_expr} AS data"]
         _append_root_column(select_parts, context, preserve_root)
         return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", []
 
@@ -863,8 +1019,10 @@ class StageBuildersMixin:
         """Build SQL for ``$replaceRoot`` and ``$replaceWith`` stages.
 
         Replaces each document's ``data`` column with ``spec["newRoot"]``
-        (supporting ``$field`` references, ``$$ROOT``, ``$$CURRENT``, or
-        compiled expressions) while keeping ``$._id`` populated from ``_id``.
+        (supporting ``$field`` references, ``$$ROOT``, ``$$CURRENT``, dotted
+        ``$$ROOT.<path>`` / ``$$CURRENT.<path>``, or compiled expressions)
+        while preserving a child document's own ``_id`` when present and falling
+        back to the outer ``_id`` only when absent.
 
         Args:
             spec: Stage dictionary containing the ``"newRoot"`` expression.
@@ -878,34 +1036,56 @@ class StageBuildersMixin:
                 list.
         """
         new_root = spec.get("newRoot")
-        all_params = []
+        all_params: list[Any] = []
         json_set_func = self._get_json_set()
+        json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
         if (
             isinstance(new_root, str)
             and new_root.startswith("$")
             and not new_root.startswith("$$")
         ):
             field = new_root[1:]
-            json_extract_func = f"{self.jsonb.json_function_prefix}_extract"
             expr_sql = f"{json_extract_func}(data, '{parse_json_path(field)}')"
         elif new_root == "$$ROOT":
-            if context.has_root and not preserve_root:
-                expr_sql = f"json({json_set_func}(root_data, '$._id', _id))"
-            else:
-                expr_sql = f"json({json_set_func}(data, '$._id', _id))"
+            src = (
+                "root_data"
+                if (context.has_root and not preserve_root)
+                else "data"
+            )
+            expr_sql = src
         elif new_root == "$$CURRENT":
-            expr_sql = f"json({json_set_func}(data, '$._id', _id))"
+            expr_sql = "data"
         else:
             agg_ctx = self._make_agg_context(context, preserve_root)
             expr_sql, expr_params = self.evaluator.build_select_expression(
                 new_root, context=agg_ctx
             )
+            if expr_sql is None:
+                return None, []
             all_params.extend(expr_params)
 
-        data_expr = f"json({json_set_func}({expr_sql}, '$._id', _id))"
-        select_parts = ["id", "_id", f"{data_expr} AS data"]
-        _append_root_column(select_parts, context, preserve_root)
-        return f"SELECT {', '.join(select_parts)} FROM {prev_stage}", all_params
+        inner_parts = ["id", "_id", f"{expr_sql} AS _new_data"]
+        if preserve_root:
+            inner_parts.append("data AS root_data")
+        elif context.has_root:
+            inner_parts.append("root_data")
+
+        data_expr = (
+            f"json(CASE "
+            f"WHEN json_type(_new_data, '$._id') IS NOT NULL OR _id IS NULL THEN _new_data "
+            f"ELSE {json_set_func}(_new_data, '$._id', _id) END)"
+        )
+        id_expr = (
+            "CASE WHEN json_type(_new_data, '$._id') IS NOT NULL "
+            "THEN json_extract(_new_data, '$._id') ELSE _id END AS _id"
+        )
+        outer_parts = ["id", id_expr, f"{data_expr} AS data"]
+        if preserve_root or context.has_root:
+            outer_parts.append("root_data")
+        return (
+            f"SELECT {', '.join(outer_parts)} "
+            f"FROM (SELECT {', '.join(inner_parts)} FROM {prev_stage})"
+        ), all_params
 
     def _build_sample_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
@@ -1032,7 +1212,7 @@ class StageBuildersMixin:
             f"json_object({json_args}) AS data",
         ]
         if context.has_root:
-            outer_cols.append("NULL AS root_data")
+            outer_cols.append(f"json_object({json_args}) AS root_data")
         sql = (
             f"SELECT {', '.join(outer_cols)} "
             f"FROM (SELECT {', '.join(sub_parts)} FROM {prev_stage} "
@@ -1157,7 +1337,9 @@ class StageBuildersMixin:
         )
 
         root_select_col = (
-            ",\n                NULL AS root_data" if context.has_root else ""
+            f",\n                json_object({json_args}) AS root_data"
+            if context.has_root
+            else ""
         )
         sql = f"""
             SELECT
@@ -1698,15 +1880,14 @@ class StageBuildersMixin:
                 for field, alias in output_aliases
             ]
         )
+        data_sql = f"json_object({json_args})"
         select_parts = [
             "ROW_NUMBER() OVER () AS id",
             "_id AS _id",
-            f"json_object({json_args}) AS data",
+            f"{data_sql} AS data",
         ]
         if context.has_root:
-            # $group cannot preserve $$ROOT, but keeping the column present
-            # keeps the final wrapper's SELECT executable.
-            select_parts.append("NULL AS root_data")
+            select_parts.append(f"{data_sql} AS root_data")
 
         if not group_by_parts:
             # A constant-key aggregate without GROUP BY always emits exactly
@@ -2463,5 +2644,5 @@ class StageBuildersMixin:
         data_expr = f"json(json_object({', '.join(json_obj_args)}))"
         select_parts = ["NULL AS id", "NULL AS _id", f"{data_expr} AS data"]
         if context.has_root:
-            select_parts.append("NULL AS root_data")
+            select_parts.append(f"{data_expr} AS root_data")
         return f"SELECT {', '.join(select_parts)}", all_params

@@ -171,9 +171,11 @@ class TestPythonAggregationCoreStages:
                     }
                 ],
             )
-            assert len(unwound) == 1
+            assert len(unwound) == 2
             assert unwound[0]["nested"] == {}
             assert unwound[0]["idx"] is None
+            assert unwound[1]["_id"] == 2
+            assert unwound[1]["idx"] is None
 
             # $lookup with nested list-of-dicts local path
             joined = execute_python_aggregation(

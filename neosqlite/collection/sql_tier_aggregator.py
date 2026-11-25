@@ -437,7 +437,7 @@ class SQLTierAggregator(StageBuildersMixin):
         """
         match obj:
             case str():
-                return obj == "$$ROOT"
+                return obj == "$$ROOT" or obj.startswith("$$ROOT.")
             case dict():
                 return any(self._expression_uses_root(v) for v in obj.values())
             case list():

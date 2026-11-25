@@ -329,14 +329,20 @@ def execute_python_aggregation(
                 else:  # $replaceWith
                     new_root_expr = stage["$replaceWith"]
 
+                evaluator = ExprEvaluator(
+                    data_column="data", db_connection=query_engine.collection.db
+                )
                 new_docs_with_context = []
                 for dc in docs_with_context:
-                    # Evaluate the new root expression
-                    evaluator = ExprEvaluator()
+                    eval_doc = {
+                        **dc["__doc__"],
+                        "$$ROOT": dc["__root__"],
+                        "$$CURRENT": dc["__doc__"],
+                    }
                     # Use _evaluate_operand_python to get the actual value (not forced to bool)
                     try:
                         new_doc = evaluator._evaluate_operand_python(
-                            new_root_expr, dc["__doc__"]
+                            new_root_expr, eval_doc
                         )
                     except Exception as e:
                         # Fallback if evaluation fails
@@ -349,6 +355,7 @@ def execute_python_aggregation(
                             f"$replaceRoot requires an object, got {type(new_doc).__name__}"
                         )
 
+                    new_doc = deepcopy(new_doc)
                     # Ensure _id is preserved if it was present in the original
                     if (
                         "_id" not in new_doc
@@ -427,12 +434,10 @@ def execute_python_aggregation(
                         doc, field_path
                     )
 
-                    # For nested fields, check if parent exists
-                    # If parent is None or missing and we're trying to unwind a nested field,
-                    # don't process this document
+                    # For nested fields, check if parent exists when not preserving
                     field_parts = field_path.split(".")
                     process_document = True
-                    if len(field_parts) > 1:
+                    if len(field_parts) > 1 and not preserve_null_and_empty:
                         # This is a nested field
                         parent_path = ".".join(field_parts[:-1])
                         parent_value = query_engine.collection._get_val(
@@ -604,11 +609,16 @@ def execute_python_aggregation(
                     doc = dc["__doc__"]
                     root = dc["__root__"]
 
+                    eval_doc = {
+                        **doc,
+                        "$$ROOT": root,
+                        "$$CURRENT": doc,
+                    }
                     for new_field, expr in add_fields_spec.items():
                         if _is_expression(expr):
                             # Full expression - evaluate in Python with current context
                             value = evaluator_add._evaluate_expr_python(
-                                expr, doc
+                                expr, eval_doc
                             )
                             query_engine.collection._set_val(
                                 doc, new_field, value
@@ -616,15 +626,11 @@ def execute_python_aggregation(
                         elif isinstance(expr, str) and expr.startswith("$"):
                             # Field reference
                             if expr.startswith("$$"):
-                                # Aggregation variable
-                                if expr == "$$ROOT":
-                                    # $$ROOT always refers to original document
-                                    value = root.copy()
-                                elif expr == "$$CURRENT":
-                                    # $$CURRENT refers to document as it evolves
-                                    value = doc.copy()
-                                else:
-                                    value = None
+                                value = evaluator_add._evaluate_operand_python(
+                                    expr, eval_doc
+                                )
+                                if isinstance(value, (dict, list)):
+                                    value = deepcopy(value)
                                 query_engine.collection._set_val(
                                     doc, new_field, value
                                 )

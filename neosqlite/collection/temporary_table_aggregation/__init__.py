@@ -356,16 +356,21 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                             unset_fields = [unset_spec]
                         else:
                             unset_fields = unset_spec
-                        # Build json_remove expressions
+                        # Build json_remove expressions (preserve_id=False -> '$._id')
                         data_expr = "data"
                         json_remove_func = self.jsonb.function("remove")
                         for field in unset_fields:
-                            json_path = parse_json_path(field)
+                            json_path = parse_json_path(
+                                field, preserve_id=False
+                            )
                             data_expr = f"{json_remove_func}({data_expr}, '{json_path}')"
                         unset_stage = {"$unset": unset_spec}
+                        id_col = (
+                            "NULL AS _id" if "_id" in unset_fields else "_id"
+                        )
                         new_table = create_temp(
                             unset_stage,
-                            f"SELECT id, _id, {data_expr} as data FROM {current_table}",
+                            f"SELECT id, {id_col}, {self.jsonb.data_column(data_expr)} as data FROM {current_table}",
                         )
                         current_table = new_table
                         i += 1

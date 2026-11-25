@@ -150,6 +150,14 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         Returns:
             str: Name of the newly created temporary table with added fields.
         """
+        # Check available table columns before building field expressions
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        column_names = {col[1] for col in columns}
+        has_id = "id" in column_names
+        has_underscore_id = "_id" in column_names
+
         # Build json_set expressions for each field to add
         # We'll construct a nested json_set call for each field
         data_expr = "data"  # Start with the original data
@@ -196,22 +204,43 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
             # Handle simple field copying (e.g., {"newField": "$existingField"})
             elif isinstance(source_field, str) and source_field.startswith("$"):
+                if source_field.startswith("$$"):
+                    has_complex_expression = True
+                    break
                 source_field_name = source_field[1:]  # Remove leading $
                 json_set_func = f"{self.jsonb.json_function_prefix}_set"
+                json_extract = f"{self.jsonb.json_function_prefix}_extract"
                 if source_field_name == "_id":
-                    # Special handling for _id field
-                    data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', id)"
+                    # Preserve ObjectId / JSON _id from data when present, or _id column (never row PK `id`)
+                    id_val_expr = (
+                        f"CASE WHEN json_type(data, '$._id') IN ('object', 'array') THEN json({json_extract}(data, '$._id')) "
+                        f"WHEN json_type(data, '$._id') = 'true' THEN json('true') "
+                        f"WHEN json_type(data, '$._id') = 'false' THEN json('false') "
+                        f"WHEN json_type(data, '$._id') IS NOT NULL THEN {json_extract}(data, '$._id') "
+                        f"ELSE {'_id' if has_underscore_id else 'NULL'} END"
+                    )
+                    data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', {id_val_expr})"
                 else:
                     # Use json_extract/jsonb_extract to get the source field value
-                    json_extract = f"{self.jsonb.json_function_prefix}_extract"
                     data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', {json_extract}(data, '{parse_json_path(source_field_name)}'))"
 
-            # Handle literal values
+            # Handle literal values (strings, numbers, booleans, lists, None)
             elif not isinstance(source_field, dict):
-                # For literal values, use json_set with parameterized value
+                agg_ctx = AggregationContext()
+                if isinstance(source_field, bool):
+                    expr_sql = (
+                        "json('true')" if source_field else "json('false')"
+                    )
+                    expr_params: list[Any] = []
+                else:
+                    expr_sql, expr_params = (
+                        self.expr_evaluator.build_select_expression(
+                            source_field, context=agg_ctx
+                        )
+                    )
                 json_set_func = f"{self.jsonb.json_function_prefix}_set"
-                data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', json(?))"
-                params.append(source_field)
+                data_expr = f"{json_set_func}({data_expr}, '{parse_json_path(new_field)}', {expr_sql})"
+                params.extend(expr_params)
 
             # Handle complex expressions (dict with operators like $add, $filter, etc.)
             elif isinstance(source_field, dict):
@@ -255,14 +284,6 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
         # Create addFields temporary table
         add_fields_stage = {"$addFields": add_fields_spec}
-
-        # Check what columns the current table has (similar to _process_sort_skip_limit_stage)
-        columns = self.db.execute(
-            f"PRAGMA table_info({quote_table_name(current_table)})"
-        ).fetchall()
-        column_names = {col[1] for col in columns}
-        has_id = "id" in column_names
-        has_underscore_id = "_id" in column_names
 
         # Build SELECT clause based on available columns
         if has_id and has_underscore_id:
@@ -484,7 +505,15 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 "Force fallback - use Tier 3 Python evaluation"
             )
 
-        include_id = project_spec.get("_id", 1) == 1
+        id_spec = project_spec.get("_id", 1)
+        id_is_flag = isinstance(id_spec, (int, bool)) and id_spec in (0, 1)
+        include_id = not (id_is_flag and id_spec in (0, False))
+        has_computed_id = "_id" in project_spec and not id_is_flag
+
+        if has_computed_id:
+            raise NotImplementedError(
+                "Computed _id in Tier-2 $project requires Python tier"
+            )
 
         # Determine mode: inclusion vs exclusion
         # Inclusion mode if any value == 1 or is an expression/field ref
@@ -535,8 +564,10 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         fields_to_remove = [
             k
             for k, v in project_spec.items()
-            if v == 0 and k != "_id"  # _id is a separate column, not in data
+            if v == 0 and (k != "_id" or not include_id)
         ]
+        if not include_id and "_id" not in fields_to_remove:
+            fields_to_remove.append("_id")
 
         select_cols = ["id"]
         if include_id:
@@ -547,7 +578,8 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             # SQLite's json_remove supports multiple paths in a single call:
             #   json_remove(data, p1, p2, ...)  -- more efficient than nesting
             path_args = ", ".join(
-                f"'{parse_json_path(f)}'" for f in fields_to_remove
+                f"'{parse_json_path(f, preserve_id=False)}'"
+                for f in fields_to_remove
             )
             data_expr = f"{json_remove}(data, {path_args})"
         else:
@@ -617,6 +649,21 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         json_parts = []
         missing_removals = []
         all_params: list[Any] = []
+
+        if include_id:
+            json_parts.append("'_id'")
+            json_parts.append(
+                f"CASE "
+                f"WHEN json_type(data, '$._id') IN ('object', 'array') THEN json({json_extract_func}(data, '$._id')) "
+                f"WHEN json_type(data, '$._id') = 'true' THEN json('true') "
+                f"WHEN json_type(data, '$._id') = 'false' THEN json('false') "
+                f"WHEN json_type(data, '$._id') IS NOT NULL THEN {json_extract_func}(data, '$._id') "
+                f"ELSE _id END"
+            )
+            missing_removals.append(
+                "CASE WHEN json_type(data, '$._id') IS NULL AND _id IS NULL "
+                "THEN '$._id' ELSE '$.__none__' END"
+            )
 
         for field, value in project_spec.items():
             if field == "_id":
@@ -786,18 +833,34 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         else:
             new_root_expr = replace_spec
 
-        # Handle field reference (e.g., "$field")
+        # Handle field reference (e.g., "$field") or $$CURRENT (never treat $$ROOT as $.$ROOT)
         if isinstance(new_root_expr, str) and new_root_expr.startswith("$"):
-            field_name = new_root_expr[1:]  # Remove leading $
-
-            # Create replaceRoot temporary table
-            replace_stage = {"$replaceRoot": {"newRoot": new_root_expr}}
+            if new_root_expr == "$$ROOT" or new_root_expr.startswith("$$ROOT."):
+                raise NotImplementedError(
+                    "$$ROOT in $replaceRoot requires Python tier"
+                )
             json_extract = f"{self.jsonb.json_function_prefix}_extract"
+            json_set_func = f"{self.jsonb.json_function_prefix}_set"
+            if new_root_expr == "$$CURRENT":
+                extract_expr = "data"
+            elif new_root_expr.startswith("$$CURRENT."):
+                sub_path = new_root_expr[len("$$CURRENT.") :]
+                extract_expr = f"{json_extract}(data, '{parse_json_path(sub_path, preserve_id=False)}')"
+            else:
+                field_name = new_root_expr[1:]  # Remove leading $
+                extract_expr = (
+                    f"{json_extract}(data, '{parse_json_path(field_name)}')"
+                )
 
-            # Extract the field and use it as the new root document
+            replace_stage = {"$replaceRoot": {"newRoot": new_root_expr}}
+            # Preserve child _id when present in replacement object, else fallback to outer _id
             new_table = create_temp(
                 replace_stage,
-                f"SELECT id, _id, {json_extract}(data, '{parse_json_path(field_name)}') as data FROM {current_table}",
+                f"SELECT _rr.id, "
+                f"CASE WHEN json_type(_rr._new_data, '$._id') IS NOT NULL "
+                f"THEN json_extract(_rr._new_data, '$._id') ELSE _rr._id END AS _id, "
+                f"{self.jsonb.data_column(f'CASE WHEN json_type(_rr._new_data, \'$._id\') IS NOT NULL OR _rr._id IS NULL THEN _rr._new_data ELSE {json_set_func}(_rr._new_data, \'$._id\', _rr._id) END')} AS data "
+                f"FROM (SELECT id, _id, {extract_expr} AS _new_data FROM {current_table}) AS _rr",
             )
             return new_table
         else:

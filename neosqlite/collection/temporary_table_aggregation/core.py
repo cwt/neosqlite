@@ -53,13 +53,53 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
         "$unwind",
     }
 
+    def _uses_root_var(obj: Any) -> bool:
+        """Return True if ``$$ROOT`` (or ``$$ROOT.<path>``) appears in ``obj``."""
+        if isinstance(obj, str):
+            return obj == "$$ROOT" or obj.startswith("$$ROOT.")
+        if isinstance(obj, dict):
+            return any(_uses_root_var(v) for v in obj.values())
+        if isinstance(obj, list):
+            return any(_uses_root_var(item) for item in obj)
+        return False
+
+    structural_mutation_stages = {
+        "$addFields",
+        "$set",
+        "$project",
+        "$unset",
+        "$unwind",
+        "$lookup",
+        "$replaceRoot",
+        "$replaceWith",
+        "$group",
+        "$bucket",
+        "$bucketAuto",
+        "$redact",
+        "$graphLookup",
+        "$densify",
+        "$facet",
+    }
+    value_mutation_stages = {"$fill", "$setWindowFields"}
+
     # Count unwind stages and check for complex patterns
     has_nested_unwind = False
+    seen_structural_mutation = False
+    seen_value_mutation = False
 
     for stage in pipeline:
         stage_name = next(iter(stage.keys()))
         if stage_name not in supported_stages:
             return False
+
+        # Temp tables do not track stage-0 root_data across document-mutating
+        # stages; fall back to Tier 3 when $$ROOT is referenced after mutation
+        # (preserving Tier-2 Python-hybrid $fill -> $project parity).
+        if _uses_root_var(stage):
+            if seen_structural_mutation or (
+                seen_value_mutation and stage_name != "$project"
+            ):
+                return False
 
         if stage_name == "$match":
             from ..query_helper.schema_compiler import (
@@ -83,6 +123,11 @@ def can_process_with_temporary_tables(pipeline: list[dict[str, Any]]) -> bool:
                 path = unwind_spec.get("path", "")
                 if "." in path:
                     has_nested_unwind = True
+
+        if stage_name in structural_mutation_stages:
+            seen_structural_mutation = True
+        elif stage_name in value_mutation_stages:
+            seen_value_mutation = True
 
     # Nested dotted unwind paths require Python fallback
     if has_nested_unwind:
