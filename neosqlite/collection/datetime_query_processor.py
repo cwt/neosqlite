@@ -179,60 +179,11 @@ class DateTimeQueryProcessor:
     def _contains_datetime_operations(self, query: dict[str, Any]) -> bool:
         """Check whether a query contains datetime operations.
 
-        Recursively inspects logical operators (``$and``, ``$or``, ``$nor``,
-        ``$not``), comparison operators, ``$in``/``$nin``, ``$type`` date
-        specifiers, ``$regex`` patterns, and plain field values.
-
-        Args:
-            query: MongoDB-style query dictionary.
-
-        Returns:
-            bool: True if the query contains datetime operations, else False.
+        Delegates to :func:`datetime_utils.contains_datetime_operations`.
         """
-        for field, value in query.items():
-            if field in ("$and", "$or", "$nor"):
-                if isinstance(value, list):
-                    for condition in value:
-                        if isinstance(
-                            condition, dict
-                        ) and self._contains_datetime_operations(condition):
-                            return True
-            elif field == "$not":
-                if isinstance(
-                    value, dict
-                ) and self._contains_datetime_operations(value):
-                    return True
-            elif isinstance(value, dict):
-                # Check for datetime-related operators
-                for operator, op_value in value.items():
-                    if operator in ("$gte", "$gt", "$lte", "$lt", "$eq", "$ne"):
-                        # Check if the value is a datetime object or datetime string
-                        if self._is_datetime_value(op_value):
-                            return True
-                    elif operator in ("$in", "$nin"):
-                        # For $in and $nin, check if any value in the list is a datetime
-                        if isinstance(op_value, list):
-                            if any(
-                                self._is_datetime_value(item)
-                                for item in op_value
-                            ):
-                                return True
-                    elif operator == "$type":
-                        # Check if looking for date type
-                        if op_value in (
-                            9,
-                            "date",
-                            "Date",
-                        ):  # 9 is date type in MongoDB
-                            return True
-                    elif operator == "$regex":
-                        # Check if it's a datetime regex pattern
-                        if self._is_datetime_regex(op_value):
-                            return True
-            else:
-                if self._is_datetime_value(value):
-                    return True
-        return False
+        from .datetime_utils import contains_datetime_operations
+
+        return contains_datetime_operations(query)
 
     def _is_datetime_value(self, value: Any) -> bool:
         """Check if a value is a datetime object or datetime string.

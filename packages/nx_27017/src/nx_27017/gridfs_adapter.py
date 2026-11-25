@@ -364,7 +364,8 @@ class GridFSAdapter:
         if isinstance(oid, str):
             try:
                 return ObjectId(oid)
-            except Exception:
+            except Exception as exc:
+                logger.debug("ObjectId parse fallback for %r: %s", oid, exc)
                 return oid
         return oid
 
@@ -784,8 +785,8 @@ class GridFSAdapter:
                 deleted += max(0, cursor.rowcount)
             try:
                 self._db.commit()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("GridFS chunks delete commit skipped: %s", exc)
             return {"ok": 1, "n": deleted}
         except Exception as e:
             logger.error(f"GridFS chunks delete error: {e}")

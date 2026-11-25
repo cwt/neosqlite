@@ -751,20 +751,21 @@ class TestBinarySqlUpdates:
         doc1 = coll.find_one({"_id": 1})
         assert doc1 is not None
 
-        assert qh._can_use_sql_updates({"$set": {"bin": b2}}, 1, doc1) is True
+        assert qh._build_set_data_expression({"$set": {"bin": b2}}) is not None
         assert (
-            qh._can_use_sql_updates(
-                {"$push": {"arr": {"$each": [b2], "$position": 0}}}, 1, doc1
+            qh._build_set_data_expression(
+                {"$push": {"arr": {"$each": [b2], "$position": 0}}}
             )
-            is True
+            is not None
         )
         assert (
-            qh._can_use_sql_updates({"$addToSet": {"arr": b2}}, 1, doc1) is True
+            qh._build_set_data_expression({"$addToSet": {"arr": b2}})
+            is not None
         )
 
         # Unsafe comparison / raw-JSON ops still decline SQL cleanly
-        assert qh._can_use_sql_updates({"$min": {"bin": b2}}, 1, doc1) is False
-        assert qh._can_use_sql_updates({"$pull": {"arr": b1}}, 1, doc1) is False
+        assert qh._build_set_data_expression({"$min": {"bin": b2}}) is None
+        assert qh._build_set_data_expression({"$pull": {"arr": b1}}) is None
 
         ops = [
             {"$set": {"bin": b2}},

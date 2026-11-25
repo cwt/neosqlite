@@ -62,7 +62,7 @@ def _json_extract_field_with_objectid_support(
         str: SQL expression string evaluating to the extracted field value.
     """
     if field_name == "_id":
-        return "_id" if is_local_field else "_id"
+        return "_id"
 
     from ..json_path_utils import parse_json_path
 

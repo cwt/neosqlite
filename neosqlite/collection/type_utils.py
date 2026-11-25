@@ -228,9 +228,9 @@ def bson_sort_key(value: Any) -> tuple:
     """Build a total-order sort key following BSON type ordering.
 
     Missing/None values sort before numbers, then strings, objects, arrays,
-    booleans, and datetimes. Values of the same class compare naturally;
-    values of different classes are ordered by class rank so mixed
-    populations never raise ``TypeError`` (MongoDB orders by BSON type
+    binary data, ObjectIds, booleans, and datetimes. Values of the same class
+    compare naturally; values of different classes are ordered by class rank so
+    mixed populations never raise ``TypeError`` (MongoDB orders by BSON type
     first).
 
     Use with ``sort(reverse=True)`` for descending order; missing/null then
@@ -246,7 +246,7 @@ def bson_sort_key(value: Any) -> tuple:
         return (0, 0)
     if isinstance(value, bool):
         # bool must be tested before int (bool subclasses int)
-        return (5, value)
+        return (7, value)
     if isinstance(value, (int, float)):
         return (1, value)
     if isinstance(value, str):
@@ -258,15 +258,21 @@ def bson_sort_key(value: Any) -> tuple:
         return (3, canonical)
     if isinstance(value, (list, tuple)):
         return (4, tuple(bson_sort_key(v) for v in value))
+    if isinstance(value, (bytes, bytearray)):
+        # Binary subclasses bytes; keep Binary and bytes comparable cleanly.
+        return (5, bytes(value))
+    type_name = type(value).__name__
+    if type_name == "ObjectId":
+        return (6, str(value))
     if isinstance(value, datetime):
         aware = (
             value.astimezone(UTC)
             if value.tzinfo is not None
             else value.replace(tzinfo=UTC)
         )
-        return (6, aware)
+        return (8, aware)
     # Unknown types: order by class name, then repr — always comparable
-    return (9, type(value).__name__, repr(value))
+    return (99, type_name, repr(value))
 
 
 def is_case_insensitive_collation(collation: dict[str, Any] | None) -> bool:
@@ -1018,6 +1024,77 @@ def build_json_containment_parts(
     return scalar_cmp, [scalar_val], " OR ".join(arr_arms), arr_params
 
 
+def check_unsupported_query_operators(query: dict[str, Any]) -> None:
+    """Raise ``NotImplementedError`` for unsupported JS/custom query operators."""
+    if "$where" in query:
+        from ..js import is_js_available
+
+        if not is_js_available():
+            raise NotImplementedError(
+                "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
+                "Please use the '$expr' operator for field-to-field comparisons, "
+                "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
+            )
+    if "$function" in query:
+        raise NotImplementedError(
+            "The '$function' operator is not supported in NeoSQLite. "
+            "Please use '$expr' with Python expressions, or post-process results in Python."
+        )
+    if "$accumulator" in query:
+        raise NotImplementedError(
+            "The '$accumulator' operator is not supported in NeoSQLite. "
+            "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
+            "or post-process results in Python."
+        )
+
+
+def build_bson_range_sql(
+    op_sql: str,
+    json_path: str,
+    op_val: Any,
+    *,
+    json_prefix: str,
+    json_each_function: str,
+    is_datetime_indexed: bool = False,
+    allow_array_existential: bool = True,
+    allow_null: bool = False,
+) -> tuple[str, list[Any]] | None:
+    """Build a type-guarded SQL predicate and params for ``$gt/$lt/$gte/$lte``."""
+    if isinstance(op_val, (list, tuple, dict)) or is_encoded_json_value(op_val):
+        return None
+    extract_expr = f"{json_prefix}_extract(data, {json_path})"
+    if op_val is None:
+        if allow_null:
+            return f"{extract_expr} IS NULL", []
+        return "0", []
+    if is_datetime_indexed:
+        return f"{extract_expr} {op_sql} datetime(?)", [op_val]
+    if allow_array_existential and json_path.startswith("'"):
+        sql = (
+            f"((json_type(data, {json_path}) != 'array' AND "
+            f"{json_type_guard_sql(json_path, op_val)} AND "
+            f"{extract_expr} {op_sql} ?) OR "
+            f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+            f"(SELECT 1 FROM {json_each_function}(data, {json_path}) AS json_each "
+            f"WHERE json_each.type IN {json_type_list_sql(op_val)} "
+            f"AND json_each.value {op_sql} ?)))"
+        )
+        return sql, [op_val, op_val]
+    if json_path == "value":
+        return (
+            f"(json_each.type IN {json_type_list_sql(op_val)} AND "
+            f"{extract_expr} {op_sql} ?)",
+            [op_val],
+        )
+    if json_path.startswith("'"):
+        return (
+            f"({json_type_guard_sql(json_path, op_val)} AND "
+            f"{extract_expr} {op_sql} ?)",
+            [op_val],
+        )
+    return f"{extract_expr} {op_sql} ?", [op_val]
+
+
 def build_json_containment_clause(
     data_expr: str,
     field: str,
@@ -1059,6 +1136,73 @@ def build_json_containment_clause(
     return f"({scalar_sql} OR {arr_sql})", scalar_params + arr_params
 
 
+def canonical_value_key(
+    value: Any,
+    *,
+    preserve_order: bool = False,
+    fold_numbers: bool = False,
+    order_sensitive_keys: frozenset[str] = frozenset(),
+) -> tuple:
+    """Build a hashable, type-tagged key for arbitrary BSON/Python values.
+
+    Shared backbone for ``$group`` key hashing (``_hashable_group_key``),
+    ``$addToSet`` deduplication (``fold_numbers=True`` so ``1 == 1.0``), and
+    pipeline translation cache keys (``preserve_order`` / ``Binary`` subtypes).
+    """
+    from ..binary import Binary
+
+    match value:
+        case bool():
+            return ("b", value)
+        case int() | float():
+            if fold_numbers:
+                return ("n", repr(float(value)))
+            if isinstance(value, int):
+                return ("i", value)
+            return ("f", repr(value))
+        case str():
+            return ("s", value)
+        case None:
+            return ("z",)
+        case dict():
+            items = value.items() if preserve_order else sorted(value.items())
+            return (
+                "d",
+                tuple(
+                    (
+                        k,
+                        canonical_value_key(
+                            v,
+                            preserve_order=preserve_order
+                            or k in order_sensitive_keys,
+                            fold_numbers=fold_numbers,
+                            order_sensitive_keys=order_sensitive_keys,
+                        ),
+                    )
+                    for k, v in items
+                ),
+            )
+        case list() | tuple():
+            return (
+                "l",
+                tuple(
+                    canonical_value_key(
+                        v,
+                        preserve_order=preserve_order,
+                        fold_numbers=fold_numbers,
+                        order_sensitive_keys=order_sensitive_keys,
+                    )
+                    for v in value
+                ),
+            )
+        case Binary():
+            return ("B", value.subtype, value.hex())
+        case bytes():
+            return ("y", value)
+        case _:
+            return ("o", type(value).__name__, str(value))
+
+
 def _hashable_group_key(value: Any) -> tuple:
     """Build a type-tagged, hashable key for a ``$group`` ``_id`` value.
 
@@ -1073,32 +1217,7 @@ def _hashable_group_key(value: Any) -> tuple:
     Returns:
         tuple: Canonical hashable type-tagged tuple representation.
     """
-    match value:
-        case bool():
-            return ("b", value)
-        case int():
-            return ("i", value)
-        case float():
-            return ("f", repr(value))
-        case str():
-            return ("s", value)
-        case None:
-            return ("z",)
-        case dict():
-            return (
-                "d",
-                tuple(
-                    sorted(
-                        (k, _hashable_group_key(v)) for k, v in value.items()
-                    )
-                ),
-            )
-        case list() | tuple():
-            return ("l", tuple(_hashable_group_key(v) for v in value))
-        case bytes():
-            return ("y", value)
-        case _:
-            return ("o", type(value).__name__, str(value))
+    return canonical_value_key(value)
 
 
 _BSON_TYPE_ALIASES: dict[str, int] = {

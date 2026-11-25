@@ -57,7 +57,7 @@ def python_hybrid_fallback(
                 )
             except NotImplementedError as exc:
                 name = stage_name(spec) if callable(stage_name) else stage_name
-                logger.warning(
+                logger.debug(
                     "Tier-2 stage %s using Python hybrid: %s", name, exc
                 )
                 return self._process_stage_python_hybrid(

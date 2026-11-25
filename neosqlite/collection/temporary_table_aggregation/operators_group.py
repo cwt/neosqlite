@@ -368,76 +368,39 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                             f"$group accumulator {op} with expression {expr} not supported in SQL tier"
                         )
 
-                case "$addToSet":
-                    # Use json_group_array with DISTINCT
+                case "$addToSet" | "$push":
+                    # Use json_group_array (with DISTINCT for $addToSet)
                     # Track this field for post-processing
                     sql_alias = _alloc_alias(field)
                     array_fields.append(field)
+                    distinct_prefix = "DISTINCT " if op == "$addToSet" else ""
 
                     if expr_sql is not None:
                         select_parts.append(
-                            f"{json_group_array}(DISTINCT {expr_sql}) AS {sql_alias}"
+                            f"{json_group_array}({distinct_prefix}{expr_sql}) AS {sql_alias}"
                         )
                         select_params.extend(expr_params)
-                    # Check if expr is a subdocument template
                     elif isinstance(expr, dict):
-                        template_sql = _build_template_object_sql(
-                            expr, "$addToSet"
-                        )
+                        template_sql = _build_template_object_sql(expr, op)
                         select_parts.append(
-                            f"{json_group_array}(DISTINCT {template_sql}) AS {sql_alias}"
+                            f"{json_group_array}({distinct_prefix}{template_sql}) AS {sql_alias}"
                         )
                     elif is_literal:
                         select_parts.append(
-                            f"{json_group_array}(DISTINCT {_format_literal_sql(literal_value)}) AS {sql_alias}"
+                            f"{json_group_array}({distinct_prefix}{_format_literal_sql(literal_value)}) AS {sql_alias}"
                         )
                     elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT _id) AS {sql_alias}"
+                                f"{json_group_array}({distinct_prefix}_id) AS {sql_alias}"
                             )
                         elif expr_field in ("$$ROOT", "$$CURRENT"):
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT json(data)) AS {sql_alias}"
+                                f"{json_group_array}({distinct_prefix}json(data)) AS {sql_alias}"
                             )
                         else:
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT {json_extract}(data, '{parse_json_path(expr_field)}')) AS {sql_alias}"
-                            )
-
-                case "$push":
-                    # Use json_group_array
-                    # Track this field for post-processing
-                    sql_alias = _alloc_alias(field)
-                    array_fields.append(field)
-
-                    if expr_sql is not None:
-                        select_parts.append(
-                            f"{json_group_array}({expr_sql}) AS {sql_alias}"
-                        )
-                        select_params.extend(expr_params)
-                    # Check if expr is a dict expression (e.g., {'title': '$title', 'author': '$author'})
-                    elif isinstance(expr, dict):
-                        template_sql = _build_template_object_sql(expr, "$push")
-                        select_parts.append(
-                            f"{json_group_array}({template_sql}) AS {sql_alias}"
-                        )
-                    elif is_literal:
-                        select_parts.append(
-                            f"{json_group_array}({_format_literal_sql(literal_value)}) AS {sql_alias}"
-                        )
-                    elif expr_field:
-                        if expr_field == "_id":
-                            select_parts.append(
-                                f"{json_group_array}(_id) AS {sql_alias}"
-                            )
-                        elif expr_field in ("$$ROOT", "$$CURRENT"):
-                            select_parts.append(
-                                f"{json_group_array}(json(data)) AS {sql_alias}"
-                            )
-                        else:
-                            select_parts.append(
-                                f"{json_group_array}({json_extract}(data, '{parse_json_path(expr_field)}')) AS {sql_alias}"
+                                f"{json_group_array}({distinct_prefix}{json_extract}(data, '{parse_json_path(expr_field)}')) AS {sql_alias}"
                             )
 
                 case _:

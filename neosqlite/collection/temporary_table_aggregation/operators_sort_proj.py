@@ -797,13 +797,16 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         json_extract = f"{self.jsonb.json_function_prefix}_extract"
         return f"COALESCE({json_extract}(data, '$._textScore'), 0.0)"
 
-    @python_hybrid_fallback(
-        lambda spec: (
+    @staticmethod
+    def _replace_root_stage_name(spec: Any) -> str:
+        """Return canonical stage name for dynamic ``$replaceRoot``/``$replaceWith`` fallback."""
+        return (
             "$replaceRoot"
             if isinstance(spec, dict) and "newRoot" in spec
             else "$replaceWith"
         )
-    )
+
+    @python_hybrid_fallback(_replace_root_stage_name)
     def _process_replace_root_stage(
         self,
         create_temp: Callable,

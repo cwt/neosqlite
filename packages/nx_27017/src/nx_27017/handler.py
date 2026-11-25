@@ -9,11 +9,11 @@ import re
 import secrets
 import threading
 import time
-import traceback
 import uuid
 import weakref
 from collections import OrderedDict
 from collections.abc import Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Self
 
@@ -198,9 +198,25 @@ def _msg_db_name(msg: Any) -> str:
                 if isinstance(db_val, str) and db_val:
                     return db_val
                 return "admin"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(f"Could not infer database name from wire message: {exc}")
     return "test"
+
+
+@dataclass
+class _CommandContext:
+    """Normalized inputs for a dispatched ``OP_MSG`` command handler."""
+
+    request_id: int
+    cmd_copy: dict[str, Any]
+    command_doc: dict[str, Any]
+    db: Connection
+    db_name: str
+    msg: dict[str, Any]
+    payload_updates: list[dict[str, Any]]
+    payload_deletes: list[dict[str, Any]]
+    payload_ops: list[dict[str, Any]]
+    payload_nsinfo: list[dict[str, Any]]
 
 
 def _msg_body_doc(msg: Any) -> dict[str, Any] | None:
@@ -713,21 +729,9 @@ class NeoSQLiteHandler:
                 idle_session = self._sessions.pop(sess_key, None)
                 self._session_last_used.pop(sess_key, None)
                 tx_conn = self._session_tx_conns.pop(sess_key, None)
-                if idle_session is not None:
-                    try:
-                        idle_session.end_session()
-                    except Exception:
-                        pass
-                if tx_conn is not None:
-                    try:
-                        tx_conn.close()
-                    except Exception:
-                        pass
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+                self._safe_end_session(idle_session, f"evict {db_name}")
+                self._safe_close_conn(tx_conn, f"evict tx {db_name}")
+        self._safe_close_conn(conn, f"evict {db_name}")
 
     def _evict_lru_locked(self) -> None:
         """Cap open file connections, evicting least-recently-used dbs.
@@ -768,15 +772,9 @@ class NeoSQLiteHandler:
             self._session_last_used.clear()
             self._tx_cond.notify_all()
         for sess in sessions:
-            try:
-                sess.end_session()
-            except Exception:
-                pass
+            self._safe_end_session(sess, "close_all session")
         for tx_conn in tx_conns:
-            try:
-                tx_conn.close()
-            except Exception:
-                pass
+            self._safe_close_conn(tx_conn, "close_all tx")
         with self._cursors_lock:
             cursor_entries = [
                 (entry.get("db"), entry.get("cursor"))
@@ -792,15 +790,9 @@ class NeoSQLiteHandler:
             self._applied_wc.clear()
         self._change_stream_manager.invalidate()
         for conn in conns:
-            try:
-                conn.close()
-            except Exception:
-                pass
-        if hasattr(self, "conn") and self.conn is not None:
-            try:
-                self.conn.close()
-            except Exception:
-                pass
+            self._safe_close_conn(conn, "close_all db")
+        if hasattr(self, "conn"):
+            self._safe_close_conn(self.conn, "close_all primary")
 
     def __enter__(self) -> Self:
         """Enter the handler context manager.
@@ -827,8 +819,26 @@ class NeoSQLiteHandler:
         """Close open database connections on garbage collection."""
         try:
             self.close_all()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(f"Ignoring cleanup error during __del__: {exc}")
+
+    @staticmethod
+    def _safe_end_session(session: Any, context: str = "session") -> None:
+        """End a NeoSQLite session quietly while debug-logging any error."""
+        if session is not None:
+            try:
+                session.end_session()
+            except Exception as exc:
+                logger.debug(f"Ignoring {context} cleanup error: {exc}")
+
+    @staticmethod
+    def _safe_close_conn(conn: Any, context: str = "connection") -> None:
+        """Close a NeoSQLite connection quietly while debug-logging errors."""
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception as exc:
+                logger.debug(f"Ignoring {context} close error: {exc}")
 
     def _drop_file_db(self, db_name: str) -> None:
         """Close, unlink, and forget a file or memory database.
@@ -859,16 +869,8 @@ class NeoSQLiteHandler:
             self._tx_cond.notify_all()
         for sid, sess, tx_conn in dropped_sessions:
             with self._lock_for_session(sid):
-                if sess is not None:
-                    try:
-                        sess.end_session()
-                    except Exception:
-                        pass
-                if tx_conn is not None:
-                    try:
-                        tx_conn.close()
-                    except Exception:
-                        pass
+                self._safe_end_session(sess, f"drop_file_db {db_name}")
+                self._safe_close_conn(tx_conn, f"drop_file_db tx {db_name}")
         with self._dict_lock:
             conn = self._conns.pop(db_name, None)
             self.databases.pop(db_name, None)
@@ -877,11 +879,7 @@ class NeoSQLiteHandler:
                 self._mem_generations[db_name] = (
                     self._mem_generations.get(db_name, 0) + 1
                 )
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
+        self._safe_close_conn(conn, f"drop_file_db {db_name}")
         if self._mode == "files":
             db_file = self._db_file(db_name)
             for path in (db_file, f"{db_file}-wal", f"{db_file}-shm"):
@@ -946,7 +944,10 @@ class NeoSQLiteHandler:
         """Compute exact BSON size after converting NeoSQLite types."""
         try:
             return len(BSON.encode(convert_neo_to_bson_objectids(doc)))
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                f"Failed BSON-encoding document for size check, falling back to repr: {exc}"
+            )
             return len(repr(doc))
 
     @classmethod
@@ -1008,7 +1009,10 @@ class NeoSQLiteHandler:
                 try:
                     with self._lock_for(c_db):
                         self._close_cursor_obj(cursor_obj)
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        f"Failed acquiring lock for {c_db} while closing cursor: {exc}"
+                    )
                     self._close_cursor_obj(cursor_obj)
 
     def _close_cursors_for_namespace(
@@ -1172,7 +1176,8 @@ class NeoSQLiteHandler:
                 first, rest, has_more = self._take_batch_from_iter(
                     [], source_iter, batch_size
                 )
-            except Exception:
+            except Exception as exc:
+                logger.debug(f"Wire cursor first-batch iteration failed: {exc}")
                 self._close_cursor_obj(cursor_obj)
                 raise
 
@@ -1449,16 +1454,8 @@ class NeoSQLiteHandler:
                 else self._lock_for(scope or "admin")
             )
             with lock:
-                if sess is not None:
-                    try:
-                        sess.end_session()
-                    except Exception:
-                        pass
-                if tx_conn is not None:
-                    try:
-                        tx_conn.close()
-                    except Exception:
-                        pass
+                self._safe_end_session(sess, f"expire session {sid}")
+                self._safe_close_conn(tx_conn, f"expire session tx {sid}")
 
     def _uses_shared_memory_tx(self) -> bool:
         """Return whether transactions share an in-memory SQLite cache."""
@@ -1667,11 +1664,9 @@ class NeoSQLiteHandler:
         try:
             tx_session = tx_conn.start_session()
             tx_session.start_transaction()
-        except Exception:
-            try:
-                tx_conn.close()
-            except Exception:
-                pass
+        except Exception as exc:
+            logger.debug(f"Failed starting transaction session: {exc}")
+            self._safe_close_conn(tx_conn, "aborted tx open")
             raise
 
         with self._sessions_lock:
@@ -1681,16 +1676,10 @@ class NeoSQLiteHandler:
             self._session_tx_conns[key] = tx_conn
             self._session_last_used[key] = time.monotonic()
 
-        if old_idle_session is not None and old_idle_session is not tx_session:
-            try:
-                old_idle_session.end_session()
-            except Exception:
-                pass
-        if old_tx_conn is not None and old_tx_conn is not tx_conn:
-            try:
-                old_tx_conn.close()
-            except Exception:
-                pass
+        if old_idle_session is not tx_session:
+            self._safe_end_session(old_idle_session, "replaced idle session")
+        if old_tx_conn is not tx_conn:
+            self._safe_close_conn(old_tx_conn, "replaced tx conn")
 
         return tx_conn, tx_session
 
@@ -1942,6 +1931,7 @@ class NeoSQLiteHandler:
                     res = coll.insert_one(doc, session=session_to_use)
                     inserted_ids.append(res.inserted_id)
                 except Exception as exc:
+                    logger.debug(f"Insert op {idx} failed: {exc}")
                     write_errors.append(_bulk_write_error(exc, idx))
                     if ordered:
                         break
@@ -1956,18 +1946,121 @@ class NeoSQLiteHandler:
 
         return request_id, {"ok": 1, "n": 0}
 
+    _PRE_COMMAND_DISPATCH: dict[str, str] = {
+        "ismaster": "_cmd_handshake",
+        "isMaster": "_cmd_handshake",
+        "hello": "_cmd_handshake",
+        "Hello": "_cmd_handshake",
+        "startSession": "_cmd_start_session",
+        "commitTransaction": "_cmd_commit_transaction",
+        "abortTransaction": "_cmd_abort_transaction",
+        "endSessions": "_cmd_end_sessions",
+    }
+
+    _COMMAND_DISPATCH: dict[str, str] = {
+        "create": "_cmd_create",
+        "drop": "_cmd_drop",
+        "dropDatabase": "_cmd_drop_database",
+        "dropdatabase": "_cmd_drop_database",
+        "renameCollection": "_cmd_rename_collection",
+        "dropIndexes": "_cmd_drop_indexes",
+        "createIndexes": "_cmd_create_indexes",
+        "createIndex": "_cmd_create_indexes",
+        "dropIndex": "_cmd_drop_index",
+        "createSearchIndexes": "_cmd_create_search_indexes",
+        "createsearchindexes": "_cmd_create_search_indexes",
+        "updateSearchIndex": "_cmd_update_search_index",
+        "updatesearchindex": "_cmd_update_search_index",
+        "dropSearchIndex": "_cmd_drop_search_index",
+        "dropsearchindex": "_cmd_drop_search_index",
+        "delete": "_cmd_delete",
+        "bulkWrite": "_cmd_bulk_write",
+        "upload": "_cmd_upload",
+        "openDownloadStream": "_cmd_open_download_stream",
+        "findAndModify": "_cmd_find_and_modify",
+        "update": "_cmd_update",
+        "find": "_cmd_find",
+        "count": "_cmd_count",
+        "distinct": "_cmd_distinct",
+        "aggregate": "_cmd_aggregate",
+        "listCollections": "_cmd_list_collections",
+        "serverStatus": "_cmd_server_status",
+        "buildInfo": "_cmd_server_status",
+        "dbStats": "_cmd_db_stats",
+        "dbstats": "_cmd_db_stats",
+        "collStats": "_cmd_coll_stats",
+        "collstats": "_cmd_coll_stats",
+        "listDatabases": "_cmd_list_databases",
+        "listdatabases": "_cmd_list_databases",
+        "listIndexes": "_cmd_list_indexes",
+        "listindexes": "_cmd_list_indexes",
+        "listSearchIndexes": "_cmd_list_search_indexes",
+        "listsearchindexes": "_cmd_list_search_indexes",
+        "explain": "_cmd_explain",
+        "getMore": "_cmd_get_more",
+        "killCursors": "_cmd_kill_cursors",
+        "vacuum": "_cmd_vacuum",
+        "compact": "_cmd_compact",
+        "compactcollection": "_cmd_compact",
+        "validate": "_cmd_validate",
+        "reindex": "_cmd_reindex",
+        "reIndex": "_cmd_reindex",
+    }
+
+    @staticmethod
+    def _extract_command_and_payloads(
+        sections: list[tuple[str, Any]],
+    ) -> tuple[
+        dict[str, Any] | None,
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
+        """Extract command body and wire payload sequences from OP_MSG sections."""
+        command_doc = None
+        payload_updates: list[dict[str, Any]] = []
+        payload_deletes: list[dict[str, Any]] = []
+        payload_ops: list[dict[str, Any]] = []
+        payload_nsinfo: list[dict[str, Any]] = []
+        for section_type, doc in sections:
+            if section_type == "body":
+                command_doc = doc
+            elif section_type == "payload" and isinstance(doc, dict):
+                if isinstance(doc.get("updates"), list):
+                    payload_updates.extend(doc["updates"])
+                if isinstance(doc.get("deletes"), list):
+                    payload_deletes.extend(doc["deletes"])
+                # bulkWrite ships ops (and sometimes nsInfo) as a
+                # document sequence rather than inline in the body.
+                if isinstance(doc.get("ops"), list):
+                    payload_ops.extend(doc["ops"])
+                if isinstance(doc.get("nsInfo"), list):
+                    payload_nsinfo.extend(doc["nsInfo"])
+        return (
+            command_doc,
+            payload_updates,
+            payload_deletes,
+            payload_ops,
+            payload_nsinfo,
+        )
+
+    @staticmethod
+    def _pop_alias(mapping: dict[str, Any], *keys: str) -> Any:
+        """Pop and return the value of the first matching key in ``mapping``."""
+        for key in keys:
+            if key in mapping:
+                return mapping.pop(key)
+        return None
+
     @_serialize
-    def handle_command(  # noqa: E501
-        self, msg: dict[str, Any]
-    ) -> tuple[int, dict[str, Any]]:
+    def handle_command(self, msg: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         """Dispatch a MongoDB ``$cmd`` message to NeoSQLite or GridFS handlers.
 
-        Parses ``body`` and ``payload`` sections from ``msg`` and handles
-        handshake commands (``ismaster``/``hello``), session and transaction
-        lifecycle commands, collection/index/search-index DDL, CRUD and
-        aggregation commands, GridFS operations, cursor commands
-        (``getMore``/``killCursors``), diagnostics, and maintenance commands,
-        falling back to ``db.command`` for unrecognized commands.
+        Parses ``body`` and ``payload`` sections from ``msg`` and dispatches
+        handshake, session/transaction lifecycle, DDL, CRUD, aggregation,
+        GridFS, cursor, diagnostic, and maintenance commands via dispatch
+        tables, falling back to ``db.command`` for unrecognized commands.
 
         Args:
             msg: Decoded ``OP_MSG`` (or adapted ``OP_QUERY``) message dict
@@ -1978,28 +2071,13 @@ class NeoSQLiteHandler:
                 dictionary.
         """
         request_id = msg["request_id"]
-        sections = msg["sections"]
-
-        command_doc = None
-        payload_updates = []
-        payload_deletes = []
-        payload_ops: list[dict[str, Any]] = []
-        payload_nsinfo: list[dict[str, Any]] = []
-        for section_type, doc in sections:
-            if section_type == "body":
-                command_doc = doc
-            elif section_type == "payload":
-                if isinstance(doc, dict):
-                    if "updates" in doc and isinstance(doc["updates"], list):
-                        payload_updates.extend(doc["updates"])
-                    if "deletes" in doc and isinstance(doc["deletes"], list):
-                        payload_deletes.extend(doc["deletes"])
-                    # bulkWrite ships ops (and sometimes nsInfo) as a
-                    # document sequence rather than inline in the body.
-                    if "ops" in doc and isinstance(doc["ops"], list):
-                        payload_ops.extend(doc["ops"])
-                    if "nsInfo" in doc and isinstance(doc["nsInfo"], list):
-                        payload_nsinfo.extend(doc["nsInfo"])
+        (
+            command_doc,
+            payload_updates,
+            payload_deletes,
+            payload_ops,
+            payload_nsinfo,
+        ) = self._extract_command_and_payloads(msg["sections"])
 
         if not command_doc:
             return request_id, {"ok": 0, "errmsg": "No command document"}
@@ -2007,97 +2085,10 @@ class NeoSQLiteHandler:
         db_name = command_doc.get("$db", "test")
         db = self.get_database(db_name)
 
-        for key in ["ismaster", "isMaster", "hello", "Hello"]:
+        for key, method_name in self._PRE_COMMAND_DISPATCH.items():
             if key in command_doc:
-                return request_id, {
-                    "ok": 1,
-                    "isWritablePrimary": True,
-                    "maxBsonObjectSize": MAX_BSON_DOCUMENT_SIZE,
-                    "maxMessageSizeBytes": MAX_MESSAGE_SIZE_BYTES,
-                    "maxWriteBatchSize": MAX_WRITE_BATCH_SIZE,
-                    "localTime": datetime.now(UTC),
-                    "logicalSessionTimeoutMinutes": DEFAULT_SESSION_TIMEOUT_MINUTES,
-                    "connectionId": 1,
-                    "minWireVersion": MIN_WIRE_VERSION,
-                    "maxWireVersion": MAX_WIRE_VERSION,
-                }
-
-        if "startSession" in command_doc:
-            self._expire_sessions()
-            session_id = f"session_{uuid.uuid4().hex}"
-            session = db.start_session()
-            session_key = (session_id, self._session_scope(db_name))
-            with self._sessions_lock:
-                self._sessions[session_key] = session
-                self._session_last_used[session_key] = time.monotonic()
-            return request_id, {
-                "ok": 1,
-                "session": {"id": {"$oid": session_id}},
-            }
-
-        if "commitTransaction" in command_doc:
-            lsid = command_doc.get("lsid")
-            tx_session_id = _extract_session_id(lsid) if lsid else None
-            if tx_session_id and self._finish_transaction(
-                tx_session_id, commit=True
-            ):
-                return request_id, {"ok": 1}
-            return request_id, {"ok": 0, "errmsg": "No session specified"}
-
-        if "abortTransaction" in command_doc:
-            lsid = command_doc.get("lsid")
-            tx_session_id = _extract_session_id(lsid) if lsid else None
-            if tx_session_id and self._finish_transaction(
-                tx_session_id, commit=False
-            ):
-                return request_id, {"ok": 1}
-            return request_id, {"ok": 0, "errmsg": "No session specified"}
-
-        if "endSessions" in command_doc:
-            session_ids = command_doc.get("endSessions", [])
-            if isinstance(session_ids, str):
-                session_ids = [session_ids]
-            to_close: list[tuple[tuple[str, str], Any, Connection | None]] = []
-            with self._sessions_lock:
-                for sid in session_ids:
-                    if isinstance(sid, dict):
-                        sid = _extract_session_id(sid)
-                    if isinstance(sid, bytes):
-                        sid = sid.hex()
-                    if sid:
-                        for sess_key in [
-                            existing
-                            for existing in self._sessions
-                            if existing[0] == sid
-                        ]:
-                            end_session = self._sessions.pop(sess_key, None)
-                            self._session_last_used.pop(sess_key, None)
-                            tx_conn = self._session_tx_conns.pop(sess_key, None)
-                            if end_session is not None or tx_conn is not None:
-                                to_close.append(
-                                    (sess_key, end_session, tx_conn)
-                                )
-                if to_close:
-                    self._tx_cond.notify_all()
-            for sess_key, end_session, tx_conn in to_close:
-                sid, scope = sess_key
-                lock = (
-                    self._lock_for_session(sid)
-                    if tx_conn is not None
-                    else self._lock_for(scope or "admin")
-                )
-                with lock:
-                    if end_session is not None:
-                        try:
-                            end_session.end_session()
-                        except Exception:
-                            pass
-                    if tx_conn is not None:
-                        try:
-                            tx_conn.close()
-                        except Exception:
-                            pass
-            return request_id, {"ok": 1}
+                handler_fn = getattr(self, method_name)
+                return handler_fn(request_id, command_doc, db, db_name)
 
         # Explicit cross-DB transaction rejection: a session (lsid) with
         # an open transaction may only operate on its own database.
@@ -2118,904 +2109,1080 @@ class NeoSQLiteHandler:
         db_name = cmd_copy.pop("$db", "test")
         db = self.get_database(db_name)
 
-        if "create" in cmd_copy:
-            coll_name = cmd_copy.pop("create")
+        ctx = _CommandContext(
+            request_id=request_id,
+            cmd_copy=cmd_copy,
+            command_doc=command_doc,
+            db=db,
+            db_name=db_name,
+            msg=msg,
+            payload_updates=payload_updates,
+            payload_deletes=payload_deletes,
+            payload_ops=payload_ops,
+            payload_nsinfo=payload_nsinfo,
+        )
+        for key, method_name in self._COMMAND_DISPATCH.items():
+            if key in cmd_copy:
+                handler_fn = getattr(self, method_name)
+                return handler_fn(ctx)
+
+        logger.debug(f"Calling db.command with: {cmd_copy}")
+        cmd_result = db.command(cmd_copy)
+        logger.debug(
+            f"NeoSQLite returned: {list(cmd_result.keys()) if isinstance(cmd_result, dict) else type(cmd_result)}"
+        )
+        return request_id, cmd_result
+
+    def _cmd_handshake(
+        self,
+        request_id: int,
+        command_doc: dict[str, Any],
+        db: Connection,
+        db_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Respond to MongoDB wire-protocol handshake commands."""
+        return request_id, {
+            "ok": 1,
+            "isWritablePrimary": True,
+            "maxBsonObjectSize": MAX_BSON_DOCUMENT_SIZE,
+            "maxMessageSizeBytes": MAX_MESSAGE_SIZE_BYTES,
+            "maxWriteBatchSize": MAX_WRITE_BATCH_SIZE,
+            "localTime": datetime.now(UTC),
+            "logicalSessionTimeoutMinutes": DEFAULT_SESSION_TIMEOUT_MINUTES,
+            "connectionId": 1,
+            "minWireVersion": MIN_WIRE_VERSION,
+            "maxWireVersion": MAX_WIRE_VERSION,
+        }
+
+    def _cmd_start_session(
+        self,
+        request_id: int,
+        command_doc: dict[str, Any],
+        db: Connection,
+        db_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``startSession`` and register the server-side session."""
+        self._expire_sessions()
+        session_id = f"session_{uuid.uuid4().hex}"
+        session = db.start_session()
+        session_key = (session_id, self._session_scope(db_name))
+        with self._sessions_lock:
+            self._sessions[session_key] = session
+            self._session_last_used[session_key] = time.monotonic()
+        return request_id, {
+            "ok": 1,
+            "session": {"id": {"$oid": session_id}},
+        }
+
+    def _cmd_commit_transaction(
+        self,
+        request_id: int,
+        command_doc: dict[str, Any],
+        db: Connection,
+        db_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``commitTransaction`` for a session."""
+        lsid = command_doc.get("lsid")
+        tx_session_id = _extract_session_id(lsid) if lsid else None
+        if tx_session_id and self._finish_transaction(
+            tx_session_id, commit=True
+        ):
+            return request_id, {"ok": 1}
+        return request_id, {"ok": 0, "errmsg": "No session specified"}
+
+    def _cmd_abort_transaction(
+        self,
+        request_id: int,
+        command_doc: dict[str, Any],
+        db: Connection,
+        db_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``abortTransaction`` for a session."""
+        lsid = command_doc.get("lsid")
+        tx_session_id = _extract_session_id(lsid) if lsid else None
+        if tx_session_id and self._finish_transaction(
+            tx_session_id, commit=False
+        ):
+            return request_id, {"ok": 1}
+        return request_id, {"ok": 0, "errmsg": "No session specified"}
+
+    def _cmd_end_sessions(
+        self,
+        request_id: int,
+        command_doc: dict[str, Any],
+        db: Connection,
+        db_name: str,
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``endSessions`` by closing matching idle and tx sessions."""
+        session_ids = command_doc.get("endSessions", [])
+        if isinstance(session_ids, str):
+            session_ids = [session_ids]
+        to_close: list[tuple[tuple[str, str], Any, Connection | None]] = []
+        with self._sessions_lock:
+            for sid in session_ids:
+                if isinstance(sid, dict):
+                    sid = _extract_session_id(sid)
+                if isinstance(sid, bytes):
+                    sid = sid.hex()
+                if sid:
+                    for sess_key in [
+                        existing
+                        for existing in self._sessions
+                        if existing[0] == sid
+                    ]:
+                        end_session = self._sessions.pop(sess_key, None)
+                        self._session_last_used.pop(sess_key, None)
+                        tx_conn = self._session_tx_conns.pop(sess_key, None)
+                        if end_session is not None or tx_conn is not None:
+                            to_close.append((sess_key, end_session, tx_conn))
+            if to_close:
+                self._tx_cond.notify_all()
+        for sess_key, end_session, tx_conn in to_close:
+            sid, scope = sess_key
+            lock = (
+                self._lock_for_session(sid)
+                if tx_conn is not None
+                else self._lock_for(scope or "admin")
+            )
+            with lock:
+                self._safe_end_session(end_session, f"endSessions {sid}")
+                self._safe_close_conn(tx_conn, f"endSessions tx {sid}")
+        return request_id, {"ok": 1}
+
+    def _cmd_create(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle the ``create`` collection command."""
+        coll_name = ctx.cmd_copy.pop("create")
+        try:
+            ctx.db.create_collection(coll_name)
+        except Exception as e:
+            if "already exists" not in str(e).lower():
+                raise
+            logger.debug(
+                f"Ignoring existing collection during create {coll_name!r}: {e}"
+            )
+        return ctx.request_id, {"ok": 1}
+
+    def _cmd_drop(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle the ``drop`` collection command, including GridFS tables."""
+        coll_name = ctx.cmd_copy.pop("drop")
+        if coll_name.startswith("sqlite_"):
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": f"Cannot drop internal table: {coll_name}",
+            }
+        if self._is_gridfs_collection(coll_name):
+            # Dotted names (fs.files) cannot be tables in NeoSQLite;
+            # drop the backing bucket instead, unless a regular
+            # collection owns <bucket>_files or <bucket>_chunks.
+            bucket_name = self._get_gridfs_bucket_name(coll_name)
+            if bucket_name is None:
+                return ctx.request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
             try:
-                db.create_collection(coll_name)
-            except Exception as e:
-                if "already exists" not in str(e).lower():
-                    raise
-            return request_id, {"ok": 1}
-
-        if "drop" in cmd_copy:
-            coll_name = cmd_copy.pop("drop")
-            if coll_name.startswith("sqlite_"):
-                return request_id, {
+                _sanitize_db_name(bucket_name)
+            except ValueError:
+                return ctx.request_id, {
                     "ok": 0,
-                    "errmsg": f"Cannot drop internal table: {coll_name}",
+                    "errmsg": f"Invalid bucket name: {bucket_name!r}",
                 }
-            if self._is_gridfs_collection(coll_name):
-                # Dotted names (fs.files) cannot be tables in NeoSQLite;
-                # drop the backing bucket instead, unless a regular
-                # collection owns <bucket>_files or <bucket>_chunks.
-                bucket_name = self._get_gridfs_bucket_name(coll_name)
-                if bucket_name is None:
-                    return request_id, {
-                        "ok": 0,
-                        "errmsg": "Invalid GridFS collection",
-                    }
-                try:
-                    _sanitize_db_name(bucket_name)
-                except ValueError:
-                    return request_id, {
-                        "ok": 0,
-                        "errmsg": f"Invalid bucket name: {bucket_name!r}",
-                    }
-                is_chunks = coll_name.endswith(".chunks")
-                target_table = (
-                    f"{bucket_name}_chunks"
-                    if is_chunks
-                    else f"{bucket_name}_files"
-                )
-                if is_regular_collection_table(
-                    db.db, target_table, is_chunks=is_chunks
-                ):
-                    return request_id, {
-                        "ok": 0,
-                        "errmsg": (
-                            f"Cannot drop {coll_name!r}: {target_table!r} is "
-                            "a regular collection"
-                        ),
-                    }
-                # Like real MongoDB, dropping one side leaves the other
-                # (possibly orphaned) alone. Sanitized above: no quotes
-                # possible, double-quoting keeps dashes valid.
-                db.db.execute(f'DROP TABLE IF EXISTS "{target_table}"')
-                try:
-                    db.db.commit()
-                except Exception:
-                    pass
-                return request_id, {"ok": 1}
-            self._close_cursors_for_namespace(db_name, coll_name)
-            db[coll_name].drop()
-            return request_id, {"ok": 1}
-
-        if "dropDatabase" in cmd_copy or "dropdatabase" in cmd_copy:
-            target_db = cmd_copy.pop("dropDatabase", None) or cmd_copy.pop(
-                "dropdatabase", None
+            is_chunks = coll_name.endswith(".chunks")
+            target_table = (
+                f"{bucket_name}_chunks" if is_chunks else f"{bucket_name}_files"
             )
-            dropped_name = (
-                db_name if target_db in (1, True, None, "") else str(target_db)
-            )
-            if self._mode == "single":
-                # Legacy limitation: one file backs every logical database,
-                # so dropping one drops all user tables. Prefer data_dir
-                # (multi-file) mode for real isolation.
-                self._change_stream_manager.invalidate(dropped_name)
-                self._close_cursors_for_namespace(dropped_name)
-                self.conn.drop_database()
-                with self._dict_lock:
-                    self.databases = OrderedDict([("admin", self.conn)])
-                    self._conns = OrderedDict([("admin", self.conn)])
-                    self._applied_wc.clear()
-            else:
-                try:
-                    _sanitize_db_name(dropped_name)
-                except ValueError:
-                    return request_id, {
-                        "ok": 0,
-                        "errmsg": f"Invalid database name: {dropped_name!r}",
-                    }
-                if dropped_name != db_name:
-                    with (
-                        self._lock_for(dropped_name),
-                        self._track_active_op(dropped_name),
-                    ):
-                        self._drop_file_db(dropped_name)
-                else:
-                    self._drop_file_db(dropped_name)
-            return request_id, {"dropped": dropped_name, "ok": 1}
-
-        if "renameCollection" in cmd_copy:
-            old_name = cmd_copy.pop("renameCollection")
-            to_name = cmd_copy.pop("to", None)
-            drop_target = bool(cmd_copy.pop("dropTarget", False))
-            if (
-                not isinstance(old_name, str)
-                or not to_name
-                or not isinstance(to_name, str)
+            if is_regular_collection_table(
+                ctx.db.db, target_table, is_chunks=is_chunks
             ):
-                return request_id, {
-                    "ok": 0,
-                    "errmsg": "renameCollection requires 'to' parameter",
-                }
-            if "." in old_name:
-                src_db, _, old_coll = old_name.partition(".")
-            else:
-                src_db, old_coll = db_name, old_name
-            if "." in to_name:
-                dst_db, _, new_coll = to_name.partition(".")
-            else:
-                dst_db, new_coll = db_name, to_name
-            if not src_db or not dst_db or not old_coll or not new_coll:
-                return request_id, {
-                    "ok": 0,
-                    "errmsg": "Invalid namespace for renameCollection",
-                }
-            if self._mode != "single" and src_db != dst_db:
-                return request_id, {
+                return ctx.request_id, {
                     "ok": 0,
                     "errmsg": (
-                        "Cannot rename collection across databases: "
-                        f"{src_db!r} != {dst_db!r}"
+                        f"Cannot drop {coll_name!r}: {target_table!r} is "
+                        "a regular collection"
                     ),
                 }
+            # Like real MongoDB, dropping one side leaves the other
+            # (possibly orphaned) alone. Sanitized above: no quotes
+            # possible, double-quoting keeps dashes valid.
+            ctx.db.db.execute(f'DROP TABLE IF EXISTS "{target_table}"')
             try:
-                _sanitize_db_name(src_db)
-            except ValueError as exc:
-                return request_id, {"ok": 0, "errmsg": str(exc)}
-            cross_db = src_db != db_name and self._mode != "single"
-            lock_ctx = (
-                self._lock_for(src_db) if cross_db else contextlib.nullcontext()
-            )
-            op_ctx = (
-                self._track_active_op(src_db)
-                if cross_db
-                else contextlib.nullcontext()
-            )
-            try:
-                with lock_ctx, op_ctx:
-                    target_db = self.get_database(src_db)
-                    existing_colls = set(target_db.list_collection_names())
-                    if (
-                        drop_target
-                        and new_coll != old_coll
-                        and old_coll in existing_colls
-                        and new_coll in existing_colls
-                    ):
-                        target_db[new_coll].drop()
-                    target_db[old_coll].rename(new_coll)
+                ctx.db.db.commit()
             except Exception as exc:
-                return request_id, {"ok": 0, "errmsg": str(exc)}
-            return request_id, {"ok": 1}
+                logger.debug(
+                    f"Ignoring commit error after GridFS drop of {target_table!r}: {exc}"
+                )
+            return ctx.request_id, {"ok": 1}
+        self._close_cursors_for_namespace(ctx.db_name, coll_name)
+        ctx.db[coll_name].drop()
+        return ctx.request_id, {"ok": 1}
 
-        if "dropIndexes" in cmd_copy:
-            coll_name = cmd_copy.pop("dropIndexes")
-            index = cmd_copy.pop("index", "*")
-            coll = db[coll_name]
-            num_before = len(coll.list_indexes())
-            if index == "*":
-                coll.drop_indexes()
-            else:
-                coll.drop_index(index)
-            return request_id, {
-                "ok": 1,
-                "nIndexesWas": num_before,
-            }
-
-        if "createIndexes" in cmd_copy or "createIndex" in cmd_copy:
-            if "createIndexes" in cmd_copy:
-                coll_name = cmd_copy.pop("createIndexes")
-                indexes_spec = cmd_copy.pop("indexes", [])
-            else:
-                coll_name = cmd_copy.pop("createIndex")
-                indexes_spec = [cmd_copy]
-
-            if _is_gridfs_collection(coll_name):
-                adapter, _bucket_name = create_gridfs_adapter(db.db, coll_name)
-                if adapter is None:
-                    return request_id, {
-                        "ok": 0,
-                        "errmsg": "Failed to create GridFS adapter",
-                    }
-                result = adapter.create_indexes()
-                return request_id, result
-
-            coll = db[coll_name]
-            num_before = len(coll.list_indexes())
-            created_names = []
-            for index_spec in indexes_spec:
-                key = index_spec.get("key", {})
-                name = index_spec.get("name")
-                unique = index_spec.get("unique", False)
-                sparse = index_spec.get("sparse", False)
-                fts = index_spec.get("fts", False)
-                tokenizer = index_spec.get("tokenizer")
-                expire_after = index_spec.get("expireAfterSeconds")
-
-                keys_list: Any
-                if isinstance(key, dict):
-                    # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
-                    # (or [("field", "text")] when fts=True so IndexManager honors fts & tokenizer).
-                    keys_list = [
-                        (k, "text" if fts else v) for k, v in key.items()
-                    ]
-                else:
-                    keys_list = key
-
-                idx_kwargs: dict[str, Any] = {
-                    "unique": unique,
-                    "sparse": sparse,
-                    "fts": fts,
-                    "tokenizer": tokenizer,
-                }
-                if name:
-                    idx_kwargs["name"] = name
-                if expire_after is not None:
-                    idx_kwargs["expireAfterSeconds"] = expire_after
-
-                idx_name = coll.create_index(keys_list, **idx_kwargs)
-                created_names.append(name or idx_name)
-            return request_id, {
-                "ok": 1,
-                "createdCollectionAutomatically": False,
-                "numIndexesBefore": num_before,
-                "numIndexesAfter": len(coll.list_indexes()),
-                "indexesCreated": [{"name": n} for n in created_names],
-            }
-
-        if "dropIndex" in cmd_copy:
-            coll_name = cmd_copy.pop("dropIndex")
-            index = cmd_copy.pop("index")
-            coll = db[coll_name]
-            num_before = len(coll.list_indexes())
-            coll.drop_index(index)
-            return request_id, {
-                "ok": 1,
-                "nIndexesWas": num_before,
-            }
-
-        if "createSearchIndexes" in cmd_copy or (
-            "createsearchindexes" in cmd_copy
-        ):
-            key = (
-                "createSearchIndexes"
-                if "createSearchIndexes" in cmd_copy
-                else "createsearchindexes"
-            )
-            coll_name = cmd_copy.pop(key)
-            specs = cmd_copy.pop("indexes", [])
-            coll = db[coll_name]
-            created = []
-            for spec in specs:
-                if not isinstance(spec, dict):
-                    continue
-                try:
-                    fields = _search_index_fields(spec)
-                except ValueError as exc:
-                    return request_id, {"ok": 0, "errmsg": str(exc)}
-                tokenizer = spec.get("tokenizer")
-                if not isinstance(tokenizer, str):
-                    tokenizer = None
-                for field in fields:
-                    coll.create_search_index(field, tokenizer=tokenizer)
-                    created.append({"name": spec.get("name", field)})
-            return request_id, {"ok": 1, "indexesCreated": created}
-
-        if "updateSearchIndex" in cmd_copy or "updatesearchindex" in cmd_copy:
-            key = (
-                "updateSearchIndex"
-                if "updateSearchIndex" in cmd_copy
-                else "updatesearchindex"
-            )
-            coll_name = cmd_copy.pop(key)
-            name = cmd_copy.get("name", "")
-            definition = cmd_copy.get("definition", {})
-            coll = db[coll_name]
+    def _cmd_drop_database(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``dropDatabase``."""
+        target_db = self._pop_alias(
+            ctx.cmd_copy, "dropDatabase", "dropdatabase"
+        )
+        dropped_name = (
+            ctx.db_name if target_db in (1, True, None, "") else str(target_db)
+        )
+        if self._mode == "single":
+            # Legacy limitation: one file backs every logical database,
+            # so dropping one drops all user tables. Prefer data_dir
+            # (multi-file) mode for real isolation.
+            self._change_stream_manager.invalidate(dropped_name)
+            self._close_cursors_for_namespace(dropped_name)
+            self.conn.drop_database()
+            with self._dict_lock:
+                self.databases = OrderedDict([("admin", self.conn)])
+                self._conns = OrderedDict([("admin", self.conn)])
+                self._applied_wc.clear()
+        else:
             try:
-                fields = _search_index_fields(
-                    {"name": name, "definition": definition}
-                )
+                _sanitize_db_name(dropped_name)
             except ValueError:
-                fields = [name] if name else []
-            if not fields:
-                return request_id, {
+                return ctx.request_id, {
                     "ok": 0,
-                    "errmsg": "updateSearchIndex requires a name or "
-                    "a definition with text fields",
+                    "errmsg": f"Invalid database name: {dropped_name!r}",
                 }
-            tokenizer = None
-            if isinstance(definition, dict):
-                tok = definition.get("tokenizer")
-                if isinstance(tok, str):
-                    tokenizer = tok
-            coll.update_search_index(fields[0], tokenizer=tokenizer)
-            return request_id, {"ok": 1}
+            if dropped_name != ctx.db_name:
+                with (
+                    self._lock_for(dropped_name),
+                    self._track_active_op(dropped_name),
+                ):
+                    self._drop_file_db(dropped_name)
+            else:
+                self._drop_file_db(dropped_name)
+        return ctx.request_id, {"dropped": dropped_name, "ok": 1}
 
-        if "dropSearchIndex" in cmd_copy or "dropsearchindex" in cmd_copy:
-            key = (
-                "dropSearchIndex"
-                if "dropSearchIndex" in cmd_copy
-                else "dropsearchindex"
+    def _cmd_rename_collection(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``renameCollection`` within the logical database."""
+        old_name = ctx.cmd_copy.pop("renameCollection")
+        to_name = ctx.cmd_copy.pop("to", None)
+        drop_target = bool(ctx.cmd_copy.pop("dropTarget", False))
+        if (
+            not isinstance(old_name, str)
+            or not to_name
+            or not isinstance(to_name, str)
+        ):
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": "renameCollection requires 'to' parameter",
+            }
+        if "." in old_name:
+            src_db, _, old_coll = old_name.partition(".")
+        else:
+            src_db, old_coll = ctx.db_name, old_name
+        if "." in to_name:
+            dst_db, _, new_coll = to_name.partition(".")
+        else:
+            dst_db, new_coll = ctx.db_name, to_name
+        if not src_db or not dst_db or not old_coll or not new_coll:
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": "Invalid namespace for renameCollection",
+            }
+        if self._mode != "single" and src_db != dst_db:
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": (
+                    "Cannot rename collection across databases: "
+                    f"{src_db!r} != {dst_db!r}"
+                ),
+            }
+        try:
+            _sanitize_db_name(src_db)
+        except ValueError as exc:
+            return ctx.request_id, {"ok": 0, "errmsg": str(exc)}
+        cross_db = src_db != ctx.db_name and self._mode != "single"
+        lock_ctx = (
+            self._lock_for(src_db) if cross_db else contextlib.nullcontext()
+        )
+        op_ctx = (
+            self._track_active_op(src_db)
+            if cross_db
+            else contextlib.nullcontext()
+        )
+        try:
+            with lock_ctx, op_ctx:
+                target_db = self.get_database(src_db)
+                existing_colls = set(target_db.list_collection_names())
+                if (
+                    drop_target
+                    and new_coll != old_coll
+                    and old_coll in existing_colls
+                    and new_coll in existing_colls
+                ):
+                    target_db[new_coll].drop()
+                target_db[old_coll].rename(new_coll)
+        except Exception as exc:
+            logger.debug(
+                f"renameCollection {old_name!r} -> {to_name!r} failed: {exc}"
             )
-            coll_name = cmd_copy.pop(key)
-            name = cmd_copy.get("name", "")
-            if not name:
-                return request_id, {
-                    "ok": 0,
-                    "errmsg": "dropSearchIndex requires 'name'",
-                }
-            db[coll_name].drop_search_index(name)
-            return request_id, {"ok": 1}
+            return ctx.request_id, {"ok": 0, "errmsg": str(exc)}
+        return ctx.request_id, {"ok": 1}
 
-        if "delete" in cmd_copy:
-            coll_name = cmd_copy.pop("delete")
-            if self._is_gridfs_collection(coll_name):
-                if "deletes" not in cmd_copy and payload_deletes:
-                    cmd_copy["deletes"] = payload_deletes
-                return self._handle_gridfs_delete(
-                    request_id, cmd_copy, db, coll_name
+    def _cmd_drop_indexes(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``dropIndexes``."""
+        coll_name = ctx.cmd_copy.pop("dropIndexes")
+        index = ctx.cmd_copy.pop("index", "*")
+        coll = ctx.db[coll_name]
+        num_before = len(coll.list_indexes())
+        if index == "*":
+            coll.drop_indexes()
+        else:
+            coll.drop_index(index)
+        return ctx.request_id, {
+            "ok": 1,
+            "nIndexesWas": num_before,
+        }
+
+    def _cmd_create_indexes(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``createIndexes`` and legacy ``createIndex``."""
+        if "createIndexes" in ctx.cmd_copy:
+            coll_name = ctx.cmd_copy.pop("createIndexes")
+            indexes_spec = ctx.cmd_copy.pop("indexes", [])
+        else:
+            coll_name = ctx.cmd_copy.pop("createIndex")
+            indexes_spec = [ctx.cmd_copy]
+
+        if _is_gridfs_collection(coll_name):
+            adapter, _bucket_name = create_gridfs_adapter(ctx.db.db, coll_name)
+            if adapter is None:
+                return ctx.request_id, {
+                    "ok": 0,
+                    "errmsg": "Failed to create GridFS adapter",
+                }
+            return ctx.request_id, adapter.create_indexes()
+
+        coll = ctx.db[coll_name]
+        num_before = len(coll.list_indexes())
+        created_names = []
+        for index_spec in indexes_spec:
+            key = index_spec.get("key", {})
+            name = index_spec.get("name")
+            unique = index_spec.get("unique", False)
+            sparse = index_spec.get("sparse", False)
+            fts = index_spec.get("fts", False)
+            tokenizer = index_spec.get("tokenizer")
+            expire_after = index_spec.get("expireAfterSeconds")
+
+            keys_list: Any
+            if isinstance(key, dict):
+                # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
+                # (or [("field", "text")] when fts=True so IndexManager honors fts & tokenizer).
+                keys_list = [(k, "text" if fts else v) for k, v in key.items()]
+            else:
+                keys_list = key
+
+            idx_kwargs: dict[str, Any] = {
+                "unique": unique,
+                "sparse": sparse,
+                "fts": fts,
+                "tokenizer": tokenizer,
+            }
+            if name:
+                idx_kwargs["name"] = name
+            if expire_after is not None:
+                idx_kwargs["expireAfterSeconds"] = expire_after
+
+            idx_name = coll.create_index(keys_list, **idx_kwargs)
+            created_names.append(name or idx_name)
+        return ctx.request_id, {
+            "ok": 1,
+            "createdCollectionAutomatically": False,
+            "numIndexesBefore": num_before,
+            "numIndexesAfter": len(coll.list_indexes()),
+            "indexesCreated": [{"name": n} for n in created_names],
+        }
+
+    def _cmd_drop_index(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``dropIndex``."""
+        coll_name = ctx.cmd_copy.pop("dropIndex")
+        index = ctx.cmd_copy.pop("index")
+        coll = ctx.db[coll_name]
+        num_before = len(coll.list_indexes())
+        coll.drop_index(index)
+        return ctx.request_id, {
+            "ok": 1,
+            "nIndexesWas": num_before,
+        }
+
+    def _cmd_create_search_indexes(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``createSearchIndexes``."""
+        coll_name = self._pop_alias(
+            ctx.cmd_copy, "createSearchIndexes", "createsearchindexes"
+        )
+        specs = ctx.cmd_copy.pop("indexes", [])
+        coll = ctx.db[coll_name]
+        created = []
+        for spec in specs:
+            if not isinstance(spec, dict):
+                continue
+            try:
+                fields = _search_index_fields(spec)
+            except ValueError as exc:
+                return ctx.request_id, {"ok": 0, "errmsg": str(exc)}
+            tokenizer = spec.get("tokenizer")
+            if not isinstance(tokenizer, str):
+                tokenizer = None
+            for field in fields:
+                coll.create_search_index(field, tokenizer=tokenizer)
+                created.append({"name": spec.get("name", field)})
+        return ctx.request_id, {"ok": 1, "indexesCreated": created}
+
+    def _cmd_update_search_index(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``updateSearchIndex``."""
+        coll_name = self._pop_alias(
+            ctx.cmd_copy, "updateSearchIndex", "updatesearchindex"
+        )
+        name = ctx.cmd_copy.get("name", "")
+        definition = ctx.cmd_copy.get("definition", {})
+        coll = ctx.db[coll_name]
+        try:
+            fields = _search_index_fields(
+                {"name": name, "definition": definition}
+            )
+        except ValueError:
+            fields = [name] if name else []
+        if not fields:
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": "updateSearchIndex requires a name or "
+                "a definition with text fields",
+            }
+        tokenizer = None
+        if isinstance(definition, dict):
+            tok = definition.get("tokenizer")
+            if isinstance(tok, str):
+                tokenizer = tok
+        coll.update_search_index(fields[0], tokenizer=tokenizer)
+        return ctx.request_id, {"ok": 1}
+
+    def _cmd_drop_search_index(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``dropSearchIndex``."""
+        coll_name = self._pop_alias(
+            ctx.cmd_copy, "dropSearchIndex", "dropsearchindex"
+        )
+        name = ctx.cmd_copy.get("name", "")
+        if not name:
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": "dropSearchIndex requires 'name'",
+            }
+        ctx.db[coll_name].drop_search_index(name)
+        return ctx.request_id, {"ok": 1}
+
+    def _cmd_delete(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``delete`` for regular and GridFS collections."""
+        coll_name = ctx.cmd_copy.pop("delete")
+        if self._is_gridfs_collection(coll_name):
+            if "deletes" not in ctx.cmd_copy and ctx.payload_deletes:
+                ctx.cmd_copy["deletes"] = ctx.payload_deletes
+            return self._handle_gridfs_delete(
+                ctx.request_id, ctx.cmd_copy, ctx.db, coll_name
+            )
+        ctx.cmd_copy["delete"] = coll_name
+        if "deletes" not in ctx.cmd_copy and ctx.payload_deletes:
+            ctx.cmd_copy["deletes"] = ctx.payload_deletes
+        return self._handle_delete(
+            ctx.request_id, ctx.cmd_copy, ctx.db, ctx.db_name
+        )
+
+    def _cmd_bulk_write(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle the MongoDB 8+ ``bulkWrite`` command."""
+        if "ops" not in ctx.cmd_copy and ctx.payload_ops:
+            ctx.cmd_copy["ops"] = ctx.payload_ops
+        if "nsInfo" not in ctx.cmd_copy and ctx.payload_nsinfo:
+            ctx.cmd_copy["nsInfo"] = ctx.payload_nsinfo
+        return self._handle_bulk_write(
+            ctx.request_id, ctx.cmd_copy, ctx.command_doc
+        )
+
+    def _cmd_upload(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle custom GridFS ``upload`` commands."""
+        return self._handle_gridfs_upload(ctx.request_id, ctx.cmd_copy, ctx.db)
+
+    def _cmd_open_download_stream(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle custom GridFS ``openDownloadStream`` commands."""
+        file_id = ctx.cmd_copy.get("openDownloadStream")
+        if isinstance(file_id, str):
+            from neosqlite.objectid import ObjectId
+
+            file_id = ObjectId(file_id)
+        ctx.cmd_copy["fileId"] = file_id
+        return self._handle_gridfs_download(
+            ctx.request_id, ctx.cmd_copy, ctx.db
+        )
+
+    def _cmd_find_and_modify(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``findAndModify`` delete, replace, and update requests."""
+        coll_name = ctx.cmd_copy.pop("findAndModify")
+        query = self._convert_objectids(ctx.cmd_copy.pop("query", {}))
+        update_doc = ctx.cmd_copy.pop("update", None)
+        remove = ctx.cmd_copy.pop("remove", False)
+        new_doc = ctx.cmd_copy.pop("new", False)
+        fields = ctx.cmd_copy.pop("fields", None)
+        sort_val = ctx.cmd_copy.pop("sort", None)
+        upsert = ctx.cmd_copy.pop("upsert", False)
+        array_filters = self._convert_objectids(
+            ctx.cmd_copy.pop("arrayFilters", None)
+        )
+
+        sort_tuples = None
+        if isinstance(sort_val, dict):
+            sort_tuples = list(sort_val.items())
+        elif isinstance(sort_val, list):
+            sort_tuples = sort_val
+
+        db, session_to_use = self._resolve_db_and_session(
+            ctx.command_doc, ctx.db, ctx.db_name
+        )
+        coll = db[coll_name]
+        self._apply_write_concern(
+            db, ctx.db_name, ctx.cmd_copy.get("writeConcern")
+        )
+
+        if remove:
+            try:
+                doc = coll.find_one_and_delete(
+                    query,
+                    projection=fields,
+                    sort=sort_tuples,
+                    session=session_to_use,
                 )
-            cmd_copy["delete"] = coll_name
-            if "deletes" not in cmd_copy and payload_deletes:
-                cmd_copy["deletes"] = payload_deletes
-            return self._handle_delete(request_id, cmd_copy, db, db_name)
+            except Exception as exc:
+                logger.debug(f"findAndModify delete failed: {exc}")
+                err = _bulk_write_error(exc, 0)
+                return ctx.request_id, {
+                    "ok": 0,
+                    "code": err["code"],
+                    "errmsg": err["errmsg"],
+                }
+            return ctx.request_id, {"ok": 1, "value": doc}
 
-        if "bulkWrite" in cmd_copy:
-            if "ops" not in cmd_copy and payload_ops:
-                cmd_copy["ops"] = payload_ops
-            if "nsInfo" not in cmd_copy and payload_nsinfo:
-                cmd_copy["nsInfo"] = payload_nsinfo
-            return self._handle_bulk_write(request_id, cmd_copy, command_doc)
+        if update_doc is None:
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": "findAndModify requires 'update' or 'remove'",
+            }
 
-        if "upload" in cmd_copy:
-            return self._handle_gridfs_upload(request_id, cmd_copy, db)
+        update_doc = self._convert_objectids(update_doc)
+        is_replace = not any(k.startswith("$") for k in update_doc.keys())
+        try:
+            if is_replace:
+                doc = coll.find_one_and_replace(
+                    query,
+                    update_doc,
+                    projection=fields,
+                    sort=sort_tuples,
+                    upsert=upsert,
+                    return_document=new_doc,
+                    session=session_to_use,
+                )
+            else:
+                doc = coll.find_one_and_update(
+                    query,
+                    update_doc,
+                    projection=fields,
+                    sort=sort_tuples,
+                    upsert=upsert,
+                    return_document=new_doc,
+                    array_filters=array_filters,
+                    session=session_to_use,
+                )
+        except Exception as exc:
+            logger.debug(f"findAndModify update failed: {exc}")
+            err = _bulk_write_error(exc, 0)
+            return ctx.request_id, {
+                "ok": 0,
+                "code": err["code"],
+                "errmsg": err["errmsg"],
+            }
+        return ctx.request_id, {"ok": 1, "value": doc}
 
-        if "openDownloadStream" in cmd_copy:
-            file_id = cmd_copy.get("openDownloadStream")
-            if isinstance(file_id, str):
-                from neosqlite.objectid import ObjectId
+    def _cmd_update(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``update`` for regular and GridFS collections."""
+        coll_name = ctx.cmd_copy.pop("update")
+        updates = ctx.cmd_copy.pop("updates", []) or ctx.payload_updates
 
-                file_id = ObjectId(file_id)
-            cmd_copy["fileId"] = file_id
-            return self._handle_gridfs_download(request_id, cmd_copy, db)
+        if self._is_gridfs_collection(coll_name):
+            adapter, _bucket_name = create_gridfs_adapter(ctx.db.db, coll_name)
+            if adapter is None:
+                return ctx.request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid GridFS collection",
+                }
+            total_n = 0
+            total_n_modified = 0
+            for update in updates:
+                q = self._convert_objectids(update.get("q", {}))
+                u = self._convert_objectids(update.get("u", {}))
+                file_id = q.get("_id")
+                if file_id is not None:
+                    res = adapter.handle_update(file_id, u)
+                    total_n += res.get("n", 0)
+                    total_n_modified += res.get("nModified", 0)
+            return ctx.request_id, {
+                "ok": 1,
+                "n": total_n,
+                "nModified": total_n_modified,
+            }
 
-        if "findAndModify" in cmd_copy:
-            coll_name = cmd_copy.pop("findAndModify")
-            query = cmd_copy.pop("query", {})
-            query = self._convert_objectids(query)
-            update_doc = cmd_copy.pop("update", None)
-            remove = cmd_copy.pop("remove", False)
-            new_doc = cmd_copy.pop("new", False)
-            fields = cmd_copy.pop("fields", None)
-            sort_val = cmd_copy.pop("sort", None)
-            upsert = cmd_copy.pop("upsert", False)
-            array_filters = self._convert_objectids(
-                cmd_copy.pop("arrayFilters", None)
-            )
+        db, session_to_use = self._resolve_db_and_session(
+            ctx.command_doc, ctx.db, ctx.db_name
+        )
+        coll = db[coll_name]
+        self._apply_write_concern(
+            db, ctx.db_name, ctx.cmd_copy.get("writeConcern")
+        )
+        ordered = ctx.cmd_copy.get("ordered", True)
+        matched = 0
+        modified = 0
+        upserted: list[dict[str, Any]] = []
+        write_errors: list[dict[str, Any]] = []
 
-            sort_tuples = None
-            if isinstance(sort_val, dict):
-                sort_tuples = list(sort_val.items())
-            elif isinstance(sort_val, list):
-                sort_tuples = sort_val
+        for idx, update in enumerate(updates):
+            q = self._convert_objectids(update.get("q", {}))
+            u = self._convert_objectids(update.get("u", {}))
+            multi = update.get("multi", False)
+            upsert = update.get("upsert", False)
+            array_filters = self._convert_objectids(update.get("arrayFilters"))
 
-            db, session_to_use = self._resolve_db_and_session(
-                command_doc, db, db_name
-            )
-            coll = db[coll_name]
-            self._apply_write_concern(db, db_name, cmd_copy.get("writeConcern"))
-
-            if remove:
-                try:
-                    doc = coll.find_one_and_delete(
-                        query,
-                        projection=fields,
-                        sort=sort_tuples,
+            # Change events are captured trigger-side (see changestream
+            # module), so no per-operation fan-out is needed here. This
+            # also covers bulk writes, which never passed through here.
+            try:
+                is_replace = not any(k.startswith("$") for k in u.keys())
+                if is_replace:
+                    upd_result = coll.replace_one(
+                        q, u, upsert=upsert, session=session_to_use
+                    )
+                elif multi:
+                    upd_result = coll.update_many(
+                        q,
+                        u,
+                        upsert=upsert,
+                        array_filters=array_filters,
                         session=session_to_use,
                     )
-                except Exception as exc:
-                    err = _bulk_write_error(exc, 0)
-                    return request_id, {
-                        "ok": 0,
-                        "code": err["code"],
-                        "errmsg": err["errmsg"],
-                    }
-                return request_id, {"ok": 1, "value": doc}
-            elif update_doc is not None:
-                update_doc = self._convert_objectids(update_doc)
-                is_replace = not any(
-                    k.startswith("$") for k in update_doc.keys()
-                )
-                try:
-                    if is_replace:
-                        doc = coll.find_one_and_replace(
-                            query,
-                            update_doc,
-                            projection=fields,
-                            sort=sort_tuples,
-                            upsert=upsert,
-                            return_document=new_doc,
-                            session=session_to_use,
-                        )
-                    else:
-                        doc = coll.find_one_and_update(
-                            query,
-                            update_doc,
-                            projection=fields,
-                            sort=sort_tuples,
-                            upsert=upsert,
-                            return_document=new_doc,
-                            array_filters=array_filters,
-                            session=session_to_use,
-                        )
-                except Exception as exc:
-                    err = _bulk_write_error(exc, 0)
-                    return request_id, {
-                        "ok": 0,
-                        "code": err["code"],
-                        "errmsg": err["errmsg"],
-                    }
-                return request_id, {"ok": 1, "value": doc}
-            else:
-                return request_id, {
-                    "ok": 0,
-                    "errmsg": "findAndModify requires 'update' or 'remove'",
-                }
-
-        if "update" in cmd_copy:
-            coll_name = cmd_copy.pop("update")
-            updates = cmd_copy.pop("updates", []) or payload_updates
-
-            if self._is_gridfs_collection(coll_name):
-                adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
-                if adapter is None:
-                    return request_id, {
-                        "ok": 0,
-                        "errmsg": "Invalid GridFS collection",
-                    }
-                total_n = 0
-                total_n_modified = 0
-                for update in updates:
-                    q = self._convert_objectids(update.get("q", {}))
-                    u = self._convert_objectids(update.get("u", {}))
-                    file_id = q.get("_id")
-                    if file_id is not None:
-                        res = adapter.handle_update(file_id, u)
-                        total_n += res.get("n", 0)
-                        total_n_modified += res.get("nModified", 0)
-                return request_id, {
-                    "ok": 1,
-                    "n": total_n,
-                    "nModified": total_n_modified,
-                }
-
-            db, session_to_use = self._resolve_db_and_session(
-                command_doc, db, db_name
-            )
-            coll = db[coll_name]
-            self._apply_write_concern(db, db_name, cmd_copy.get("writeConcern"))
-            ordered = cmd_copy.get("ordered", True)
-            matched = 0
-            modified = 0
-            upserted: list[dict[str, Any]] = []
-            write_errors: list[dict[str, Any]] = []
-
-            for idx, update in enumerate(updates):
-                q = update.get("q", {})
-                u = update.get("u", {})
-                q = self._convert_objectids(q)
-                u = self._convert_objectids(u)
-                multi = update.get("multi", False)
-                upsert = update.get("upsert", False)
-                array_filters = self._convert_objectids(
-                    update.get("arrayFilters")
-                )
-
-                # Change events are captured trigger-side (see changestream
-                # module), so no per-operation fan-out is needed here. This
-                # also covers bulk writes, which never passed through here.
-                try:
-                    is_replace = not any(k.startswith("$") for k in u.keys())
-                    if is_replace:
-                        upd_result = coll.replace_one(
-                            q, u, upsert=upsert, session=session_to_use
-                        )
-                    elif multi:
-                        upd_result = coll.update_many(
-                            q,
-                            u,
-                            upsert=upsert,
-                            array_filters=array_filters,
-                            session=session_to_use,
-                        )
-                    else:
-                        upd_result = coll.update_one(
-                            q,
-                            u,
-                            upsert=upsert,
-                            array_filters=array_filters,
-                            session=session_to_use,
-                        )
-                except Exception as exc:
-                    write_errors.append(_bulk_write_error(exc, idx))
-                    if ordered:
-                        break
-                    continue
-                matched += upd_result.matched_count
-                modified += upd_result.modified_count
-                if upd_result.upserted_id is not None:
-                    # Wire n counts an upserted doc as matched (real
-                    # MongoDB reports n:1 for an upsert-insert).
-                    matched += 1
-                    upserted.append(
-                        {"index": idx, "_id": upd_result.upserted_id}
+                else:
+                    upd_result = coll.update_one(
+                        q,
+                        u,
+                        upsert=upsert,
+                        array_filters=array_filters,
+                        session=session_to_use,
                     )
-            response: dict[str, Any] = {
-                "ok": 1,
-                "n": matched,
-                "nModified": modified,
-            }
-            if upserted:
-                response["upserted"] = upserted
-            if write_errors:
-                response["writeErrors"] = write_errors
-            return request_id, response
+            except Exception as exc:
+                logger.debug(f"Update op {idx} failed: {exc}")
+                write_errors.append(_bulk_write_error(exc, idx))
+                if ordered:
+                    break
+                continue
+            matched += upd_result.matched_count
+            modified += upd_result.modified_count
+            if upd_result.upserted_id is not None:
+                # Wire n counts an upserted doc as matched (real
+                # MongoDB reports n:1 for an upsert-insert).
+                matched += 1
+                upserted.append({"index": idx, "_id": upd_result.upserted_id})
 
-        if "find" in cmd_copy:
-            coll_name = cmd_copy.pop("find")
-            filter_query = cmd_copy.pop("filter", {})
-            filter_query = self._convert_objectids(filter_query)
-            projection = cmd_copy.pop("projection", None)
+        response: dict[str, Any] = {
+            "ok": 1,
+            "n": matched,
+            "nModified": modified,
+        }
+        if upserted:
+            response["upserted"] = upserted
+        if write_errors:
+            response["writeErrors"] = write_errors
+        return ctx.request_id, response
 
-            if self._is_gridfs_collection(coll_name):
-                cmd_copy["filter"] = filter_query
-                return self._handle_gridfs_find(
-                    request_id,
-                    cmd_copy,
-                    db,
-                    coll_name,
-                    db_name,
-                    owner=msg.get("_conn_id"),
-                )
+    def _cmd_find(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``find`` queries with sorting, paging, and cursor state."""
+        coll_name = ctx.cmd_copy.pop("find")
+        filter_query = self._convert_objectids(ctx.cmd_copy.pop("filter", {}))
+        projection = ctx.cmd_copy.pop("projection", None)
 
-            db, session_to_use = self._resolve_db_and_session(
-                command_doc, db, db_name
+        if self._is_gridfs_collection(coll_name):
+            ctx.cmd_copy["filter"] = filter_query
+            return self._handle_gridfs_find(
+                ctx.request_id,
+                ctx.cmd_copy,
+                ctx.db,
+                coll_name,
+                ctx.db_name,
+                owner=ctx.msg.get("_conn_id"),
             )
 
-            try:
-                collection_exists = coll_name in db.list_collection_names()
-            except Exception:
-                collection_exists = False
+        db, session_to_use = self._resolve_db_and_session(
+            ctx.command_doc, ctx.db, ctx.db_name
+        )
 
-            if not collection_exists:
-                return request_id, {
-                    "ok": 1,
-                    "cursor": {
-                        "id": Int64(0),
-                        "ns": f"{db_name}.{coll_name}",
-                        "firstBatch": [],
-                    },
-                }
+        try:
+            collection_exists = coll_name in db.list_collection_names()
+        except Exception as exc:
+            logger.debug(
+                f"Failed checking existence of {coll_name!r} in find: {exc}"
+            )
+            collection_exists = False
 
-            coll = db[coll_name]
-            cursor = (
-                coll.find(filter_query, projection, session=session_to_use)
-                if projection
-                else coll.find(filter_query, session=session_to_use)
-            )
-            if "sort" in cmd_copy:
-                cursor = cursor.sort(list(cmd_copy["sort"].items()))
-            if "limit" in cmd_copy:
-                cursor = cursor.limit(cmd_copy["limit"])
-            if "skip" in cmd_copy:
-                cursor = cursor.skip(cmd_copy["skip"])
-            if "hint" in cmd_copy:
-                hint_val = cmd_copy["hint"]
-                if isinstance(hint_val, str):
-                    cursor = cursor.hint(hint_val)
-                elif isinstance(hint_val, list):
-                    cursor = cursor.hint(hint_val)
-            if "min" in cmd_copy:
-                min_val = self._convert_objectids(cmd_copy["min"])
-                if isinstance(min_val, dict):
-                    cursor = cursor.min(list(min_val.items()))
-                elif isinstance(min_val, list):
-                    cursor = cursor.min(min_val)
-            if "max" in cmd_copy:
-                max_val = self._convert_objectids(cmd_copy["max"])
-                if isinstance(max_val, dict):
-                    cursor = cursor.max(list(max_val.items()))
-                elif isinstance(max_val, list):
-                    cursor = cursor.max(max_val)
-            first, cursor_id = self._split_first_batch(
-                cursor,
-                self._first_batch_size(cmd_copy),
-                f"{db_name}.{coll_name}",
-                db_name,
-                owner=msg.get("_conn_id"),
-            )
-            return request_id, {
+        if not collection_exists:
+            return ctx.request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": Int64(cursor_id),
-                    "ns": f"{db_name}.{coll_name}",
-                    "firstBatch": first,
+                    "id": Int64(0),
+                    "ns": f"{ctx.db_name}.{coll_name}",
+                    "firstBatch": [],
                 },
             }
 
-        if "count" in cmd_copy:
-            try:
-                coll_name = cmd_copy.pop("count")
-                query = self._convert_objectids(cmd_copy.pop("query", {}) or {})
-                limit = cmd_copy.pop("limit", None)
-                skip = cmd_copy.pop("skip", None)
-                if self._is_gridfs_collection(coll_name):
-                    adapter, _bucket = create_gridfs_adapter(db.db, coll_name)
-                    if adapter is None:
-                        return request_id, {
-                            "ok": 0,
-                            "errmsg": "Invalid GridFS collection",
-                        }
-                    if coll_name.endswith(".chunks"):
-                        docs = adapter.handle_chunks_find(query)
-                    else:
-                        docs = adapter.handle_find(query)
-                    if skip:
-                        docs = docs[int(skip) :]
-                    if limit:
-                        docs = docs[: int(limit)]
-                    return request_id, {"ok": 1, "n": len(docs)}
-                db, session_to_use = self._resolve_db_and_session(
-                    command_doc, db, db_name
-                )
-                coll = db[coll_name]
-                if limit is None and skip is None:
-                    count = coll.count_documents(query, session=session_to_use)
+        coll = db[coll_name]
+        cursor = (
+            coll.find(filter_query, projection, session=session_to_use)
+            if projection
+            else coll.find(filter_query, session=session_to_use)
+        )
+        if "sort" in ctx.cmd_copy:
+            cursor = cursor.sort(list(ctx.cmd_copy["sort"].items()))
+        if "limit" in ctx.cmd_copy:
+            cursor = cursor.limit(ctx.cmd_copy["limit"])
+        if "skip" in ctx.cmd_copy:
+            cursor = cursor.skip(ctx.cmd_copy["skip"])
+        if "hint" in ctx.cmd_copy:
+            hint_val = ctx.cmd_copy["hint"]
+            if isinstance(hint_val, (str, list)):
+                cursor = cursor.hint(hint_val)
+        if "min" in ctx.cmd_copy:
+            min_val = self._convert_objectids(ctx.cmd_copy["min"])
+            if isinstance(min_val, dict):
+                cursor = cursor.min(list(min_val.items()))
+            elif isinstance(min_val, list):
+                cursor = cursor.min(min_val)
+        if "max" in ctx.cmd_copy:
+            max_val = self._convert_objectids(ctx.cmd_copy["max"])
+            if isinstance(max_val, dict):
+                cursor = cursor.max(list(max_val.items()))
+            elif isinstance(max_val, list):
+                cursor = cursor.max(max_val)
+        first, cursor_id = self._split_first_batch(
+            cursor,
+            self._first_batch_size(ctx.cmd_copy),
+            f"{ctx.db_name}.{coll_name}",
+            ctx.db_name,
+            owner=ctx.msg.get("_conn_id"),
+        )
+        return ctx.request_id, {
+            "ok": 1,
+            "cursor": {
+                "id": Int64(cursor_id),
+                "ns": f"{ctx.db_name}.{coll_name}",
+                "firstBatch": first,
+            },
+        }
+
+    def _cmd_count(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle legacy ``count`` commands."""
+        try:
+            coll_name = ctx.cmd_copy.pop("count")
+            query = self._convert_objectids(ctx.cmd_copy.pop("query", {}) or {})
+            limit = ctx.cmd_copy.pop("limit", None)
+            skip = ctx.cmd_copy.pop("skip", None)
+            if self._is_gridfs_collection(coll_name):
+                adapter, _bucket = create_gridfs_adapter(ctx.db.db, coll_name)
+                if adapter is None:
+                    return ctx.request_id, {
+                        "ok": 0,
+                        "errmsg": "Invalid GridFS collection",
+                    }
+                if coll_name.endswith(".chunks"):
+                    docs = adapter.handle_chunks_find(query)
                 else:
-                    # count with limit/skip (legacy count command): apply
-                    # pagination over the match set.
-                    cursor = coll.find(query, session=session_to_use)
-                    if skip:
-                        cursor = cursor.skip(int(skip))
-                    if limit:
-                        cursor = cursor.limit(int(limit))
-                    count = len(list(cursor))
-                return request_id, {"ok": 1, "n": count}
-            except Exception as e:
-                logger.error(f"Error in count: {e}")
-                return request_id, {"ok": 0, "errmsg": str(e)}
+                    docs = adapter.handle_find(query)
+                if skip:
+                    docs = docs[int(skip) :]
+                if limit:
+                    docs = docs[: int(limit)]
+                return ctx.request_id, {"ok": 1, "n": len(docs)}
+            db, session_to_use = self._resolve_db_and_session(
+                ctx.command_doc, ctx.db, ctx.db_name
+            )
+            coll = db[coll_name]
+            if limit is None and skip is None:
+                count = coll.count_documents(query, session=session_to_use)
+            else:
+                # count with limit/skip (legacy count command): apply
+                # pagination over the match set.
+                cursor = coll.find(query, session=session_to_use)
+                if skip:
+                    cursor = cursor.skip(int(skip))
+                if limit:
+                    cursor = cursor.limit(int(limit))
+                count = len(list(cursor))
+            return ctx.request_id, {"ok": 1, "n": count}
+        except Exception as e:
+            logger.error(f"Error in count: {e}")
+            return ctx.request_id, {"ok": 0, "errmsg": str(e)}
 
-        if "distinct" in cmd_copy:
-            try:
-                coll_name = cmd_copy.pop("distinct")
-                key = cmd_copy.pop("key", "")
-                query = self._convert_objectids(cmd_copy.pop("query", {}) or {})
-                if self._is_gridfs_collection(coll_name):
-                    return self._handle_gridfs_distinct(
-                        request_id, coll_name, key, query, db
-                    )
-                db, session_to_use = self._resolve_db_and_session(
-                    command_doc, db, db_name
+    def _cmd_distinct(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``distinct`` commands."""
+        try:
+            coll_name = ctx.cmd_copy.pop("distinct")
+            key = ctx.cmd_copy.pop("key", "")
+            query = self._convert_objectids(ctx.cmd_copy.pop("query", {}) or {})
+            if self._is_gridfs_collection(coll_name):
+                return self._handle_gridfs_distinct(
+                    ctx.request_id, coll_name, key, query, ctx.db
                 )
-                coll = db[coll_name]
-                values = coll.distinct(key, query, session=session_to_use)
-                return request_id, {"ok": 1, "values": values}
-            except Exception as e:
-                logger.error(f"Error in distinct: {e}")
-                return request_id, {"ok": 0, "errmsg": str(e)}
+            db, session_to_use = self._resolve_db_and_session(
+                ctx.command_doc, ctx.db, ctx.db_name
+            )
+            coll = db[coll_name]
+            values = coll.distinct(key, query, session=session_to_use)
+            return ctx.request_id, {"ok": 1, "values": values}
+        except Exception as e:
+            logger.error(f"Error in distinct: {e}")
+            return ctx.request_id, {"ok": 0, "errmsg": str(e)}
 
-        if "aggregate" in cmd_copy:
-            try:
-                coll_name = cmd_copy.pop("aggregate")
-                if self._is_gridfs_collection(coll_name):
-                    return self._handle_gridfs_aggregate(
-                        request_id,
-                        cmd_copy,
-                        db,
-                        coll_name,
-                        db_name,
-                        owner=msg.get("_conn_id"),
-                    )
-                pipeline = self._convert_objectids(
-                    cmd_copy.pop("pipeline", []) or []
+    def _cmd_aggregate(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``aggregate``, search-index listing, and change streams."""
+        try:
+            coll_name = ctx.cmd_copy.pop("aggregate")
+            if self._is_gridfs_collection(coll_name):
+                return self._handle_gridfs_aggregate(
+                    ctx.request_id,
+                    ctx.cmd_copy,
+                    ctx.db,
+                    coll_name,
+                    ctx.db_name,
+                    owner=ctx.msg.get("_conn_id"),
+                )
+            pipeline = self._convert_objectids(
+                ctx.cmd_copy.pop("pipeline", []) or []
+            )
+
+            # Atlas-style search index listing arrives as an
+            # aggregation stage; serve it from NeoSQLite FTS metadata.
+            if any(
+                isinstance(stage, dict) and "$listSearchIndexes" in stage
+                for stage in pipeline
+            ):
+                return self._handle_list_search_indexes(
+                    ctx.request_id, ctx.db, coll_name, ctx.db_name
                 )
 
-                # Atlas-style search index listing arrives as an
-                # aggregation stage; serve it from NeoSQLite FTS metadata.
-                if any(
-                    isinstance(stage, dict) and "$listSearchIndexes" in stage
-                    for stage in pipeline
-                ):
-                    return self._handle_list_search_indexes(
-                        request_id, db, coll_name, db_name
-                    )
-
-                # Check if this is a change stream request
-                if is_change_stream_pipeline(pipeline):
-                    return self._handle_change_stream(
-                        request_id,
-                        coll_name,
-                        pipeline,
-                        db,
-                        db_name,
-                        owner=msg.get("_conn_id"),
-                    )
-
-                db, session_to_use = self._resolve_db_and_session(
-                    command_doc, db, db_name
+            if is_change_stream_pipeline(pipeline):
+                return self._handle_change_stream(
+                    ctx.request_id,
+                    coll_name,
+                    pipeline,
+                    ctx.db,
+                    ctx.db_name,
+                    owner=ctx.msg.get("_conn_id"),
                 )
-                coll = db[coll_name]
-                cursor = coll.aggregate(pipeline, session=session_to_use)  # type: ignore[assignment]
-                first, cursor_id = self._split_first_batch(
-                    cursor,
-                    self._first_batch_size(cmd_copy),
-                    f"{db_name}.{coll_name}",
-                    db_name,
-                    owner=msg.get("_conn_id"),
-                )
-                return request_id, {
-                    "ok": 1,
-                    "cursor": {
-                        "id": Int64(cursor_id),
-                        "ns": f"{db_name}.{coll_name}",
-                        "firstBatch": first,
-                    },
-                }
-            except Exception as e:
-                logger.error(f"Error in aggregate: {e}")
-                return request_id, {"ok": 0, "errmsg": str(e)}
 
-        if "listCollections" in cmd_copy:
-            return self._handle_list_collections(request_id, db, db_name)
+            db, session_to_use = self._resolve_db_and_session(
+                ctx.command_doc, ctx.db, ctx.db_name
+            )
+            coll = db[coll_name]
+            cursor = coll.aggregate(pipeline, session=session_to_use)  # type: ignore[assignment]
+            first, cursor_id = self._split_first_batch(
+                cursor,
+                self._first_batch_size(ctx.cmd_copy),
+                f"{ctx.db_name}.{coll_name}",
+                ctx.db_name,
+                owner=ctx.msg.get("_conn_id"),
+            )
+            return ctx.request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": Int64(cursor_id),
+                    "ns": f"{ctx.db_name}.{coll_name}",
+                    "firstBatch": first,
+                },
+            }
+        except Exception as e:
+            logger.error(f"Error in aggregate: {e}")
+            return ctx.request_id, {"ok": 0, "errmsg": str(e)}
 
-        if "serverStatus" in cmd_copy or "buildInfo" in cmd_copy:
-            return self._handle_server_status(request_id, db)
+    def _cmd_list_collections(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``listCollections``."""
+        return self._handle_list_collections(
+            ctx.request_id, ctx.db, ctx.db_name
+        )
 
-        if "dbStats" in cmd_copy or "dbstats" in cmd_copy:
-            db_stats_result = db.command({"dbStats": 1})
-            return request_id, db_stats_result
+    def _cmd_server_status(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``serverStatus`` and ``buildInfo``."""
+        return self._handle_server_status(ctx.request_id, ctx.db)
 
-        if "collStats" in cmd_copy or "collstats" in cmd_copy:
-            coll_name = cmd_copy.get("collStats") or cmd_copy.get("collstats")
-            coll_stats_result = db.command({"collstats": coll_name})
-            return request_id, coll_stats_result
+    def _cmd_db_stats(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``dbStats``."""
+        return ctx.request_id, ctx.db.command({"dbStats": 1})
 
-        if "listDatabases" in cmd_copy or "listdatabases" in cmd_copy:
-            if self._mode == "single":
-                if self.db_path == ":memory:":
+    def _cmd_coll_stats(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``collStats``."""
+        coll_name = ctx.cmd_copy.get("collStats") or ctx.cmd_copy.get(
+            "collstats"
+        )
+        return ctx.request_id, ctx.db.command({"collstats": coll_name})
+
+    def _cmd_list_databases(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``listDatabases`` in single-file, memory, and files modes."""
+        if self._mode == "single":
+            if self.db_path == ":memory:":
+                size_on_disk = 0
+                is_empty = True
+            else:
+                try:
+                    size_on_disk = os.path.getsize(self.db_path)
+                    is_empty = False
+                except OSError:
                     size_on_disk = 0
                     is_empty = True
-                else:
-                    try:
-                        size_on_disk = os.path.getsize(self.db_path)
-                        is_empty = False
-                    except OSError:
-                        size_on_disk = 0
-                        is_empty = True
-                total_size = size_on_disk
-                with self._dict_lock:
-                    single_db_names = list(self.databases)
-                databases_info = [
-                    {
-                        "name": name,
-                        "sizeOnDisk": size_on_disk,
-                        "empty": is_empty,
-                    }
-                    for name in single_db_names
-                ]
-                return request_id, {
-                    "ok": 1,
-                    "databases": databases_info,
-                    "totalSize": total_size,
-                }
-            databases_info = []
-            total_size = 0
             with self._dict_lock:
-                names: set[str] = set(self._conns.keys())
-            if self._mode == "files" and self._data_dir is not None:
-                try:
-                    for entry in os.listdir(self._data_dir):
-                        if entry.endswith(".db"):
-                            stem = entry[:-3]
-                            try:
-                                names.add(_sanitize_db_name(stem))
-                            except ValueError:
-                                continue
-                except OSError:
-                    pass
-            for name in sorted(names):
-                try:
-                    _sanitize_db_name(name)
-                except ValueError:
-                    continue
-                with self._lock_for(name), self._track_active_op(name):
-                    try:
-                        db_conn = self.get_database(name)
-                    except ValueError:
-                        continue
-                    try:
-                        empty = not db_conn.list_collection_names()
-                    except Exception:
-                        empty = True
-                    if self._mode == "memory":
-                        size_on_disk = 0
-                    else:
-                        try:
-                            size_on_disk = os.path.getsize(self._db_file(name))
-                        except OSError:
-                            size_on_disk = 0
-                total_size += size_on_disk
-                databases_info.append(
-                    {
-                        "name": name,
-                        "sizeOnDisk": size_on_disk,
-                        "empty": empty,
-                    }
-                )
-            return request_id, {
+                single_db_names = list(self.databases)
+            databases_info = [
+                {
+                    "name": name,
+                    "sizeOnDisk": size_on_disk,
+                    "empty": is_empty,
+                }
+                for name in single_db_names
+            ]
+            return ctx.request_id, {
                 "ok": 1,
                 "databases": databases_info,
-                "totalSize": total_size,
+                "totalSize": size_on_disk,
             }
 
-        if "listIndexes" in cmd_copy or "listindexes" in cmd_copy:
-            coll_name = cmd_copy.get("listIndexes") or cmd_copy.get(
-                "listindexes"
-            )
-            return self._handle_list_indexes(request_id, db, coll_name, db_name)
-
-        if "listSearchIndexes" in cmd_copy or "listsearchindexes" in cmd_copy:
-            coll_name = cmd_copy.get("listSearchIndexes") or cmd_copy.get(
-                "listsearchindexes"
-            )
-            return self._handle_list_search_indexes(
-                request_id, db, coll_name, db_name
-            )
-
-        if "explain" in cmd_copy:
-            explain_value = cmd_copy.get("explain")
-            if isinstance(explain_value, dict):
-                inner_cmd = self._convert_objectids(dict(explain_value))
-                inner_cmd.pop("$db", None)
-
-                if "find" in inner_cmd:
-                    coll_name = inner_cmd.pop("find")
-                    filter_query = self._convert_objectids(
-                        inner_cmd.pop("filter", {})
+        databases_info = []
+        total_size = 0
+        with self._dict_lock:
+            names: set[str] = set(self._conns.keys())
+        if self._mode == "files" and self._data_dir is not None:
+            try:
+                for entry in os.listdir(self._data_dir):
+                    if entry.endswith(".db"):
+                        stem = entry[:-3]
+                        try:
+                            names.add(_sanitize_db_name(stem))
+                        except ValueError:
+                            continue
+            except OSError:
+                pass
+        for name in sorted(names):
+            try:
+                _sanitize_db_name(name)
+            except ValueError:
+                continue
+            with self._lock_for(name), self._track_active_op(name):
+                try:
+                    db_conn = self.get_database(name)
+                except ValueError:
+                    continue
+                try:
+                    empty = not db_conn.list_collection_names()
+                except Exception as exc:
+                    logger.debug(
+                        f"Failed checking collection list for db {name!r}: {exc}"
                     )
+                    empty = True
+                if self._mode == "memory":
+                    size_on_disk = 0
+                else:
+                    try:
+                        size_on_disk = os.path.getsize(self._db_file(name))
+                    except OSError:
+                        size_on_disk = 0
+            total_size += size_on_disk
+            databases_info.append(
+                {
+                    "name": name,
+                    "sizeOnDisk": size_on_disk,
+                    "empty": empty,
+                }
+            )
+        return ctx.request_id, {
+            "ok": 1,
+            "databases": databases_info,
+            "totalSize": total_size,
+        }
 
-                    if self._is_gridfs_collection(coll_name):
-                        return request_id, {
-                            "ok": 1,
-                            "queryPlanner": {
-                                "plannerVersion": 1,
-                                "namespace": f"{db_name}.{coll_name}",
-                                "indexFilterSet": False,
-                                "parsedQuery": filter_query,
-                                "winningPlan": {"stage": "COLLSCAN"},
-                                "rejectedPlans": [],
-                            },
-                            "executionStats": {
-                                "executionSuccess": True,
-                                "nReturned": 0,
-                                "executionTimeMillis": 0,
-                                "totalKeysExamined": 0,
-                                "totalDocsExamined": 0,
-                            },
-                            "serverInfo": {
-                                "host": "localhost",
-                                "port": 27017,
-                                "version": "7.0.0",
-                                "gitVersion": "unknown",
-                            },
-                        }
+    def _cmd_list_indexes(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``listIndexes``."""
+        coll_name = ctx.cmd_copy.get("listIndexes") or ctx.cmd_copy.get(
+            "listindexes"
+        )
+        return self._handle_list_indexes(
+            ctx.request_id, ctx.db, coll_name, ctx.db_name
+        )
 
-                    coll = db[coll_name]
+    def _cmd_list_search_indexes(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``listSearchIndexes``."""
+        coll_name = ctx.cmd_copy.get("listSearchIndexes") or ctx.cmd_copy.get(
+            "listsearchindexes"
+        )
+        return self._handle_list_search_indexes(
+            ctx.request_id, ctx.db, coll_name, ctx.db_name
+        )
 
-                    cursor = coll.find(filter_query)
-                    explain_result = cursor.explain()
+    def _cmd_explain(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``explain`` commands."""
+        explain_value = ctx.cmd_copy.get("explain")
+        if isinstance(explain_value, dict):
+            inner_cmd = self._convert_objectids(dict(explain_value))
+            inner_cmd.pop("$db", None)
 
-                    return request_id, {
+            if "find" in inner_cmd:
+                coll_name = inner_cmd.pop("find")
+                filter_query = self._convert_objectids(
+                    inner_cmd.pop("filter", {})
+                )
+
+                if self._is_gridfs_collection(coll_name):
+                    return ctx.request_id, {
                         "ok": 1,
                         "queryPlanner": {
                             "plannerVersion": 1,
-                            "namespace": f"{db_name}.{coll_name}",
+                            "namespace": f"{ctx.db_name}.{coll_name}",
                             "indexFilterSet": False,
                             "parsedQuery": filter_query,
-                            "winningPlan": explain_result.get(
-                                "queryPlanner", {}
-                            ).get("winningPlan", []),
+                            "winningPlan": {"stage": "COLLSCAN"},
                             "rejectedPlans": [],
                         },
                         "executionStats": {
@@ -3033,164 +3200,194 @@ class NeoSQLiteHandler:
                         },
                     }
 
-                return request_id, {
+                cursor = ctx.db[coll_name].find(filter_query)
+                explain_result = cursor.explain()
+
+                return ctx.request_id, {
                     "ok": 1,
                     "queryPlanner": {
-                        "winningPlan": {"stage": "EOF"},
+                        "plannerVersion": 1,
+                        "namespace": f"{ctx.db_name}.{coll_name}",
+                        "indexFilterSet": False,
+                        "parsedQuery": filter_query,
+                        "winningPlan": explain_result.get(
+                            "queryPlanner", {}
+                        ).get("winningPlan", []),
+                        "rejectedPlans": [],
+                    },
+                    "executionStats": {
+                        "executionSuccess": True,
+                        "nReturned": 0,
+                        "executionTimeMillis": 0,
+                        "totalKeysExamined": 0,
+                        "totalDocsExamined": 0,
+                    },
+                    "serverInfo": {
+                        "host": "localhost",
+                        "port": 27017,
+                        "version": "7.0.0",
+                        "gitVersion": "unknown",
                     },
                 }
 
-        if "getMore" in cmd_copy:
-            raw_id = cmd_copy.get("getMore")
-            cursor_id = int(raw_id) if raw_id is not None else 0
-            coll_name = cmd_copy.get("collection")
-            expected_ns = f"{db_name}.{coll_name}"
-            stream = self._change_stream_manager.get_stream(cursor_id)
-            if stream:
-                if (
-                    stream.db_name != db_name
-                    or stream.collection_name != coll_name
-                ):
-                    return request_id, {
-                        "ok": 0,
-                        "code": 43,
-                        "codeName": "CursorNotFound",
-                        "errmsg": (
-                            f"cursor id {cursor_id} not found for "
-                            f"namespace {expected_ns}"
-                        ),
-                    }
-                next_batch, token = self._change_stream_manager.pull_stream(
-                    stream, self._getmore_batch_size(cmd_copy)
-                )
-                return request_id, {
-                    "ok": 1,
-                    "cursor": {
-                        "id": Int64(stream._id),
-                        "ns": expected_ns,
-                        "nextBatch": next_batch,
-                        "postBatchResumeToken": token,
-                    },
-                }
-            data = self._getmore_data(
-                cursor_id,
-                self._getmore_batch_size(cmd_copy),
-                expected_ns=expected_ns,
-            )
-            if data is not None:
-                if data.get("_ns_mismatch"):
-                    return request_id, {
-                        "ok": 0,
-                        "code": 43,
-                        "codeName": "CursorNotFound",
-                        "errmsg": (
-                            f"cursor id {cursor_id} not found for "
-                            f"namespace {expected_ns}"
-                        ),
-                    }
-                return request_id, {"ok": 1, "cursor": data}
-            else:
-                return request_id, {
-                    "ok": 1,
-                    "cursor": {
-                        "id": Int64(0),
-                        "ns": expected_ns,
-                        "nextBatch": [],
-                    },
-                }
+        return ctx.request_id, {
+            "ok": 1,
+            "queryPlanner": {
+                "winningPlan": {"stage": "EOF"},
+            },
+        }
 
-        if "killCursors" in cmd_copy:
-            kill_coll = cmd_copy.get("killCursors")
-            kill_expected_ns = (
-                f"{db_name}.{kill_coll}"
-                if isinstance(kill_coll, str) and kill_coll
-                else None
-            )
-            cursor_ids = cmd_copy.get("cursors", [])
-            cursors_killed = []
-            cursors_not_found = []
-            data_ids = []
-            for raw_cid in cursor_ids:
-                try:
-                    cid = int(raw_cid)
-                except (TypeError, ValueError):
-                    cursors_not_found.append(raw_cid)
-                    continue
-                stream = self._change_stream_manager.get_stream(cid)
-                if stream is not None:
-                    if stream.db_name == db_name and (
-                        not isinstance(kill_coll, str)
-                        or not kill_coll
-                        or stream.collection_name == kill_coll
-                    ):
-                        self._change_stream_manager.close_stream(cid)
-                        cursors_killed.append(cid)
-                    else:
-                        cursors_not_found.append(cid)
-                else:
-                    data_ids.append(cid)
-            if data_ids:
-                killed_ids = self._kill_data_cursors(
-                    data_ids, expected_ns=kill_expected_ns
-                )
-                killed_set = set(killed_ids)
-                for cid in data_ids:
-                    if cid in killed_set:
-                        cursors_killed.append(cid)
-                    else:
-                        cursors_not_found.append(cid)
-            return request_id, {
-                "ok": 1,
-                "cursorsKilled": cursors_killed,
-                "cursorsNotFound": cursors_not_found,
-                "cursorsAlive": [],
-            }
-
-        if "vacuum" in cmd_copy:
-            return request_id, db.command("vacuum")
-
-        if "compact" in cmd_copy or "compactcollection" in cmd_copy:
-            coll_name = cmd_copy.pop("compact", None) or cmd_copy.pop(
-                "compactcollection", None
-            )
-            kwargs: dict[str, Any] = {}
-            if "dryRun" in cmd_copy:
-                kwargs["dryRun"] = bool(cmd_copy.pop("dryRun"))
-            if "freeSpaceTargetMB" in cmd_copy:
-                kwargs["freeSpaceTargetMB"] = cmd_copy.pop("freeSpaceTargetMB")
-            try:
-                result = db.command("compact", coll_name, **kwargs)
-            except Exception as exc:
-                return request_id, {"ok": 0, "errmsg": str(exc)}
-            return request_id, result
-
-        if "validate" in cmd_copy:
-            coll_name = cmd_copy.pop("validate")
-            if not isinstance(coll_name, str) or not coll_name:
-                return request_id, {
+    def _cmd_get_more(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``getMore`` for change streams and paginated data cursors."""
+        raw_id = ctx.cmd_copy.get("getMore")
+        cursor_id = int(raw_id) if raw_id is not None else 0
+        coll_name = ctx.cmd_copy.get("collection")
+        expected_ns = f"{ctx.db_name}.{coll_name}"
+        stream = self._change_stream_manager.get_stream(cursor_id)
+        if stream:
+            if (
+                stream.db_name != ctx.db_name
+                or stream.collection_name != coll_name
+            ):
+                return ctx.request_id, {
                     "ok": 0,
-                    "errmsg": "validate requires a collection name",
+                    "code": 43,
+                    "codeName": "CursorNotFound",
+                    "errmsg": (
+                        f"cursor id {cursor_id} not found for "
+                        f"namespace {expected_ns}"
+                    ),
                 }
-            return request_id, db.command("validate", coll_name)
-
-        if "reindex" in cmd_copy or "reIndex" in cmd_copy:
-            coll_name = cmd_copy.pop("reindex", None) or cmd_copy.pop(
-                "reIndex", None
+            next_batch, token = self._change_stream_manager.pull_stream(
+                stream, self._getmore_batch_size(ctx.cmd_copy)
             )
-            if isinstance(coll_name, int) and coll_name == 1:
-                # {"reIndex": 1} shape: rebuild every index in the file.
-                coll_name = None
-            try:
-                return request_id, db.command("reindex", coll_name)
-            except Exception as exc:
-                return request_id, {"ok": 0, "errmsg": str(exc)}
-
-        logger.info(f"Calling db.command with: {cmd_copy}")
-        cmd_result = db.command(cmd_copy)
-        logger.info(
-            f"NeoSQLite returned: {list(cmd_result.keys()) if isinstance(cmd_result, dict) else type(cmd_result)}"
+            return ctx.request_id, {
+                "ok": 1,
+                "cursor": {
+                    "id": Int64(stream._id),
+                    "ns": expected_ns,
+                    "nextBatch": next_batch,
+                    "postBatchResumeToken": token,
+                },
+            }
+        data = self._getmore_data(
+            cursor_id,
+            self._getmore_batch_size(ctx.cmd_copy),
+            expected_ns=expected_ns,
         )
-        return request_id, cmd_result
+        if data is not None:
+            if data.get("_ns_mismatch"):
+                return ctx.request_id, {
+                    "ok": 0,
+                    "code": 43,
+                    "codeName": "CursorNotFound",
+                    "errmsg": (
+                        f"cursor id {cursor_id} not found for "
+                        f"namespace {expected_ns}"
+                    ),
+                }
+            return ctx.request_id, {"ok": 1, "cursor": data}
+        return ctx.request_id, {
+            "ok": 1,
+            "cursor": {
+                "id": Int64(0),
+                "ns": expected_ns,
+                "nextBatch": [],
+            },
+        }
+
+    def _cmd_kill_cursors(
+        self, ctx: _CommandContext
+    ) -> tuple[int, dict[str, Any]]:
+        """Handle ``killCursors`` for change streams and data cursors."""
+        kill_coll = ctx.cmd_copy.get("killCursors")
+        kill_expected_ns = (
+            f"{ctx.db_name}.{kill_coll}"
+            if isinstance(kill_coll, str) and kill_coll
+            else None
+        )
+        cursor_ids = ctx.cmd_copy.get("cursors", [])
+        cursors_killed = []
+        cursors_not_found = []
+        data_ids = []
+        for raw_cid in cursor_ids:
+            try:
+                cid = int(raw_cid)
+            except (TypeError, ValueError):
+                cursors_not_found.append(raw_cid)
+                continue
+            stream = self._change_stream_manager.get_stream(cid)
+            if stream is not None:
+                if stream.db_name == ctx.db_name and (
+                    not isinstance(kill_coll, str)
+                    or not kill_coll
+                    or stream.collection_name == kill_coll
+                ):
+                    self._change_stream_manager.close_stream(cid)
+                    cursors_killed.append(cid)
+                else:
+                    cursors_not_found.append(cid)
+            else:
+                data_ids.append(cid)
+        if data_ids:
+            killed_ids = self._kill_data_cursors(
+                data_ids, expected_ns=kill_expected_ns
+            )
+            killed_set = set(killed_ids)
+            for cid in data_ids:
+                if cid in killed_set:
+                    cursors_killed.append(cid)
+                else:
+                    cursors_not_found.append(cid)
+        return ctx.request_id, {
+            "ok": 1,
+            "cursorsKilled": cursors_killed,
+            "cursorsNotFound": cursors_not_found,
+            "cursorsAlive": [],
+        }
+
+    def _cmd_vacuum(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``vacuum`` maintenance commands."""
+        return ctx.request_id, ctx.db.command("vacuum")
+
+    def _cmd_compact(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``compact`` / ``compactcollection`` commands."""
+        coll_name = self._pop_alias(
+            ctx.cmd_copy, "compact", "compactcollection"
+        )
+        kwargs: dict[str, Any] = {}
+        if "dryRun" in ctx.cmd_copy:
+            kwargs["dryRun"] = bool(ctx.cmd_copy.pop("dryRun"))
+        if "freeSpaceTargetMB" in ctx.cmd_copy:
+            kwargs["freeSpaceTargetMB"] = ctx.cmd_copy.pop("freeSpaceTargetMB")
+        try:
+            result = ctx.db.command("compact", coll_name, **kwargs)
+        except Exception as exc:
+            logger.debug(f"compact failed for {coll_name!r}: {exc}")
+            return ctx.request_id, {"ok": 0, "errmsg": str(exc)}
+        return ctx.request_id, result
+
+    def _cmd_validate(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``validate`` collection commands."""
+        coll_name = ctx.cmd_copy.pop("validate")
+        if not isinstance(coll_name, str) or not coll_name:
+            return ctx.request_id, {
+                "ok": 0,
+                "errmsg": "validate requires a collection name",
+            }
+        return ctx.request_id, ctx.db.command("validate", coll_name)
+
+    def _cmd_reindex(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
+        """Handle ``reindex`` / ``reIndex`` commands."""
+        coll_name = self._pop_alias(ctx.cmd_copy, "reindex", "reIndex")
+        if isinstance(coll_name, int) and coll_name == 1:
+            # {"reIndex": 1} shape: rebuild every index in the file.
+            coll_name = None
+        try:
+            return ctx.request_id, ctx.db.command("reindex", coll_name)
+        except Exception as exc:
+            logger.debug(f"reindex failed for {coll_name!r}: {exc}")
+            return ctx.request_id, {"ok": 0, "errmsg": str(exc)}
 
     def _build_gridfs_cursor_response(
         self,
@@ -3287,29 +3484,22 @@ class NeoSQLiteHandler:
                 sort_list = (
                     list(sort.items()) if isinstance(sort, dict) else sort
                 )
+
                 # Stable multi-key sort honoring per-key direction
                 # (1/-1). Missing keys sort Mongo-style: first in
                 # ascending, last in descending.
+                def _nested_get(doc: dict[str, Any], key: str) -> Any:
+                    """Resolve a dotted key path inside ``doc``."""
+                    cur: Any = doc
+                    for part in key.split("."):
+                        if isinstance(cur, dict) and part in cur:
+                            cur = cur[part]
+                        else:
+                            return None
+                    return cur
+
                 for sort_key, direction in reversed(list(sort_list)):
                     reverse = int(direction) < 0
-
-                    def _nested_get(doc, key):
-                        """Resolve a dotted key path inside ``doc``.
-
-                        Args:
-                            doc: Document dictionary to traverse.
-                            key: Dotted field path string.
-
-                        Returns:
-                            Any: Value at ``key``, or ``None`` if absent.
-                        """
-                        cur = doc
-                        for part in key.split("."):
-                            if isinstance(cur, dict) and part in cur:
-                                cur = cur[part]
-                            else:
-                                return None
-                        return cur
 
                     present = [
                         doc
@@ -3325,37 +3515,14 @@ class NeoSQLiteHandler:
                     def sort_value(
                         doc: dict[str, Any], key: str = sort_key
                     ) -> Any:
-                        """Extract the sort key value at dotted ``key``.
-
-                        Args:
-                            doc: Document dictionary to inspect.
-                            key: Dotted field path to extract.
-
-                        Returns:
-                            Any: Field value, or ``None`` if missing.
-                        """
-                        # Support dotted sort keys (e.g. "metadata.order")
-                        cur: Any = doc
-                        for part in key.split("."):
-                            if isinstance(cur, dict) and part in cur:
-                                cur = cur[part]
-                            else:
-                                return None
-                        return cur
+                        """Extract the sort key value at dotted ``key``."""
+                        return _nested_get(doc, key)
 
                     def sort_value_str(
                         doc: dict[str, Any], key: str = sort_key
                     ) -> str:
-                        """Return string sort key for mixed-type fallback.
-
-                        Args:
-                            doc: Document dictionary to inspect.
-                            key: Dotted field path to extract.
-
-                        Returns:
-                            str: String representation, or ``""`` if ``None``.
-                        """
-                        v = sort_value(doc, key)
+                        """Return string sort key for mixed-type fallback."""
+                        v = _nested_get(doc, key)
                         return str(v) if v is not None else ""
 
                     try:
@@ -3381,8 +3548,7 @@ class NeoSQLiteHandler:
                 paginate=paginate,
             )
         except Exception as e:
-            logger.error(f"GridFS find error: {e}")
-            traceback.print_exc()
+            logger.debug(f"GridFS find error: {e}", exc_info=True)
             return request_id, {"ok": 0, "errmsg": str(e)}
 
     def _handle_gridfs_aggregate(
@@ -3536,8 +3702,7 @@ class NeoSQLiteHandler:
                 owner=owner,
             )
         except Exception as e:
-            logger.error(f"GridFS aggregate error: {e}")
-            traceback.print_exc()
+            logger.debug(f"GridFS aggregate error: {e}", exc_info=True)
             return request_id, {"ok": 0, "errmsg": str(e)}
 
     def _handle_gridfs_chunks_find(
@@ -3827,14 +3992,10 @@ class NeoSQLiteHandler:
                     acted = True
                 finally:
                     if tx_conn is not None:
-                        try:
-                            sess.end_session()
-                        except Exception:
-                            pass
-                        try:
-                            tx_conn.close()
-                        except Exception:
-                            pass
+                        self._safe_end_session(sess, f"finish tx {session_id}")
+                        self._safe_close_conn(
+                            tx_conn, f"finish tx {session_id}"
+                        )
                         with self._sessions_lock:
                             if self._session_tx_conns.get(key) is tx_conn:
                                 self._session_tx_conns.pop(key, None)
@@ -4008,6 +4169,7 @@ class NeoSQLiteHandler:
                 else:
                     raise ValueError(f"Unsupported bulkWrite op: {sorted(op)}")
             except Exception as exc:
+                logger.debug(f"bulkWrite op {idx} failed: {exc}")
                 err = _bulk_write_error(exc, idx)
                 n_errors += 1
                 results.append(
@@ -4102,6 +4264,7 @@ class NeoSQLiteHandler:
                     else coll.delete_one(q, session=session_to_use)
                 )
             except Exception as exc:
+                logger.debug(f"Delete op {idx} failed: {exc}")
                 write_errors.append(_bulk_write_error(exc, idx))
                 if ordered:
                     break
@@ -4302,7 +4465,10 @@ class NeoSQLiteHandler:
 
         try:
             coll = db[coll_name]
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                f"Collection {coll_name!r} unavailable for listIndexes: {exc}"
+            )
             return request_id, {
                 "ok": 1,
                 "cursor": {
@@ -4372,7 +4538,10 @@ class NeoSQLiteHandler:
 
         try:
             coll = db[coll_name]
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                f"Collection {coll_name!r} unavailable for listIndexes: {exc}"
+            )
             return request_id, {
                 "ok": 1,
                 "cursor": {

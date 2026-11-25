@@ -142,13 +142,13 @@ def test_malformed_document_error():
             collection.query_engine.helpers._internal_insert("not a dict")
 
 
-def test_build_update_clause_unsupported_operator():
-    """Test _build_update_clause with an unsupported operator."""
+def test_build_set_data_expression_unsupported_operator():
+    """Test _build_set_data_expression with an unsupported operator."""
     with neosqlite.Connection(":memory:") as db:
         collection = db["test"]
 
         # Test with an unsupported operator
-        result = collection.query_engine.helpers._build_update_clause(
+        result = collection.query_engine.helpers._build_set_data_expression(
             {"$unsupported": {"field": "value"}}
         )
         # Should fall back to None
@@ -421,83 +421,80 @@ def test_query_helper_initialization():
 
 
 def test_can_use_sql_updates_with_binary_values():
-    """Test _can_use_sql_updates with binary values."""
+    """Test _build_set_data_expression and _internal_update with binary values."""
     with Connection(":memory:") as conn:
         collection = conn.test_collection
         helper = QueryHelper(collection)
 
-        # Test with binary values in update spec
-        update_spec = {"$set": {"data": b"binary_data"}}
-        result = helper._can_use_sql_updates(update_spec, 1)
-        # Should return True because raw bytes don't have encode_for_storage attribute
-        # The check is for isinstance(val, bytes) AND hasattr(val, "encode_for_storage")
-        # Since raw bytes don't have encode_for_storage, this check fails
-        assert result
+        # Test with raw bytes and Binary objects in $set
+        assert (
+            helper._build_set_data_expression(
+                {"$set": {"data": b"binary_data"}}
+            )
+            is not None
+        )
+        assert (
+            helper._build_set_data_expression(
+                {"$set": {"data": Binary(b"binary_data")}}
+            )
+            is not None
+        )
 
-        # Test with Binary objects in SQL-supported update spec ($set)
-        update_spec = {"$set": {"data": Binary(b"binary_data")}}
-        result = helper._can_use_sql_updates(update_spec, 1)
-        assert result
-
-        # Test with Binary objects in comparison/pull ops (must fall back to Python)
+        # Binary in comparison/pull ops declines SQL and falls back to Python
         for unsupported_op in (
             {"$min": {"data": Binary(b"binary_data")}},
             {"$pull": {"arr": Binary(b"binary_data")}},
         ):
-            assert not helper._can_use_sql_updates(unsupported_op, 1)
+            assert helper._build_set_data_expression(unsupported_op) is None
 
-        # Test with regular values (should return True)
-        update_spec = {"$set": {"data": "regular_data"}}
-        result = helper._can_use_sql_updates(update_spec, 1)
-        # Should return True for supported operations
-        assert result
+        # Regular values and $rename are compiled by the unified SQL builder
+        assert (
+            helper._build_set_data_expression(
+                {"$set": {"data": "regular_data"}}
+            )
+            is not None
+        )
+        assert (
+            helper._build_set_data_expression({"$rename": {"old": "new"}})
+            is not None
+        )
 
-        # The unified builder handles $rename in SQL, but the legacy path is
-        # lossy for self-renames and missing sources; it must defer to Python.
-        update_spec = {"$rename": {"old": "new"}}
-        result = helper._can_use_sql_updates(update_spec, 1)
-        assert not result
-
-        # Test with upsert (doc_id = 0, should return False)
-        update_spec = {"$set": {"data": "regular_data"}}
-        result = helper._can_use_sql_updates(update_spec, 0)
-        # Should return False for upserts
-        assert not result
+        # Upsert (doc_id = 0) routes directly to Python fallback
+        doc, modified = helper._internal_update(
+            0, {"$set": {"data": "regular_data"}}, {"_id": 1}
+        )
+        assert modified is True
+        assert doc["data"] == "regular_data"
 
 
-def test_build_sql_update_clause_with_binary():
-    """Test _build_sql_update_clause with binary data."""
+def test_build_sql_update_with_binary_operands():
+    """Test _build_set_data_expression with raw bytes and Binary payloads."""
     with Connection(":memory:") as conn:
         collection = conn.test_collection
         helper = QueryHelper(collection)
 
         # Test $set with raw bytes
-        clauses, params = helper._build_sql_update_clause(
-            "$set", {"field": b"test_data"}
+        res = helper._build_set_data_expression(
+            {"$set": {"field": b"test_data"}}
         )
-        assert len(clauses) == 1
-        assert clauses[0] == "'$.field', json(?)"
+        assert res is not None
+        data_expr, params, _ = res
+        assert "$.field" in data_expr
         assert len(params) == 1
-        # Params should contain JSON serialized binary data
 
         # Test $set with Binary object
         binary_obj = Binary(b"binary_data", Binary.FUNCTION_SUBTYPE)
-        clauses, params = helper._build_sql_update_clause(
-            "$set", {"field": binary_obj}
-        )
-        assert len(clauses) == 1
-        assert clauses[0] == "'$.field', json(?)"
+        res = helper._build_set_data_expression({"$set": {"field": binary_obj}})
+        assert res is not None
+        data_expr, params, _ = res
+        assert "$.field" in data_expr
         assert len(params) == 1
-        # Params should contain JSON serialized binary data
 
-        # Test $inc with binary (should be handled as regular value)
-        clauses, params = helper._build_sql_update_clause(
-            "$inc", {"field": b"10"}
+        # Test $inc with binary declines SQL so Python validates operand
+        assert (
+            helper._build_set_data_expression({"$inc": {"field": b"10"}})
+            is None
         )
-        # For $inc, binary should be treated as regular value
-        assert len(clauses) == 1
-        assert "'$.field'" in clauses[0]
-        assert len(params) == 1
 
 
 def test_internal_insert_with_complex_document():
@@ -748,26 +745,24 @@ def test_internal_replace_and_delete():
         assert retrieved is None
 
 
-def test_build_update_clause_edge_cases():
-    """Test _build_update_clause with edge cases."""
+def test_build_set_data_expression_edge_cases():
+    """Test _build_set_data_expression with edge cases."""
     with Connection(":memory:") as conn:
         collection = conn.test_collection
         helper = QueryHelper(collection)
 
-        # Test with $rename (should return None to force Python fallback)
+        # Test with $rename (handled by unified SQL compiler)
         update = {"$rename": {"old_field": "new_field"}}
-        result = helper._build_update_clause(update)
-        assert result is None
+        assert helper._build_set_data_expression(update) is not None
 
         # Test with unsupported operator (should return None)
         update = {"$unsupported": {"field": "value"}}
-        result = helper._build_update_clause(update)
-        assert result is None
+        assert helper._build_set_data_expression(update) is None
 
-        # Test with empty $unset (should return None)
+        # Test with empty $unset (no-op expression)
         update = {"$unset": {}}
-        result = helper._build_update_clause(update)
-        assert result is None
+        res = helper._build_set_data_expression(update)
+        assert res == ("data", [], "tier1")
 
 
 def test_is_text_search_query():

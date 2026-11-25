@@ -628,8 +628,10 @@ class SqlQueryBuilderMixin:
             for name in self.collection.list_indexes():
                 if isinstance(name, str) and name.endswith(suffix):
                     return True
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                f"Failed inspecting index list for field {field!r}: {exc}"
+            )
         return False
 
     def _build_field_clause(
@@ -882,37 +884,19 @@ class SqlQueryBuilderMixin:
             NotImplementedError: If ``query`` contains ``$where``,
                 ``$function``, or ``$accumulator``.
         """
+        from ..type_utils import check_unsupported_query_operators
+
         if not isinstance(query, dict):
             return None
 
         if "$text" in query:
             return None
 
+        check_unsupported_query_operators(query)
         if "$where" in query:
-            from ...js import is_js_available
-
-            if not is_js_available():
-                raise NotImplementedError(
-                    "The '$where' operator (JavaScript) is not supported in NeoSQLite. "
-                    "Please use the '$expr' operator for field-to-field comparisons, "
-                    "which is fully compatible with MongoDB and highly optimized in NeoSQLite."
-                )
             # A sandboxed JS engine is available: defer to the Python
             # evaluation path, which executes $where in the sandbox worker.
             return None
-
-        if "$function" in query:
-            raise NotImplementedError(
-                "The '$function' operator is not supported in NeoSQLite. "
-                "Please use '$expr' with Python expressions, or post-process results in Python."
-            )
-
-        if "$accumulator" in query:
-            raise NotImplementedError(
-                "The '$accumulator' operator is not supported in NeoSQLite. "
-                "Please use built-in accumulators ($sum, $avg, $min, $max, $count, $push, $addToSet, $first, $last), "
-                "or post-process results in Python."
-            )
 
         if "$expr" in query:
             expr = query["$expr"]
@@ -1110,6 +1094,25 @@ class SqlQueryBuilderMixin:
 
         return json_type_list_sql(value)
 
+    def _get_sql_translator(self):
+        """Return the collection's ``SQLTranslator`` (or create a matching one)."""
+        translator = getattr(
+            getattr(self.collection, "query_engine", None),
+            "sql_translator",
+            None,
+        )
+        if translator is None:
+            from ..sql_translator_unified import SQLTranslator
+
+            translator = SQLTranslator(
+                self.collection.name,
+                "data",
+                "id",
+                db_connection=getattr(self.collection, "db", None),
+                jsonb_context=self.jsonb,
+            )
+        return translator
+
     def _build_range_clause(
         self,
         op_sql: str,
@@ -1121,43 +1124,19 @@ class SqlQueryBuilderMixin:
         allow_null: bool = False,
     ) -> str | None:
         """Build a type-guarded SQL predicate for ``$gt``, ``$lt``, ``$gte``, and ``$lte``."""
-        from ..type_utils import is_encoded_json_value
+        from ..type_utils import build_bson_range_sql
 
-        if isinstance(op_val, (list, tuple, dict)) or is_encoded_json_value(
-            op_val
-        ):
-            return None
-        if op_val is None:
-            if allow_null:
-                return f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
-            return "0"
-        if is_datetime_indexed:
-            return f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) {op_sql} datetime(?)"
-        extract_expr = (
-            f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+        res = build_bson_range_sql(
+            op_sql,
+            json_path,
+            op_val,
+            json_prefix=self.jsonb.json_function_prefix,
+            json_each_function=self.jsonb.json_each_function,
+            is_datetime_indexed=is_datetime_indexed,
+            allow_array_existential=allow_array_existential,
+            allow_null=allow_null,
         )
-        if allow_array_existential and json_path.startswith("'"):
-            json_each_func = self.jsonb.json_each_function
-            return (
-                f"((json_type(data, {json_path}) != 'array' AND "
-                f"{self._json_type_guard_sql(json_path, op_val)} AND "
-                f"{extract_expr} {op_sql} ?) OR "
-                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
-                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
-                f"WHERE json_each.type IN {self._json_type_list_sql(op_val)} "
-                f"AND json_each.value {op_sql} ?)))"
-            )
-        if json_path == "value":
-            return (
-                f"(json_each.type IN {self._json_type_list_sql(op_val)} AND "
-                f"{extract_expr} {op_sql} ?)"
-            )
-        if json_path.startswith("'"):
-            return (
-                f"({self._json_type_guard_sql(json_path, op_val)} AND "
-                f"{extract_expr} {op_sql} ?)"
-            )
-        return f"{extract_expr} {op_sql} ?"
+        return res[0] if res is not None else None
 
     def _build_operator_clause(
         self,
@@ -1192,10 +1171,7 @@ class SqlQueryBuilderMixin:
             or ``(None, [])`` when Python fallback is required.
         """
         from ..type_utils import (
-            build_json_in_clause,
-            build_json_nin_clause,
             is_encoded_json_value,
-            json_type_list_sql,
             serialize_sql_query_value,
         )
 
@@ -1330,79 +1306,32 @@ class SqlQueryBuilderMixin:
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NOT {scalar_ph}"
                             )
                             params.append(param_val)
-                case "$in":
-                    if isinstance(op_val, (list, tuple)):
-                        in_clause, in_params = build_json_in_clause(
-                            "data",
-                            json_path,
-                            op_val,
-                            self.jsonb.json_function_prefix,
-                            self.jsonb.jsonb_supported,
-                            self.jsonb.json_each_function,
-                        )
-                        clauses.append(in_clause)
-                        params.extend(in_params)
-                    else:
+                case (
+                    "$in" | "$nin" | "$all" | "$exists" | "$size" | "$contains"
+                ):
+                    if op == "$contains" and not isinstance(op_val, str):
                         return None, []
-                case "$nin":
-                    if isinstance(op_val, (list, tuple)):
-                        nin_clause, nin_params = build_json_nin_clause(
-                            "data",
-                            json_path,
-                            op_val,
-                            self.jsonb.json_function_prefix,
-                            self.jsonb.jsonb_supported,
-                            self.jsonb.json_each_function,
-                        )
-                        clauses.append(nin_clause)
-                        params.extend(nin_params)
-                    else:
+                    norm_val = (
+                        list(op_val)
+                        if op in ("$in", "$nin", "$all")
+                        and isinstance(op_val, tuple)
+                        else op_val
+                    )
+                    field_access = (
+                        "value"
+                        if json_path == "value"
+                        else f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                    )
+                    (
+                        sql_op_res,
+                        sql_op_params,
+                    ) = self._get_sql_translator().operator_translator.translate_operator(
+                        field_access, op, norm_val
+                    )
+                    if sql_op_res is None:
                         return None, []
-                case "$all":
-                    json_each_func = self.jsonb.json_each_function
-                    if isinstance(op_val, (list, tuple)):
-                        if not op_val:
-                            return None, []
-                        clauses.append(
-                            f"json_type(data, {json_path}) = 'array'"
-                        )
-                        for v in op_val:
-                            if v is None:
-                                clauses.append(
-                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IS NULL)"
-                                )
-                            elif isinstance(v, (list, tuple)) or (
-                                isinstance(v, dict)
-                                and not is_encoded_json_value(v)
-                            ):
-                                return None, []
-                            else:
-                                p_val, ph = serialize_sql_query_value(
-                                    v, json_each_func == "jsonb_each"
-                                )
-                                elem_types = json_type_list_sql(v)
-                                clauses.append(
-                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value = {ph} AND json_each.type IN {elem_types})"
-                                )
-                                params.append(p_val)
-                    else:
-                        return None, []
-                case "$exists":
-                    # Handle boolean value for $exists
-                    if isinstance(op_val, bool):
-                        if op_val:
-                            # Field present, including explicit null values.
-                            clauses.append(
-                                f"json_type(data, {json_path}) IS NOT NULL"
-                            )
-                        else:
-                            # Field missing only (not present-but-null).
-                            clauses.append(
-                                f"json_type(data, {json_path}) IS NULL"
-                            )
-                    else:
-                        # Invalid value for $exists, fallback to Python
-                        return None, []
+                    clauses.append(sql_op_res)
+                    params.extend(sql_op_params)
                 case "$mod":
                     # Handle [divisor, remainder] array
                     if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
@@ -1443,17 +1372,6 @@ class SqlQueryBuilderMixin:
                     else:
                         # Invalid format for $mod, fallback to Python
                         return None, []
-                case "$size":
-                    # Handle array size comparison
-                    if isinstance(op_val, int) and not isinstance(op_val, bool):
-                        clauses.append(
-                            f"json_type(data, {json_path}) = 'array' AND "
-                            f"json_array_length({self.jsonb.json_function_prefix}_extract(data, {json_path})) = ?"
-                        )
-                        params.append(op_val)
-                    else:
-                        # Invalid value for $size, fallback to Python
-                        return None, []
                 case "$not":
                     # MongoDB field-level $not: {<field>: {"$not": <op_dict | re.Pattern>}}
                     # Matches documents where the negated predicate does not match
@@ -1489,22 +1407,6 @@ class SqlQueryBuilderMixin:
                         clauses.append(f"NOT COALESCE(({inner_c}), 0)")
                         params.extend(inner_p)
                     else:
-                        return None, []
-                case "$contains":
-                    # Handle case-insensitive substring search
-                    if isinstance(op_val, str):
-                        escaped = (
-                            op_val.lower()
-                            .replace("\\", "\\\\")
-                            .replace("%", "\\%")
-                            .replace("_", "\\_")
-                        )
-                        clauses.append(
-                            f"lower({self.jsonb.json_function_prefix}_extract(data, {json_path})) LIKE ? ESCAPE '\\'"
-                        )
-                        params.append(f"%{escaped}%")
-                    else:
-                        # Invalid value for $contains, fallback to Python
                         return None, []
                 case "$elemMatch":
                     # Determine the json_each function to use
@@ -1636,7 +1538,6 @@ class SqlQueryBuilderMixin:
                         return None, []
                     continue
                 case "$regex":
-                    # Handle regex with optional options or compiled re.Pattern
                     effective_options = regex_options or operators.get(
                         "$options", ""
                     )
@@ -1644,35 +1545,44 @@ class SqlQueryBuilderMixin:
                         effective_options, str
                     ):
                         return None, []
-                    pattern = self._regex_to_sql_pattern(
+                    field_access = (
+                        "value"
+                        if json_path == "value"
+                        else f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                    )
+                    (
+                        sql_re,
+                        re_params,
+                    ) = self._get_sql_translator().operator_translator.translate_operator(
+                        field_access,
+                        "$regex",
                         op_val,
-                        effective_options if isinstance(op_val, str) else "",
+                        regex_options=(
+                            effective_options if isinstance(op_val, str) else ""
+                        ),
                     )
-                    if pattern is None:
+                    if sql_re is None:
                         return None, []
-
-                    clauses.append(
-                        f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) REGEXP ?"
-                    )
-                    params.append(pattern)
+                    clauses.append(sql_re)
+                    params.extend(re_params)
                 case "$type":
-                    from ..type_utils import build_bson_type_sql
-
-                    if json_path == "value":
-                        type_sql = build_bson_type_sql(
-                            "value",
-                            "'$'",
-                            op_val,
-                            type_expr="json_each.type",
-                            val_expr="value",
-                        )
-                    else:
-                        type_sql = build_bson_type_sql(
-                            "data", json_path, op_val
-                        )
-                    if type_sql is None:
+                    field_access = (
+                        "json_each.value"
+                        if json_path == "value"
+                        else f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                    )
+                    (
+                        sql_t,
+                        t_params,
+                    ) = self._get_sql_translator().operator_translator.translate_operator(
+                        field_access, "$type", op_val
+                    )
+                    if sql_t is None:
                         return None, []
-                    clauses.append(type_sql)
+                    if json_path == "value":
+                        sql_t = sql_t.replace("json_each.value", "value")
+                    clauses.append(sql_t)
+                    params.extend(t_params)
                 case _:
                     # Unsupported operator, fallback to Python
                     return None, []

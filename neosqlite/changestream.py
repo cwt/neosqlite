@@ -141,15 +141,9 @@ def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
     """Evaluate field-level ``$match`` comparison operators on a value.
 
     Supports ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, ``$in``,
-    ``$nin``, and ``$exists`` (treating non-``None`` as existing). Unsupported
-    operators are debug-logged and cause the match to return ``False``.
-
-    Args:
-        value: Resolved field value to test.
-        operators: Mapping from MongoDB operator names to expected operands.
-
-    Returns:
-        bool: ``True`` if all operators match ``value``, else ``False``.
+    ``$nin``, ``$exists``, ``$regex``/``$options``, and ``$not``. Unrecognized
+    ``$``-prefixed operators are debug-logged and cause the match to return
+    ``False``.
     """
     for op, expected in operators.items():
         if op == "$eq":
@@ -176,8 +170,45 @@ def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
             if matched:
                 return False
         elif op == "$exists":
-            exists = value is not None
-            if bool(expected) != exists:
+            if bool(expected) != (value is not None):
+                return False
+        elif op == "$regex":
+            if isinstance(expected, re.Pattern):
+                pattern = expected
+            elif isinstance(expected, str):
+                flags = 0
+                raw_opts = operators.get("$options", "")
+                if isinstance(raw_opts, str):
+                    if "i" in raw_opts:
+                        flags |= re.IGNORECASE
+                    if "m" in raw_opts:
+                        flags |= re.MULTILINE
+                    if "s" in raw_opts:
+                        flags |= re.DOTALL
+                    if "x" in raw_opts:
+                        flags |= re.VERBOSE
+                try:
+                    pattern = re.compile(expected, flags)
+                except re.error:
+                    return False
+            else:
+                return False
+            if not isinstance(value, str) or pattern.search(value) is None:
+                return False
+        elif op == "$options":
+            if "$regex" not in operators:
+                return False
+        elif op == "$not":
+            if isinstance(expected, re.Pattern):
+                if (
+                    isinstance(value, str)
+                    and expected.search(value) is not None
+                ):
+                    return False
+            elif isinstance(expected, dict):
+                if _match_spec(value, expected):
+                    return False
+            else:
                 return False
         else:
             logger.debug("Unsupported $match operator %r; no match", op)
@@ -185,45 +216,55 @@ def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
     return True
 
 
+def _match_spec(value: Any, condition: Any) -> bool:
+    """Evaluate a field ``$match`` condition (operator dict, regex, or equality)."""
+    if isinstance(condition, dict) and any(
+        k.startswith("$") for k in condition
+    ):
+        return _match_operators(value, condition)
+    if isinstance(condition, re.Pattern):
+        return isinstance(value, str) and condition.search(value) is not None
+    return bool(value == condition)
+
+
 def _match_filter(document: dict[str, Any], spec: dict[str, Any]) -> bool:
     """Evaluate a change-stream ``$match`` filter against a change event.
 
     Supports logical combinators (``$and``, ``$or``, ``$nor``), field-level
-    operator dicts (handling ``$exists`` via ``_field_present``), and direct
-    equality comparisons on dotted field paths.
-
-    Args:
-        document: Change event dictionary to evaluate.
-        spec: MongoDB ``$match`` filter specification dictionary.
-
-    Returns:
-        bool: ``True`` if ``document`` satisfies every criterion in ``spec``.
+    operator dicts (handling ``$exists`` via ``_field_present``), regex
+    patterns, and direct equality comparisons on dotted field paths.
     """
     for key, condition in spec.items():
         if key == "$and":
-            if not all(_match_filter(document, sub) for sub in condition):
+            if not isinstance(condition, list) or not all(
+                isinstance(sub, dict) and _match_filter(document, sub)
+                for sub in condition
+            ):
                 return False
         elif key == "$or":
-            if not any(_match_filter(document, sub) for sub in condition):
+            if not isinstance(condition, list) or not any(
+                isinstance(sub, dict) and _match_filter(document, sub)
+                for sub in condition
+            ):
                 return False
         elif key == "$nor":
-            if any(_match_filter(document, sub) for sub in condition):
+            if not isinstance(condition, list) or any(
+                isinstance(sub, dict) and _match_filter(document, sub)
+                for sub in condition
+            ):
                 return False
         elif isinstance(condition, dict) and any(
             k.startswith("$") for k in condition
         ):
-            # Handle $exists with field presence (distinguishing missing
-            # from present-but-null), delegating the rest to _match_operators.
             ops = dict(condition)
-            exists_expected = ops.pop("$exists", None)
-            if exists_expected is not None:
-                present = _field_present(document, key)
-                if bool(exists_expected) != present:
+            if "$exists" in ops:
+                exists_expected = ops.pop("$exists")
+                if bool(exists_expected) != _field_present(document, key):
                     return False
             if ops and not _match_operators(_get_dotted(document, key), ops):
                 return False
         else:
-            if _get_dotted(document, key) != condition:
+            if not _match_spec(_get_dotted(document, key), condition):
                 return False
     return True
 

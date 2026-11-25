@@ -16,7 +16,7 @@ from collections import OrderedDict
 from operator import itemgetter
 from typing import Any
 
-from ...binary import Binary
+from ..type_utils import canonical_value_key
 
 _ORDER_SENSITIVE_KEYS = frozenset(
     {
@@ -169,65 +169,14 @@ class TranslationCache:
     ) -> tuple:
         """Recursively convert a value into a hashable, type-tagged tuple.
 
-        Type tags distinguish values that Python would otherwise equate
-        (e.g., ``True`` vs ``1``, ``1`` vs ``1.0``, ``Binary`` subtypes).
-        Dictionary key order is preserved inside order-sensitive clauses such
-        as ``$sort``, ``sortBy``, ``$addFields``, ``$set``, ``$project``,
-        ``$setWindowFields``, and ``$fill``, while commutative filter dicts are
-        sorted by key.
-
-        Args:
-            value: Arbitrary pipeline value or nested structure to
-                canonicalize.
-            preserve_order: Whether to preserve dictionary insertion order
-                rather than sorting keys.
-
-        Returns:
-            tuple: Hashable, type-tagged representation of ``value``.
+        Delegates to :func:`canonical_value_key`, preserving key insertion order
+        inside order-sensitive clauses defined by ``_ORDER_SENSITIVE_KEYS``.
         """
-        match value:
-            case bool():
-                return ("b", value)
-            case int():
-                return ("i", value)
-            case float():
-                return ("f", repr(value))
-            case str():
-                return ("s", value)
-            case None:
-                return ("z",)
-            case dict():
-                items = (
-                    value.items() if preserve_order else sorted(value.items())
-                )
-                return (
-                    "d",
-                    tuple(
-                        (
-                            k,
-                            self._canonicalize(
-                                v,
-                                preserve_order=preserve_order
-                                or k in _ORDER_SENSITIVE_KEYS,
-                            ),
-                        )
-                        for k, v in items
-                    ),
-                )
-            case list() | tuple():
-                return (
-                    "l",
-                    tuple(
-                        self._canonicalize(v, preserve_order=preserve_order)
-                        for v in value
-                    ),
-                )
-            case Binary():
-                return ("B", value.subtype, value.hex())
-            case bytes():
-                return ("y", value.hex())
-            case _:
-                return ("o", type(value).__name__, str(value))
+        return canonical_value_key(
+            value,
+            preserve_order=preserve_order,
+            order_sensitive_keys=_ORDER_SENSITIVE_KEYS,
+        )
 
     def _extract_structure(self, obj: Any) -> tuple:
         """Recursively convert a pipeline fragment into a hashable tuple.

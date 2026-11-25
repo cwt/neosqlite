@@ -440,75 +440,60 @@ def test_query_with_id(collection):
 # ================================
 
 
-def test_query_helper_build_update_clause_edge_cases():
-    """Test edge cases in _build_update_clause to improve coverage."""
+def test_query_helper_build_set_data_expression_edge_cases():
+    """Test edge cases in _build_set_data_expression."""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn.test_collection
         helper = QueryHelper(collection)
 
         # Test case: empty update dict
-        result = helper._build_update_clause({})
-        assert result is None
+        assert helper._build_set_data_expression({}) is None
 
         # Test case: unsupported operator
-        result = helper._build_update_clause(
-            {"$unsupported": {"field": "value"}}
+        assert (
+            helper._build_set_data_expression(
+                {"$unsupported": {"field": "value"}}
+            )
+            is None
         )
-        assert result is None
 
-        # Test case: $rename operator (should return None to force Python fallback)
-        result = helper._build_update_clause(
-            {"$rename": {"old_field": "new_field"}}
+        # Test case: $rename operator is handled by unified SQL compiler
+        assert (
+            helper._build_set_data_expression(
+                {"$rename": {"old_field": "new_field"}}
+            )
+            is not None
         )
-        assert result is None
 
-        # Test case: $unset with empty fields (should return None)
-        result = helper._build_update_clause({"$unset": {}})
-        assert result is None
+        # Test case: $unset with empty fields is a no-op expression
+        assert helper._build_set_data_expression({"$unset": {}}) == (
+            "data",
+            [],
+            "tier1",
+        )
 
 
-def test_query_helper_build_sql_update_clause_edge_cases():
-    """Test edge cases in _build_sql_update_clause to improve coverage."""
+def test_query_helper_binary_update_routing():
+    """Test Binary support and Python fallback routing in unified updates."""
     with neosqlite.Connection(":memory:") as conn:
         collection = conn.test_collection
         helper = QueryHelper(collection)
 
-        # Test case: unsupported operator (should return empty lists)
-        clauses, params = helper._build_sql_update_clause(
-            "$unsupported", {"field": "value"}
+        # Test case: Binary object in $set is supported in SQL
+        assert (
+            helper._build_set_data_expression(
+                {"$set": {"field": neosqlite.Binary(b"data")}}
+            )
+            is not None
         )
-        # Should return empty lists for unsupported operators
-        assert clauses == []
-        assert params == []
 
-
-def test_query_helper_can_use_sql_updates_edge_cases():
-    """Test edge cases in _can_use_sql_updates to improve coverage."""
-    with neosqlite.Connection(":memory:") as conn:
-        collection = conn.test_collection
-        helper = QueryHelper(collection)
-
-        # Test case: upsert (doc_id = 0)
-        result = helper._can_use_sql_updates({"$set": {"field": "value"}}, 0)
-        assert not result
-
-        # $rename is supported by the unified SQL builder, but the legacy
-        # enhanced-SQL path is lossy (self-rename deletes, missing source
-        # creates JSON null), so it must decline and use Python instead.
-        result = helper._can_use_sql_updates({"$rename": {"old": "new"}}, 1)
-        assert not result
-
-        # Test case: Binary object in $set is now supported in SQL (#section1)
-        result = helper._can_use_sql_updates(
-            {"$set": {"field": neosqlite.Binary(b"data")}}, 1
+        # Test case: Binary object in comparison/pull ops falls back to Python
+        assert (
+            helper._build_set_data_expression(
+                {"$min": {"field": neosqlite.Binary(b"data")}}
+            )
+            is None
         )
-        assert result
-
-        # Test case: Binary object in comparison/pull ops still falls back to Python
-        result = helper._can_use_sql_updates(
-            {"$min": {"field": neosqlite.Binary(b"data")}}, 1
-        )
-        assert not result
 
 
 # ================================
@@ -1049,31 +1034,41 @@ def test_query_helper_edge_cases():
         assert "LIKE" in clause
         assert params == ["%test%"]
 
-        # Test _build_update_clause with $unset operator
-        clause, params = helper._build_update_clause({"$unset": {"field": ""}})
+        # Test _build_set_data_expression with $unset operator
+        clause, params, _ = helper._build_set_data_expression(
+            {"$unset": {"field": ""}}
+        )
         # Check for either json_remove or jsonb_remove depending on support
         assert "json_remove" in clause or "jsonb_remove" in clause
 
-        # Test _build_update_clause with $inc operator
-        clause, params = helper._build_update_clause({"$inc": {"count": 1}})
+        # Test _build_set_data_expression with $inc operator
+        clause, params, _ = helper._build_set_data_expression(
+            {"$inc": {"count": 1}}
+        )
         # Check for either json_extract or jsonb_extract depending on support
         assert "json_extract" in clause or "jsonb_extract" in clause
         assert "+" in clause
 
-        # Test _build_update_clause with $mul operator
-        clause, params = helper._build_update_clause({"$mul": {"value": 2}})
+        # Test _build_set_data_expression with $mul operator
+        clause, params, _ = helper._build_set_data_expression(
+            {"$mul": {"value": 2}}
+        )
         # Check for either json_extract or jsonb_extract depending on support
         assert "json_extract" in clause or "jsonb_extract" in clause
         assert "*" in clause
 
-        # Test _build_sql_update_clause with $min operator
-        clauses, params = helper._build_sql_update_clause("$min", {"field": 5})
-        assert "min(" in str(clauses)
+        # Test _build_set_data_expression with $min operator
+        clause, params, _ = helper._build_set_data_expression(
+            {"$min": {"field": 5}}
+        )
+        assert "min(" in clause
         assert 5 in params
 
-        # Test _build_sql_update_clause with $max operator
-        clauses, params = helper._build_sql_update_clause("$max", {"field": 10})
-        assert "max(" in str(clauses)
+        # Test _build_set_data_expression with $max operator
+        clause, params, _ = helper._build_set_data_expression(
+            {"$max": {"field": 10}}
+        )
+        assert "max(" in clause
         assert 10 in params
 
 

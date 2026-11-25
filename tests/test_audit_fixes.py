@@ -93,17 +93,13 @@ class TestAddToSetNoDocumentNesting:
     because json_insert(data, ...) returns the full modified document."""
 
     def _apply_clause(self, connection, col, value):
-        from neosqlite.collection.jsonb_support import supports_jsonb
-
-        clause, params = col.query_engine.helpers._build_sql_update_clause(
-            "$addToSet", value
+        expr_res = col.query_engine.helpers._build_set_data_expression(
+            {"$addToSet": value}
         )
-        json_set_func = (
-            "jsonb_set" if supports_jsonb(connection.db) else "json_set"
-        )
-        wrapped = f"{json_set_func}(data, {clause[0]})"
+        assert expr_res is not None
+        data_expr, params, _ = expr_res
         connection.db.execute(
-            f"UPDATE {col.name} SET data = {wrapped} WHERE id = 1", params
+            f"UPDATE {col.name} SET data = {data_expr} WHERE id = 1", params
         )
         connection.db.commit()
 

@@ -173,15 +173,14 @@ def aggregation_pipeline_context(db_connection, pipeline_id: str | None = None):
         # log at WARNING so it's visible during development/comparison
         # runs, but without the noisy traceback
         db_connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
-        logger.warning(f"Temporary table aggregation SQL fallback: {e}")
+        logger.debug(f"Temporary table aggregation SQL fallback: {e}")
         raise
     except Exception as e:
         # Rollback on error
         db_connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint_name}")
         # Expected tier degradation (unsupported SQL shapes) — log at
-        # WARNING without a traceback; ERROR + traceback buried real
-        # failures under routine fallback noise (#169)
-        logger.warning(f"Temporary table aggregation error: {e}")
+        # DEBUG without a traceback (#169, #208)
+        logger.debug(f"Temporary table aggregation error: {e}")
         raise
     finally:
         # Cleanup

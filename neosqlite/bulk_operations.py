@@ -11,8 +11,16 @@ if TYPE_CHECKING:
 
     from .client_session import ClientSession
 
-from .exceptions import BulkWriteError
-from .requests import _parse_bulk_request
+from .exceptions import BulkWriteError  # noqa: F401 - re-exported for callers
+from .requests import (
+    DeleteMany,
+    DeleteOne,
+    InsertOne,
+    ReplaceOne,
+    UpdateMany,
+    UpdateOne,
+    _parse_bulk_request,
+)
 from .results import BulkWriteResult
 
 logger = logging.getLogger(__name__)
@@ -377,17 +385,16 @@ class BulkOperationExecutor:
     def _execute(
         self, ordered: bool, session: ClientSession | None = None
     ) -> BulkWriteResult:
-        """Execute queued operations with optional stop-on-error behavior.
+        """Convert queued legacy operations and delegate to ``Collection.bulk_write``.
 
-        Dispatches each queued operation to the collection, accumulating
-        operation counts and ``upserted_ids``. Exceptions are captured as
-        write errors (mapping unique constraint failures to code 11000 and
-        others to code 8); when ``ordered`` is ``True``, execution stops at
-        the first failure.
+        Translates queued ``InsertOperation``, ``UpdateOperation``,
+        ``ReplaceOperation``, and ``DeleteOperation`` records into standard
+        bulk write request objects and delegates execution to
+        ``self._collection.bulk_write``.
 
         Args:
             ordered: Whether to abort on the first failing operation.
-            session: Optional ``ClientSession`` passed to collection calls.
+            session: Optional ``ClientSession`` passed to ``bulk_write``.
 
         Returns:
             BulkWriteResult: Aggregated write counts and upserted ID mapping.
@@ -395,113 +402,36 @@ class BulkOperationExecutor:
         Raises:
             BulkWriteError: If one or more operations fail during execution.
         """
-        from .collection.type_utils import validate_session
-
-        validate_session(session, self._collection._database)
-
-        inserted_count = 0
-        matched_count = 0
-        modified_count = 0
-        deleted_count = 0
-        upserted_count = 0
-        upserted_ids: dict[int, Any] = {}
-        write_errors: list[dict[str, Any]] = []
-
-        for idx, op in enumerate(self._operations):
-            try:
-                match op:
-                    case InsertOperation(document=doc):
-                        self._collection.insert_one(doc, session=session)
-                        inserted_count += 1
-                    case UpdateOperation(
-                        filter=f,
-                        update=u,
-                        upsert=up,
-                        multi=multi,
-                        array_filters=af,
-                    ):
-                        if multi:
-                            update_res = self._collection.update_many(
-                                f,
-                                u,
-                                upsert=up,
-                                array_filters=af,
-                                session=session,
-                            )
-                        else:
-                            update_res = self._collection.update_one(
-                                f,
-                                u,
-                                upsert=up,
-                                array_filters=af,
-                                session=session,
-                            )
-                        matched_count += update_res.matched_count
-                        modified_count += update_res.modified_count
-                        if update_res.upserted_id is not None:
-                            upserted_count += 1
-                            upserted_ids[idx] = update_res.upserted_id
-                    case ReplaceOperation(filter=f, replacement=r, upsert=up):
-                        replace_res = self._collection.replace_one(
-                            f, r, upsert=up, session=session
+        requests: list[Any] = []
+        for op in self._operations:
+            match op:
+                case InsertOperation(document=doc):
+                    requests.append(InsertOne(doc))
+                case UpdateOperation(
+                    filter=f,
+                    update=u,
+                    upsert=up,
+                    multi=multi,
+                    array_filters=af,
+                ):
+                    if multi:
+                        requests.append(
+                            UpdateMany(f, u, upsert=up, array_filters=af)
                         )
-                        matched_count += replace_res.matched_count
-                        modified_count += replace_res.modified_count
-                        if replace_res.upserted_id is not None:
-                            upserted_count += 1
-                            upserted_ids[idx] = replace_res.upserted_id
-                    case DeleteOperation(filter=f, multi=multi):
-                        if multi:
-                            delete_res = self._collection.delete_many(
-                                f, session=session
-                            )
-                        else:
-                            delete_res = self._collection.delete_one(
-                                f, session=session
-                            )
-                        deleted_count += delete_res.deleted_count
-            except Exception as e:
-                from ._sqlite import sqlite3
+                    else:
+                        requests.append(
+                            UpdateOne(f, u, upsert=up, array_filters=af)
+                        )
+                case ReplaceOperation(filter=f, replacement=r, upsert=up):
+                    requests.append(ReplaceOne(f, r, upsert=up))
+                case DeleteOperation(filter=f, multi=multi):
+                    if multi:
+                        requests.append(DeleteMany(f))
+                    else:
+                        requests.append(DeleteOne(f))
 
-                code = (
-                    11000
-                    if "UNIQUE" in str(e).upper()
-                    or isinstance(e, sqlite3.IntegrityError)
-                    else 8
-                )
-                write_errors.append(
-                    {
-                        "index": idx,
-                        "code": code,
-                        "errmsg": str(e),
-                        "op": op,
-                    }
-                )
-                if ordered:
-                    break
-
-        if write_errors:
-            error_details = {
-                "writeErrors": write_errors,
-                "writeConcernErrors": [],
-                "nInserted": inserted_count,
-                "nUpserted": upserted_count,
-                "nMatched": matched_count,
-                "nModified": modified_count,
-                "nRemoved": deleted_count,
-                "upserted": [
-                    {"index": i, "_id": oid} for i, oid in upserted_ids.items()
-                ],
-            }
-            raise BulkWriteError(error_details)
-
-        return BulkWriteResult(
-            inserted_count=inserted_count,
-            matched_count=matched_count,
-            modified_count=modified_count,
-            deleted_count=deleted_count,
-            upserted_count=upserted_count,
-            upserted_ids=upserted_ids,
+        return self._collection.bulk_write(
+            requests, ordered=ordered, session=session
         )
 
     def _execute_ordered(

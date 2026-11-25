@@ -1992,12 +1992,13 @@ class StageBuildersMixin:
     ) -> tuple[list[str] | None, list[Any]]:
         """Translate a ``$match`` query dictionary into SQL WHERE predicates.
 
-        Compiles ``$jsonSchema``, ``$expr``, logical combinators (``$and``,
-        ``$or``, ``$nor``, ``$not``), direct ``$`` expressions, field operator
-        maps (including range operators with array/type guards and ``$not``),
-        regex patterns, datetimes, ``None``, ``_id`` comparisons, dict/list
-        equality, and JSON containment clauses. Returns ``(None, [])`` for
-        ``$text`` or unsupported predicates.
+        Compiles aggregation ``$expr`` / direct ``$`` expressions via
+        ``self.evaluator``, recurses on logical combinators (``$and``, ``$or``,
+        ``$nor``, ``$not``) so nested expressions stay supported, emits BSON-type
+        and array-safe range predicates via ``build_bson_range_sql``, and
+        delegates ``$jsonSchema``, operator dicts, regex, datetime, null,
+        ``_id``, and scalar containment predicates to ``SQLTranslator``.
+        Returns ``(None, [])`` for ``$text`` or unsupported predicates.
 
         Args:
             spec: MongoDB ``$match`` filter specification dictionary.
@@ -2008,41 +2009,25 @@ class StageBuildersMixin:
             tuple[list[str] | None, list[Any]]: List of SQL predicate strings
                 (or ``None`` on fallback) and bound parameters.
         """
-        from ..objectid import ObjectId
-        from .type_utils import (
-            build_json_containment_clause,
-            expr_truthiness_sql,
-            is_encoded_json_value,
-            json_type_guard_sql,
-            regex_to_sql_pattern,
-        )
+        from .type_utils import build_bson_range_sql, expr_truthiness_sql
 
         if not isinstance(spec, dict) or "$text" in spec:
             return None, []
 
         translator = self._get_match_sql_translator()
         op_translator = translator.operator_translator
+        clause_builder = translator.clause_builder
         all_params: list[Any] = []
         where_clauses: list[str] = []
+        range_ops = {
+            "$gt": (">", False),
+            "$lt": ("<", False),
+            "$gte": (">=", True),
+            "$lte": ("<=", True),
+        }
 
         for field, value in spec.items():
-            if field == "$jsonSchema":
-                from .query_helper.schema_compiler import (
-                    compile_query_schema_to_sql,
-                )
-
-                schema_res = compile_query_schema_to_sql(
-                    value,
-                    data_column="data",
-                    jsonb=self.jsonb.jsonb_supported,
-                    json_each_function=self.jsonb.json_each_function,
-                )
-                if schema_res is None:
-                    return None, []
-                schema_clause, schema_params = schema_res
-                where_clauses.append(schema_clause)
-                all_params.extend(schema_params)
-            elif field == "$expr":
+            if field == "$expr":
                 expr_sql, expr_params = self.evaluator.evaluate(value)
                 if not expr_sql:
                     return None, []
@@ -2095,7 +2080,11 @@ class StageBuildersMixin:
                 inner = " AND ".join(f"({p})" for p in parts)
                 where_clauses.append(f"NOT COALESCE(({inner}), 0)")
                 all_params.extend(not_params)
-            elif field.startswith("$") and _is_expression({field: value}):
+            elif (
+                field != "$jsonSchema"
+                and field.startswith("$")
+                and _is_expression({field: value})
+            ):
                 # Handle direct expression (no $expr wrapper)
                 expr_sql, expr_params = self.evaluator.build_select_expression(
                     {field: value}, context=agg_ctx
@@ -2104,151 +2093,84 @@ class StageBuildersMixin:
                     return None, []
                 where_clauses.append(expr_truthiness_sql(expr_sql))
                 all_params.extend(expr_params)
-            elif field.startswith("$"):
+            elif field.startswith("$") and field != "$jsonSchema":
                 return None, []
-            else:
-                if field == "_id":
-                    field_sql = "_id"
-                else:
-                    json_extract_func = (
-                        f"{self.jsonb.json_function_prefix}_extract"
-                    )
-                    field_sql = (
-                        f"{json_extract_func}(data, '{parse_json_path(field)}')"
-                    )
+            elif isinstance(value, dict) and field != "$jsonSchema":
+                options = value.get("$options", "")
+                if "$options" in value and (
+                    "$regex" not in value or not isinstance(options, str)
+                ):
+                    return None, []
 
-                if isinstance(value, dict):
-                    options = value.get("$options", "")
-                    if "$options" in value and (
-                        "$regex" not in value or not isinstance(options, str)
+                rest_ops: dict[str, Any] = {}
+                for op, arg in value.items():
+                    if op == "$options":
+                        continue
+                    if op == "$not":
+                        if not isinstance(arg, (dict, re.Pattern)) or (
+                            isinstance(arg, dict) and "$not" in arg
+                        ):
+                            return None, []
+                        sub_parts, sub_params = self._translate_match_spec(
+                            {field: arg}, agg_ctx=agg_ctx
+                        )
+                        if sub_parts is None or not sub_parts:
+                            return None, []
+                        inner = " AND ".join(f"({p})" for p in sub_parts)
+                        where_clauses.append(f"NOT COALESCE(({inner}), 0)")
+                        all_params.extend(sub_params)
+                    elif (
+                        op in range_ops
+                        and field != "_id"
+                        and not op_translator._is_datetime_value(arg)
                     ):
-                        return None, []
-
-                    range_ops = {
-                        "$gt": ">",
-                        "$lt": "<",
-                        "$gte": ">=",
-                        "$lte": "<=",
-                    }
-                    json_each_func = self.jsonb.json_each_function
-                    for op, arg in value.items():
-                        if op == "$options":
-                            continue
-                        if op == "$not":
-                            if not isinstance(arg, (dict, re.Pattern)) or (
-                                isinstance(arg, dict) and "$not" in arg
-                            ):
-                                return None, []
-                            sub_parts, sub_params = self._translate_match_spec(
-                                {field: arg}, agg_ctx=agg_ctx
-                            )
-                            if sub_parts is None or not sub_parts:
-                                return None, []
-                            inner = " AND ".join(f"({p})" for p in sub_parts)
-                            where_clauses.append(f"NOT COALESCE(({inner}), 0)")
-                            all_params.extend(sub_params)
-                            continue
-                        if op in range_ops:
-                            if isinstance(
-                                arg, (list, tuple)
-                            ) or is_encoded_json_value(arg):
-                                return None, []
-                            if (
-                                field == "_id"
-                                or op_translator._is_datetime_value(arg)
-                            ):
-                                sql, params = op_translator.translate_operator(
-                                    field_sql, op, arg
-                                )
-                                if sql is None:
-                                    return None, []
-                                where_clauses.append(sql)
-                                all_params.extend(params)
-                            elif arg is None:
-                                if op in ("$gt", "$lt"):
-                                    where_clauses.append("0")
-                                else:
-                                    where_clauses.append(f"{field_sql} IS NULL")
-                            else:
-                                sql_op = range_ops[op]
-                                json_path = parse_json_path(field)
-                                json_path_q = f"'{json_path}'"
-                                guard = json_type_guard_sql(json_path_q, arg)
-                                where_clauses.append(
-                                    f"((json_type(data, {json_path_q}) != 'array' AND {guard} AND {field_sql} {sql_op} ?) OR "
-                                    f"(json_type(data, {json_path_q}) = 'array' AND "
-                                    f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path_q}) AS json_each "
-                                    f"WHERE json_each.value {sql_op} ?)))"
-                                )
-                                all_params.extend([arg, arg])
-                        else:
-                            norm_arg = (
-                                list(arg)
-                                if op in ("$in", "$nin", "$all")
-                                and isinstance(arg, tuple)
-                                else arg
-                            )
-                            if op == "$regex" and options:
-                                sql, params = op_translator.translate_operator(
-                                    field_sql,
-                                    op,
-                                    norm_arg,
-                                    regex_options=options,
-                                )
-                            else:
-                                sql, params = op_translator.translate_operator(
-                                    field_sql, op, norm_arg
-                                )
-                            if sql is None:
-                                return None, []
-                            where_clauses.append(sql)
-                            all_params.extend(params)
-                elif isinstance(value, re.Pattern):
-                    pattern = regex_to_sql_pattern(value)
-                    if pattern is None:
-                        return None, []
-                    if field == "_id":
-                        where_clauses.append(
-                            f"({field_sql} IS NOT NULL AND {field_sql} REGEXP ?)"
+                        sql_op, allow_null = range_ops[op]
+                        res = build_bson_range_sql(
+                            sql_op,
+                            f"'{parse_json_path(field)}'",
+                            arg,
+                            json_prefix=self.jsonb.json_function_prefix,
+                            json_each_function=self.jsonb.json_each_function,
+                            allow_null=allow_null,
                         )
+                        if res is None:
+                            return None, []
+                        where_clauses.append(res[0])
+                        all_params.extend(res[1])
                     else:
-                        json_path_q = f"'{parse_json_path(field)}'"
-                        where_clauses.append(
-                            f"(json_type(data, {json_path_q}) IS NOT NULL AND "
-                            f"json_type(data, {json_path_q}) != 'null' AND "
-                            f"{field_sql} REGEXP ?)"
+                        rest_ops[op] = (
+                            list(arg)
+                            if op in ("$in", "$nin", "$all")
+                            and isinstance(arg, tuple)
+                            else arg
                         )
-                    all_params.append(pattern)
-                elif op_translator._is_datetime_value(value):
-                    sql, params = op_translator.translate_operator(
-                        field_sql, "$eq", value
+
+                if rest_ops:
+                    if "$regex" in rest_ops and "$options" in value:
+                        rest_ops["$options"] = options
+                    sql_clause, sub_params = clause_builder.build_where_clause(
+                        {field: rest_ops},
+                        "direct",
+                        is_nested=True,
+                        query_param=spec,
                     )
-                    if sql is None:
+                    if sql_clause is None:
                         return None, []
-                    where_clauses.append(sql)
-                    all_params.extend(params)
-                elif value is None:
-                    # MongoDB: null matches null-or-missing (#90)
-                    where_clauses.append(f"{field_sql} IS NULL")
-                elif field == "_id":
-                    bound_val = (
-                        str(value) if isinstance(value, ObjectId) else value
-                    )
-                    where_clauses.append(f"{field_sql} = ?")
-                    all_params.append(bound_val)
-                elif isinstance(value, (dict, list)):
-                    where_clauses.append(f"{field_sql} = ?")
-                    all_params.append(value)
-                else:
-                    clause, params = build_json_containment_clause(
-                        "data",
-                        field,
-                        field_sql,
-                        value,
-                        self.jsonb.json_each_function,
-                    )
-                    where_clauses.append(clause)
-                    all_params.extend(params)
+                    if sql_clause:
+                        where_clauses.append(sql_clause)
+                        all_params.extend(sub_params)
+            else:
+                sql_clause, sub_params = clause_builder.build_where_clause(
+                    {field: value},
+                    "direct",
+                    is_nested=True,
+                    query_param=spec,
+                )
+                if sql_clause is None:
+                    return None, []
+                if sql_clause:
+                    where_clauses.append(sql_clause)
+                    all_params.extend(sub_params)
 
         return where_clauses, all_params
 

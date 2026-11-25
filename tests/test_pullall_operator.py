@@ -244,19 +244,17 @@ class TestPullAllOperator:
                 doc = coll.find_one({"_id": 1})
                 assert doc["mixed"] == ["keep", 5, [3, 4]]
 
-                # Directly exercise legacy SQL update methods with nested lists
-                qh = coll.query_engine.helpers
-                updated = qh._perform_enhanced_sql_update(
-                    1,
-                    {"$pullAll": {"pairs": [[1, 2]]}},
-                    doc,
+                res2 = coll.update_one(
+                    {"_id": 1}, {"$pullAll": {"pairs": [[1, 2]]}}
                 )
-                assert updated["pairs"] == [[5, 6]]
+                assert res2.modified_count == 1
+                assert coll.query_engine.get_last_tier() == "tier2"
+                assert coll.find_one({"_id": 1})["pairs"] == [[5, 6]]
 
-                updated_std = qh._perform_sql_update(
-                    1, {"$pull": {"mixed": [3, 4]}}
-                )
-                assert updated_std["mixed"] == ["keep", 5]
+                res3 = coll.update_one({"_id": 1}, {"$pull": {"mixed": [3, 4]}})
+                assert res3.modified_count == 1
+                assert coll.query_engine.get_last_tier() == "tier2"
+                assert coll.find_one({"_id": 1})["mixed"] == ["keep", 5]
             finally:
                 sql_logger.removeHandler(handler)
 

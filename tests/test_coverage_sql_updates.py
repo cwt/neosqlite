@@ -183,58 +183,45 @@ class TestSqlUpdateModuleHelpers:
         assert _compile_elem_predicate("_je0", {"a": {"$unknown": 1}}) is None
 
 
-class TestLegacyAndDirectSqlUpdateMethods:
-    """Cover _can_use_sql_updates, _perform_sql_update, _perform_enhanced_sql_update, clauses & validators."""
+class TestUnifiedSqlUpdateMethods:
+    """Cover _build_set_data_expression, _internal_update, & validators."""
 
     @pytest.mark.skipif(
         not _supports_relative_json_indexing(),
         reason="SQL JSON append paths require SQLite 3.42+",
     )
-    def test_can_use_sql_updates_and_clauses(self):
+    def test_build_set_data_expression_and_fallback(self):
         with neosqlite.Connection(":memory:") as conn:
             coll = conn.items
             coll.insert_one({"_id": 1, "a": 1, "arr": [1, 2], "s": "txt"})
             h = coll.query_engine.helpers
 
-            assert h._can_use_sql_updates({"$set": {"a": 2}}, 0) is False
             assert (
-                h._can_use_sql_updates({"$unsupported": {"a": 1}}, 1) is False
+                h._build_set_data_expression({"$unsupported": {"a": 1}}) is None
             )
             assert (
-                h._can_use_sql_updates(
-                    {"$min": {"a": Binary(b"x")}}, 1, {"a": 1}
-                )
-                is False
+                h._build_set_data_expression({"$min": {"a": Binary(b"x")}})
+                is None
             )
+            assert h._build_set_data_expression({"$set": {"arr.$": 1}}) is None
             assert (
-                h._can_use_sql_updates({"$set": {"arr.$": 1}}, 1, {"arr": [1]})
-                is False
-            )
-            assert (
-                h._can_use_sql_updates({"$pull": {"s": 1}}, 1, {"s": "txt"})
-                is False
-            )
-            assert (
-                h._can_use_sql_updates(
-                    {"$pull": {"arr": {"$gt": 1}}}, 1, {"arr": [1, 2]}
-                )
-                is False
-            )
-            assert (
-                h._can_use_sql_updates(
-                    {"$set": {"a": 2}, "$push": {"arr": 3}}, 1, {"arr": [1, 2]}
-                )
-                is True
-            )
-
-            # _build_update_clause coverage
-            assert h._build_update_clause({}) is None
-            assert (
-                h._build_update_clause({"$set": {"d": {"nested": 1}}})
+                h._build_set_data_expression({"$pull": {"arr": {"$gt": 1}}})
                 is not None
             )
             assert (
-                h._build_update_clause(
+                h._build_set_data_expression(
+                    {"$set": {"a": 2}, "$push": {"arr": 3}}
+                )
+                is not None
+            )
+
+            assert h._build_set_data_expression({}) is None
+            assert (
+                h._build_set_data_expression({"$set": {"d": {"nested": 1}}})
+                is not None
+            )
+            assert (
+                h._build_set_data_expression(
                     {
                         "$min": {"a": 0},
                         "$max": {"a": 10},
@@ -247,9 +234,11 @@ class TestLegacyAndDirectSqlUpdateMethods:
                 )
                 is not None
             )
-            assert h._build_update_clause({"$addToSet": {"arr": 1}}) is None
+            assert (
+                h._build_set_data_expression({"$addToSet": {"arr": 1}})
+                is not None
+            )
 
-            # _build_sql_update_clause coverage across all operators + errors
             for op, val in [
                 ("$set", {"x": 1, "obj": {"k": 1}, "b": True, "n": None}),
                 ("$unset", {"x": ""}),
@@ -275,21 +264,18 @@ class TestLegacyAndDirectSqlUpdateMethods:
                 ("$rename", {"a": "a2"}),
                 ("$setOnInsert", {"init": 1}),
             ]:
-                clauses, params = h._build_sql_update_clause(op, val)
-                assert isinstance(clauses, list)
+                assert h._build_set_data_expression({op: val}) is not None
 
-            assert h._build_sql_update_clause("$badOp", {}) == ([], [])
             for bin_op in ("$inc", "$mul", "$min", "$max"):
-                b_clauses, b_params = h._build_sql_update_clause(
-                    bin_op, {"a": b"x"}
+                assert (
+                    h._build_set_data_expression({bin_op: {"a": b"x"}}) is None
                 )
-                assert b_clauses and b_params
 
     @pytest.mark.skipif(
         not _supports_relative_json_indexing(),
         reason="SQL JSON append paths require SQLite 3.42+",
     )
-    def test_perform_enhanced_and_standard_sql_update_and_inc_mul_validation(
+    def test_internal_update_unified_operators_and_inc_mul_validation(
         self,
     ):
         with neosqlite.Connection(":memory:") as conn:
@@ -309,8 +295,8 @@ class TestLegacyAndDirectSqlUpdateMethods:
             int_id = conn.db.execute("SELECT id FROM items").fetchone()[0]
             h = coll.query_engine.helpers
 
-            # _perform_enhanced_sql_update across all operators
-            updated = h._perform_enhanced_sql_update(
+            orig = coll.find_one({"_id": doc_id})
+            updated, _ = h._internal_update(
                 doc_id,
                 {
                     "$set": {"nested.k": 2, "obj": {"x": 1}, "b_flag": True},
@@ -339,7 +325,7 @@ class TestLegacyAndDirectSqlUpdateMethods:
                     "$rename": {"old.nested": "moved.nested", "missing": "no"},
                     "$setOnInsert": {"ignored": 1},
                 },
-                coll.find_one({"_id": doc_id}),
+                orig,
             )
             assert updated["nested"]["k"] == 2
             assert updated["moved"]["nested"] == 42
@@ -347,8 +333,8 @@ class TestLegacyAndDirectSqlUpdateMethods:
             assert updated["missing_inc"] == 3
             assert updated["missing_mul"] == 0
 
-            # Negative position & slice=0 & negative slice & scalar push in enhanced update
-            updated2 = h._perform_enhanced_sql_update(
+            # Negative position & slice=0 & negative slice & scalar push
+            updated2, _ = h._internal_update(
                 doc_id,
                 {
                     "$push": {
@@ -364,25 +350,17 @@ class TestLegacyAndDirectSqlUpdateMethods:
             )
             assert updated2["empty_after"] == []
 
-            # original_doc=None uses _get_document_fields + json_replace + Binary $set
-            res_replaced = h._perform_enhanced_sql_update(
-                doc_id, {"$set": {"a": 11, "bin_f": Binary(b"bb")}}
+            res_replaced, _ = h._internal_update(
+                doc_id,
+                {"$set": {"a": 11, "bin_f": Binary(b"bb")}},
+                updated2,
             )
             assert res_replaced["a"] == 11 and res_replaced["bin_f"] == b"bb"
 
-            # Error branches in _perform_enhanced_sql_update & _perform_sql_update
-            with pytest.raises(ValueError, match="Could not find integer ID"):
-                h._perform_enhanced_sql_update(
-                    ObjectId(), {"$set": {"a": 1}}, {}
-                )
-            with pytest.raises(RuntimeError):
-                h._perform_sql_update(999999, {"$set": {"a": 1}})
-            with pytest.raises(RuntimeError, match="No valid operations"):
-                h._perform_sql_update(int_id, {})
-
-            # _perform_sql_update works with integer row id for basic & extended ops
-            res_basic = h._perform_sql_update(
-                int_id, {"$set": {"basic": "ok"}, "$unset": {"b_flag": ""}}
+            res_basic, _ = h._internal_update(
+                doc_id,
+                {"$set": {"basic": "ok"}, "$unset": {"b_flag": ""}},
+                res_replaced,
             )
             assert res_basic["basic"] == "ok" and "b_flag" not in res_basic
 

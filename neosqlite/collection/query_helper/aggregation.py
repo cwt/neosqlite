@@ -6,7 +6,6 @@ aggregation pipeline processing.  SQL-based aggregation lives in
 _sql_aggregation.py (SqlAggregationMixin).
 """
 
-import json
 import logging
 import math
 import uuid
@@ -29,32 +28,17 @@ if TYPE_CHECKING:
     from ..jsonb_support import JSONBContext
 
 
-from ..type_utils import _hashable_group_key
+from ..type_utils import _hashable_group_key, canonical_value_key
 
 
 def _addtoset_key(value: Any) -> Any:
     """Return a hashable canonical key for ``$addToSet`` membership.
 
-    Tags values by type so booleans, numbers, dicts, lists, and strings do not
-    collide in Python sets, and normalizes numeric types via ``float`` (#155).
-
-    Args:
-        value: Document field or evaluated expression value to key.
-
-    Returns:
-        Any: Hashable tagged tuple suitable for set membership checks.
+    Delegates to :func:`canonical_value_key` with ``fold_numbers=True`` so
+    booleans stay distinct from numbers while ``int``/``float`` equality
+    matches MongoDB ``$addToSet`` semantics (#155).
     """
-    if isinstance(value, dict):
-        return ("d", json.dumps(value, sort_keys=True, default=str))
-    if isinstance(value, list):
-        return ("l", tuple(_addtoset_key(v) for v in value))
-    if isinstance(value, bool):
-        return ("b", value)
-    if isinstance(value, (int, float)):
-        return ("n", repr(float(value)))
-    if isinstance(value, str):
-        return ("s", value)
-    return ("o", str(value))
+    return canonical_value_key(value, fold_numbers=True)
 
 
 class AggregationMixin(SqlAggregationMixin):

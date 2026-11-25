@@ -42,20 +42,24 @@ def test_parser_stack_overflow_selects_python_fallback(monkeypatch):
         assert helpers._build_set_data_expression(_COMPLEX_UPDATE) is None
 
 
-def test_legacy_sql_path_declines_rename():
-    """The lossy legacy $rename SQL must never be selected.
+def test_rename_fallback_uses_python_without_corruption(monkeypatch):
+    """When unified SQL declines $rename (e.g. parser overflow), Python fallback stays lossless.
 
-    It creates JSON null for missing sources and deletes self-renamed fields,
-    so updates containing $rename must use the unified builder or Python.
+    Missing source fields must not become JSON null, and self-renames must not
+    delete the field.
     """
     with neosqlite.Connection(":memory:") as conn:
-        helpers = conn.ops.query_engine.helpers
-        assert not helpers._can_use_sql_updates(
-            {"$rename": {"a": "b"}}, doc_id=1
+        coll = conn.items
+        coll.insert_one({"_id": 1, "bits": 7})
+        helpers = coll.query_engine.helpers
+        monkeypatch.setattr(
+            helpers, "_build_set_data_expression", lambda *args, **kwargs: None
         )
-        assert not helpers._can_use_sql_updates(_COMPLEX_UPDATE, doc_id=1)
-        # Without $rename the legacy path is still available.
-        assert helpers._can_use_sql_updates({"$set": {"a": 1}}, doc_id=1)
+        coll.update_one(
+            {"_id": 1}, {"$rename": {"missing": "b", "bits": "bits"}}
+        )
+        doc = coll.find_one({"_id": 1})
+        assert doc == {"_id": 1, "bits": 7}
 
 
 def test_probe_error_other_than_overflow_does_not_change_selection(monkeypatch):

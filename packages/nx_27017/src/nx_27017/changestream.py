@@ -15,7 +15,6 @@ per-database lock and are plain indexed SELECTs.
 from __future__ import annotations
 
 import logging
-import re
 import secrets
 import threading
 import time
@@ -24,9 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from neosqlite.changestream import (
-    _RANGE_OPS,
-    _compare_range_op,
-    _field_present,
+    _match_filter,
 )
 from neosqlite.collection.json_helpers import neosqlite_json_loads
 
@@ -88,153 +85,6 @@ def _wire_rowid(token: Any) -> int | None:
     except (ValueError, TypeError, IndexError, AttributeError):
         return None
     return None
-
-
-def _get_dotted(document: Any, path: str) -> Any:
-    """Resolve a dot-separated field path from a nested mapping.
-
-    Args:
-        document: Root value (typically a ``dict``) to traverse.
-        path: Dot-delimited key path such as ``"fullDocument.status"``.
-
-    Returns:
-        Any: Value at ``path``, or ``None`` if any intermediate value is not a
-            ``dict`` or a key is missing.
-    """
-    current = document
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return None
-        current = current[part]
-    return current
-
-
-def _match_spec(value: Any, condition: Any) -> bool:
-    """Evaluate a ``$match`` predicate against a field value.
-
-    Supports direct equality, compiled ``re.Pattern``, as well as operator
-    dictionaries using ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``,
-    ``$lte``, ``$in``, ``$nin``, ``$exists``, ``$regex``/``$options``, and
-    ``$not``. Unrecognized ``$``-prefixed operators evaluate to ``False``.
-
-    Args:
-        value: Actual field value extracted from a change event.
-        condition: Expected scalar/dict/pattern value or operator dict.
-
-    Returns:
-        bool: ``True`` if ``value`` satisfies ``condition``, otherwise
-            ``False``.
-    """
-    if isinstance(condition, dict) and any(
-        k.startswith("$") for k in condition
-    ):
-        for op, expected in condition.items():
-            if op == "$eq":
-                if value != expected:
-                    return False
-            elif op == "$ne":
-                if value == expected:
-                    return False
-            elif op in _RANGE_OPS:
-                if not _compare_range_op(value, expected, _RANGE_OPS[op]):
-                    return False
-            elif op == "$in":
-                try:
-                    matched = value in expected
-                except TypeError:
-                    return False
-                if not matched:
-                    return False
-            elif op == "$nin":
-                try:
-                    matched = value in expected
-                except TypeError:
-                    return False
-                if matched:
-                    return False
-            elif op == "$exists":
-                if bool(expected) != (value is not None):
-                    return False
-            elif op == "$regex":
-                if isinstance(expected, re.Pattern):
-                    pattern = expected
-                elif isinstance(expected, str):
-                    flags = 0
-                    raw_opts = condition.get("$options", "")
-                    if isinstance(raw_opts, str):
-                        if "i" in raw_opts:
-                            flags |= re.IGNORECASE
-                        if "m" in raw_opts:
-                            flags |= re.MULTILINE
-                        if "s" in raw_opts:
-                            flags |= re.DOTALL
-                        if "x" in raw_opts:
-                            flags |= re.VERBOSE
-                    try:
-                        pattern = re.compile(expected, flags)
-                    except re.error:
-                        return False
-                else:
-                    return False
-                if not isinstance(value, str) or pattern.search(value) is None:
-                    return False
-            elif op == "$options":
-                if "$regex" not in condition:
-                    return False
-            elif op == "$not":
-                if isinstance(expected, re.Pattern):
-                    if (
-                        isinstance(value, str)
-                        and expected.search(value) is not None
-                    ):
-                        return False
-                elif isinstance(expected, dict):
-                    if _match_spec(value, expected):
-                        return False
-                else:
-                    return False
-            else:
-                return False
-        return True
-    if isinstance(condition, re.Pattern):
-        return isinstance(value, str) and condition.search(value) is not None
-    return bool(value == condition)
-
-
-def _match_filter(change: dict[str, Any], spec: dict[str, Any]) -> bool:
-    """Evaluate a change-stream ``$match`` filter against a change event."""
-    for key, condition in spec.items():
-        if key == "$and":
-            if not isinstance(condition, list) or not all(
-                isinstance(sub, dict) and _match_filter(change, sub)
-                for sub in condition
-            ):
-                return False
-        elif key == "$or":
-            if not isinstance(condition, list) or not any(
-                isinstance(sub, dict) and _match_filter(change, sub)
-                for sub in condition
-            ):
-                return False
-        elif key == "$nor":
-            if not isinstance(condition, list) or any(
-                isinstance(sub, dict) and _match_filter(change, sub)
-                for sub in condition
-            ):
-                return False
-        elif isinstance(condition, dict) and any(
-            k.startswith("$") for k in condition
-        ):
-            ops = dict(condition)
-            if "$exists" in ops:
-                exists_expected = ops.pop("$exists")
-                if bool(exists_expected) != _field_present(change, key):
-                    return False
-            if ops and not _match_spec(_get_dotted(change, key), ops):
-                return False
-        elif not _match_spec(_get_dotted(change, key), condition):
-            return False
-    return True
 
 
 def _pipeline_matches(
@@ -451,7 +301,8 @@ class ChangeStreamManager:
                 ),
             ).fetchone()
             return bool(rows and rows[0] == 3)
-        except Exception:
+        except Exception as exc:
+            logger.debug("Trigger check failed for %s: %s", name, exc)
             return False
 
     def _drop_tracker_locked(self, tracker: dict[str, Any]) -> None:
@@ -464,8 +315,8 @@ class ChangeStreamManager:
         if watcher is not None:
             try:
                 watcher.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Failed closing watcher during drop: %s", exc)
 
     def _watermark_now(self, tracker: dict[str, Any]) -> int:
         """Return the latest changelog row ID for a tracked collection.
@@ -486,7 +337,8 @@ class ChangeStreamManager:
                 (collection.name,),
             ).fetchone()
             return int(row[0]) if row else 0
-        except Exception:
+        except Exception as exc:
+            logger.debug("Failed querying current watermark: %s", exc)
             return 0
 
     # -- wire streams --------------------------------------------------
@@ -750,7 +602,12 @@ class ChangeStreamManager:
                     doc_size = len(
                         BSON.encode(convert_neo_to_bson_objectids(doc))
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to BSON-encode change event for sizing, "
+                        "falling back to repr: %s",
+                        exc,
+                    )
                     doc_size = len(repr(doc))
                 if batch and used_bytes + doc_size > MAX_BSON_DOCUMENT_SIZE:
                     break

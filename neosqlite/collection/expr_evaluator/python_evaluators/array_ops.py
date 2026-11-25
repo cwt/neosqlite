@@ -3,55 +3,11 @@
 from __future__ import annotations
 
 import json as _json
-from datetime import datetime
 from typing import Any
 
+from neosqlite.collection.type_utils import bson_sort_key
+
 from .base import BasePythonMixin, _is_mongo_truthy
-
-# BSON comparison order groups (lower = earlier in sort).
-# Order: Null < Numbers < Strings < Objects < Arrays <
-#        BinData < ObjectId < Boolean < Date < Timestamp < Regex
-
-
-def _bson_sort_key(value: Any) -> tuple[int, Any]:
-    """Return a sort key tuple that encodes BSON comparison order.
-
-    The first element is the BSON type rank (0..7, or 99 for unknown types),
-    and the second is a comparable representation of the value within that
-    group.
-
-    Args:
-        value: Value to compute a BSON comparison sort key for.
-
-    Returns:
-        tuple[int, Any]: Pair of ``(type_rank, comparable_value)`` preserving
-        MongoDB BSON type ordering.
-    """
-    if value is None:
-        return (0, None)
-    # bool is a subclass of int; check it first.
-    if isinstance(value, bool):
-        return (6, value)
-    if isinstance(value, (int, float)):
-        return (1, value)
-    if isinstance(value, str):
-        return (2, value)
-    if isinstance(value, dict):
-        return (3, str(value))
-    if isinstance(value, list):
-        return (4, str(value))
-    if isinstance(value, (bytes, bytearray)):
-        return (5, value)
-    if isinstance(value, datetime):
-        return (7, value)
-    # From neosqlite.objectid / neosqlite.binary if available
-    type_name = type(value).__name__
-    if type_name == "ObjectId":
-        return (5, str(value))
-    if type_name == "Binary":
-        return (5, bytes(value) if hasattr(value, "__bytes__") else str(value))
-    # Fallback: unknown types sort last
-    return (99, str(value))
 
 
 def _bson_sort(array: list[Any]) -> list[Any]:
@@ -68,7 +24,7 @@ def _bson_sort(array: list[Any]) -> list[Any]:
         when same-group elements cannot be compared.
     """
     try:
-        return sorted(array, key=_bson_sort_key)
+        return sorted(array, key=bson_sort_key)
     except TypeError:
         # Fallback: if two values of the same type still can't be compared,
         # return original order.
@@ -138,13 +94,12 @@ def _bson_min_max(array: list, is_min: bool):
     Returns:
         Any: Minimum or maximum non-null element, or ``None`` if empty.
     """
-    from neosqlite.collection.type_utils import bson_sort_key
-
     vals = [v for v in array if v is not None]
     if not vals:
         return None
-    key = lambda v: bson_sort_key(v)  # noqa: E731
-    return min(vals, key=key) if is_min else max(vals, key=key)
+    return (
+        min(vals, key=bson_sort_key) if is_min else max(vals, key=bson_sort_key)
+    )
 
 
 class ArrayPythonMixin(BasePythonMixin):

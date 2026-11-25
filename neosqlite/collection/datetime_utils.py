@@ -122,9 +122,50 @@ def is_datetime_regex(pattern: str) -> bool:
     return any(ind.search(pattern) for ind in _COMPILED_INDICATORS)
 
 
+def contains_datetime_operations(query: Any) -> bool:
+    """Return True when ``query`` references datetime values, ranges, ``$type``, or regexes."""
+    if not isinstance(query, dict):
+        return False
+
+    for field, value in query.items():
+        if (
+            field == "_id"
+            and isinstance(value, dict)
+            and any(op in value for op in ("$gt", "$gte", "$lt", "$lte"))
+        ):
+            continue
+        if field in ("$and", "$or", "$nor"):
+            if isinstance(value, list) and any(
+                isinstance(cond, dict) and contains_datetime_operations(cond)
+                for cond in value
+            ):
+                return True
+        elif field == "$not":
+            if isinstance(value, dict) and contains_datetime_operations(value):
+                return True
+        elif isinstance(value, dict):
+            for operator, op_value in value.items():
+                if operator in ("$gte", "$gt", "$lte", "$lt", "$eq", "$ne"):
+                    if is_datetime_value(op_value):
+                        return True
+                elif operator in ("$in", "$nin"):
+                    if isinstance(op_value, list) and any(
+                        is_datetime_value(item) for item in op_value
+                    ):
+                        return True
+                elif operator == "$type" and op_value in (9, "date", "Date"):
+                    return True
+                elif operator == "$regex" and is_datetime_regex(op_value):
+                    return True
+        elif is_datetime_value(value):
+            return True
+    return False
+
+
 __all__ = [
     "is_datetime_value",
     "is_datetime_regex",
+    "contains_datetime_operations",
     "DATETIME_PATTERNS",
     "COMPILED_DATETIME_PATTERNS",
     "DATETIME_INDICATORS",

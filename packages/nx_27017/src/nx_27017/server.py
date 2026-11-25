@@ -116,6 +116,90 @@ def _read_exact_sync(
     return b"".join(chunks)
 
 
+def _parse_frame_header(header: bytes) -> tuple[int, int, int] | None:
+    """Validate and unpack ``(message_length, request_id, opcode)`` from a header."""
+    message_length = struct.unpack("<i", header[0:4])[0]
+    request_id = struct.unpack("<i", header[4:8])[0]
+    struct.unpack("<i", header[8:12])[0]
+    opcode = struct.unpack("<i", header[12:16])[0]
+    if (
+        message_length < MESSAGE_HEADER_SIZE
+        or message_length > MAX_MESSAGE_SIZE_BYTES
+    ):
+        logger.warning(f"Invalid message length: {message_length}")
+        return None
+    return message_length, request_id, opcode
+
+
+def _process_wire_message(
+    opcode: int,
+    full_message: bytes,
+    request_id: int,
+    conn_id: str,
+    handler: NeoSQLiteHandler,
+) -> bytes | None:
+    """Dispatch a decoded wire frame and return the serialized reply bytes."""
+    logger.debug(f"Received: len={len(full_message)}, opcode={opcode}")
+    match opcode:
+        case WireProtocol.OP_MSG:
+            orig_request_id = request_id
+            more_to_come = False
+            try:
+                msg = OP_MSG.parse(full_message)
+                msg["_conn_id"] = conn_id
+                orig_request_id = msg.get("request_id", orig_request_id)
+                more_to_come = bool(msg.get("more_to_come", False))
+
+                if _is_insert_command(msg):
+                    request_id, response_doc = handler.handle_insert(msg)
+                else:
+                    request_id, response_doc = handler.handle_command(msg)
+            except Exception as e:
+                logger.exception("Error handling OP_MSG")
+                response_doc = {"ok": 0, "errmsg": str(e)}
+                request_id = orig_request_id
+
+            if more_to_come:
+                return None
+            logger.debug(
+                f"Command response: response_keys={list(response_doc.keys()) if isinstance(response_doc, dict) else type(response_doc)}"
+            )
+            return ResponseBuilder.build_op_msg_reply(
+                request_id=_get_next_request_id(),
+                response_to=request_id,
+                document=response_doc,
+            )
+
+        case WireProtocol.OP_QUERY:
+            orig_request_id = request_id
+            try:
+                msg = OP_QUERY.parse(full_message)
+                msg["_conn_id"] = conn_id
+                orig_request_id = msg.get("request_id", orig_request_id)
+                reply_req_id, docs = handler.handle_query(msg)
+                return ResponseBuilder.build_reply(
+                    reply_req_id, orig_request_id, docs
+                )
+            except Exception as e:
+                logger.error(f"Error handling OP_QUERY: {e}")
+                return ResponseBuilder.build_reply(
+                    _get_next_request_id(),
+                    orig_request_id,
+                    [{"ok": 0, "$err": str(e), "errmsg": str(e)}],
+                    flags=2,
+                )
+
+        case _:
+            return ResponseBuilder.build_op_msg_reply(
+                request_id=0,
+                response_to=request_id,
+                document={
+                    "ok": 0,
+                    "errmsg": f"Unsupported opcode: {opcode}",
+                },
+            )
+
+
 async def handle_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
@@ -163,17 +247,10 @@ async def handle_client(
             else:
                 header = first_chunk
 
-            message_length = struct.unpack("<i", header[0:4])[0]
-            request_id = struct.unpack("<i", header[4:8])[0]
-            struct.unpack("<i", header[8:12])[0]
-            opcode = struct.unpack("<i", header[12:16])[0]
-
-            if (
-                message_length < MESSAGE_HEADER_SIZE
-                or message_length > MAX_MESSAGE_SIZE_BYTES
-            ):
-                logger.warning(f"Invalid message length: {message_length}")
+            parsed = _parse_frame_header(header)
+            if parsed is None:
                 return
+            message_length, request_id, opcode = parsed
 
             if message_length > MESSAGE_HEADER_SIZE:
                 body = await _read_exact_async(
@@ -191,86 +268,28 @@ async def handle_client(
             else:
                 full_message = header
 
-            match opcode:
-                case WireProtocol.OP_MSG:
-                    orig_request_id = request_id
-                    more_to_come = False
-                    try:
-                        msg = OP_MSG.parse(full_message)
-                        msg["_conn_id"] = conn_id
-                        orig_request_id = msg.get("request_id", orig_request_id)
-                        more_to_come = bool(msg.get("more_to_come", False))
-
-                        if _is_insert_command(msg):
-                            request_id, response_doc = await asyncio.to_thread(
-                                handler.handle_insert, msg
-                            )
-                        else:
-                            request_id, response_doc = await asyncio.to_thread(
-                                handler.handle_command, msg
-                            )
-                    except Exception as e:
-                        logger.exception("Error handling OP_MSG")
-                        response_doc = {"ok": 0, "errmsg": str(e)}
-                        request_id = orig_request_id
-
-                    if not more_to_come:
-                        try:
-                            reply = ResponseBuilder.build_op_msg_reply(
-                                request_id=_get_next_request_id(),
-                                response_to=request_id,
-                                document=response_doc,
-                            )
-                            writer.write(reply)
-                            await writer.drain()
-                        except Exception as e:
-                            logger.error(f"Error sending response: {e}")
-
-                case WireProtocol.OP_QUERY:
-                    orig_request_id = request_id
-                    try:
-                        msg = OP_QUERY.parse(full_message)
-                        msg["_conn_id"] = conn_id
-                        orig_request_id = msg.get("request_id", orig_request_id)
-                        reply_req_id, docs = await asyncio.to_thread(
-                            handler.handle_query, msg
-                        )
-                        reply = ResponseBuilder.build_reply(
-                            reply_req_id, orig_request_id, docs
-                        )
-                    except Exception as e:
-                        logger.error(f"Error handling OP_QUERY: {e}")
-                        reply = ResponseBuilder.build_reply(
-                            _get_next_request_id(),
-                            orig_request_id,
-                            [{"ok": 0, "$err": str(e), "errmsg": str(e)}],
-                            flags=2,
-                        )
-                    try:
-                        writer.write(reply)
-                        await writer.drain()
-                    except Exception as e:
-                        logger.error(f"Error sending OP_QUERY response: {e}")
-
-                case _:
-                    error_reply = ResponseBuilder.build_op_msg_reply(
-                        request_id=0,
-                        response_to=request_id,
-                        document={
-                            "ok": 0,
-                            "errmsg": f"Unsupported opcode: {opcode}",
-                        },
-                    )
-                    writer.write(error_reply)
+            reply = await asyncio.to_thread(
+                _process_wire_message,
+                opcode,
+                full_message,
+                request_id,
+                conn_id,
+                handler,
+            )
+            if reply is not None:
+                try:
+                    writer.write(reply)
                     await writer.drain()
+                except Exception as e:
+                    logger.error(f"Error sending response: {e}")
 
     except (
         ConnectionResetError,
         BrokenPipeError,
         asyncio.IncompleteReadError,
         TimeoutError,
-    ):
-        pass
+    ) as e:
+        logger.debug(f"Async client connection closed: {e}")
     finally:
         handler.decrement_connections()
         await asyncio.to_thread(handler.close_streams_for_connection, conn_id)
@@ -322,17 +341,10 @@ def handle_client_threaded(
                 else:
                     header = first_chunk
 
-                message_length = struct.unpack("<i", header[0:4])[0]
-                request_id = struct.unpack("<i", header[4:8])[0]
-                struct.unpack("<i", header[8:12])[0]
-                opcode = struct.unpack("<i", header[12:16])[0]
-
-                if (
-                    message_length < MESSAGE_HEADER_SIZE
-                    or message_length > MAX_MESSAGE_SIZE_BYTES
-                ):
-                    logger.warning(f"Invalid message length: {message_length}")
+                parsed = _parse_frame_header(header)
+                if parsed is None:
                     return
+                message_length, request_id, opcode = parsed
 
                 if message_length > MESSAGE_HEADER_SIZE:
                     body = _read_exact_sync(
@@ -350,77 +362,11 @@ def handle_client_threaded(
                 else:
                     full_message = header
 
-                logger.debug(
-                    f"Received: len={len(full_message)}, opcode={opcode}"
+                reply = _process_wire_message(
+                    opcode, full_message, request_id, conn_id, handler
                 )
-
-                if opcode == WireProtocol.OP_MSG:
-                    orig_request_id = request_id
-                    more_to_come = False
-                    try:
-                        msg = OP_MSG.parse(full_message)
-                        msg["_conn_id"] = conn_id
-                        orig_request_id = msg.get("request_id", orig_request_id)
-                        more_to_come = bool(msg.get("more_to_come", False))
-
-                        if _is_insert_command(msg):
-                            request_id, response_doc = handler.handle_insert(
-                                msg
-                            )
-                        else:
-                            request_id, response_doc = handler.handle_command(
-                                msg
-                            )
-                    except Exception as e:
-                        logger.exception(
-                            f"Error handling OP_MSG in threaded client: {e}"
-                        )
-                        response_doc = {"ok": 0, "errmsg": str(e)}
-                        request_id = orig_request_id
-
-                    if not more_to_come:
-                        logger.info(
-                            f"Command response: response_keys={list(response_doc.keys()) if isinstance(response_doc, dict) else type(response_doc)}"
-                        )
-                        response_request_id = _get_next_request_id()
-                        reply = ResponseBuilder.build_op_msg_reply(
-                            request_id=response_request_id,
-                            response_to=request_id,
-                            document=response_doc,
-                        )
-                        client_socket.sendall(reply)
-
-                elif opcode == WireProtocol.OP_QUERY:
-                    orig_request_id = request_id
-                    try:
-                        msg = OP_QUERY.parse(full_message)
-                        msg["_conn_id"] = conn_id
-                        orig_request_id = msg.get("request_id", orig_request_id)
-                        _, docs = handler.handle_query(msg)
-                        response_request_id = _get_next_request_id()
-                        reply = ResponseBuilder.build_reply(
-                            response_request_id, orig_request_id, docs
-                        )
-                    except Exception as e:
-                        logger.error(f"Error handling OP_QUERY: {e}")
-                        reply = ResponseBuilder.build_reply(
-                            _get_next_request_id(),
-                            orig_request_id,
-                            [{"ok": 0, "$err": str(e), "errmsg": str(e)}],
-                            flags=2,
-                        )
+                if reply is not None:
                     client_socket.sendall(reply)
-
-                else:
-                    error_reply = ResponseBuilder.build_op_msg_reply(
-                        request_id=0,
-                        response_to=request_id,
-                        document={
-                            "ok": 0,
-                            "errmsg": f"Unsupported opcode: {opcode}",
-                        },
-                    )
-                    client_socket.sendall(error_reply)
 
     except (ConnectionResetError, BrokenPipeError, TimeoutError, OSError) as e:
         logger.debug(f"Client connection error: {e}")
@@ -479,7 +425,7 @@ def run_server_threaded(
                 logger.warning(f"Error accepting connection: {e}")
                 time.sleep(0.05)
                 continue
-            logger.info(f"Accepted connection from {addr}")
+            logger.debug(f"Accepted connection from {addr}")
 
             client_thread = threading.Thread(
                 target=handle_client_threaded,

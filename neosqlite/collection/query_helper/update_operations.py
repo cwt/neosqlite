@@ -272,43 +272,10 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
                         f"Unified SQL update failed: {e}. Falling back."
                     )
 
-        # Legacy SQL path (only without array_filters) and Python fallback
-        if not array_filters and self._can_use_sql_updates(
-            update_spec, doc_id, original_doc
-        ):
-            # Use enhanced SQL update with json_insert/json_replace when possible
-            try:
-                updated_doc = self._perform_enhanced_sql_update(
-                    doc_id, update_spec, original_doc
-                )
-                return updated_doc, updated_doc != original_doc
-            except sqlite3.IntegrityError:
-                raise
-            except Exception as e:
-                logger.debug(
-                    f"Enhanced update failed: {e}. Falling back to standard SQL update."
-                )
-                try:
-                    updated_doc = self._perform_sql_update(doc_id, update_spec)
-                    return updated_doc, updated_doc != original_doc
-                except sqlite3.IntegrityError:
-                    raise
-                except Exception as e2:
-                    logger.debug(
-                        f"Standard SQL update failed: {e2}. Falling back to Python update."
-                    )
-                    return self._perform_python_update(
-                        doc_id,
-                        update_spec,
-                        original_doc,
-                        array_filters,
-                        query_filter,
-                    )
-        else:
-            # Fall back to Python-based updates for complex operations
-            return self._perform_python_update(
-                doc_id, update_spec, original_doc, array_filters, query_filter
-            )
+        # Fall back to Python-based updates when the unified SQL compiler declines
+        return self._perform_python_update(
+            doc_id, update_spec, original_doc, array_filters, query_filter
+        )
 
     def _perform_python_update(
         self,
