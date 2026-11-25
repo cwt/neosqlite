@@ -3,6 +3,7 @@ Tests for find_one, find_raw_batches, and RawBatchCursor.
 """
 
 import json
+from datetime import UTC
 
 import pytest
 
@@ -1897,3 +1898,279 @@ def test_collection_name_with_sql_keyword_substring():
         batches = list(cursor)
         assert len(batches) > 0
     db.close()
+
+
+class TestIssue190CursorAndSortingFixes:
+    """Regression tests for GitHub issue #190 cursor and sorting bugs."""
+
+    def test_cursor_next_rewind_and_closed(self, collection):
+        """Cursor supports next(), __next__(), rewind(), and closed guard."""
+        collection.insert_many([{"x": i} for i in range(4)])
+
+        cursor = collection.find({}).sort("x", 1)
+        assert cursor.alive is True
+        assert next(cursor)["x"] == 0
+        assert cursor.next()["x"] == 1
+        assert cursor.alive is True
+        assert cursor.to_list(1) == [
+            {"_id": doc["_id"], "x": 2} for doc in collection.find({"x": 2})
+        ]
+        assert next(cursor)["x"] == 3
+        with pytest.raises(StopIteration):
+            next(cursor)
+        assert cursor.alive is False
+        assert cursor.to_list() == []
+
+        # rewind resets state cleanly
+        cursor.rewind()
+        assert cursor.retrieved == 0
+        assert cursor.alive is True
+        assert [d["x"] for d in cursor.to_list()] == [0, 1, 2, 3]
+        assert cursor.alive is False
+
+        # close blocks further execution and iteration
+        closed_cursor = collection.find({})
+        closed_cursor.close()
+        assert closed_cursor.alive is False
+        assert list(closed_cursor) == []
+        assert closed_cursor.to_list() == []
+        with pytest.raises(StopIteration):
+            next(closed_cursor)
+
+    def test_cursor_alive_with_partial_unbounded_iteration(self, collection):
+        """Unbounded cursor stays alive until exhausted."""
+        collection.insert_many([{"x": i} for i in range(3)])
+        cursor = collection.find({})
+        assert cursor.alive is True
+        next(cursor)
+        assert cursor.retrieved == 1
+        assert cursor.alive is True
+        list(cursor)
+        assert cursor.alive is False
+
+    def test_cursor_clone_preserves_projection_batch_size_options(
+        self, collection
+    ):
+        """clone() deep-copies projection and preserves batch_size/options."""
+        collection.insert_many([{"a": 1, "b": 2}, {"a": 3, "b": 4}])
+        cursor = (
+            collection.find({}, {"a": 1, "_id": 0})
+            .batch_size(7)
+            .add_option(4)
+            .max_await_time_ms(250)
+        )
+        cloned = cursor.clone()
+        assert cloned._projection == {"a": 1, "_id": 0}
+        assert cloned._projection is not cursor._projection
+        assert cloned._batch_size == 7
+        assert cloned._options == 4
+        assert cloned._max_await_time_ms == 250
+
+    def test_cursor_lazy_where_with_limit(self, collection):
+        """Cursor.limit() stops iterating .where() predicate lazily."""
+        collection.insert_many([{"x": i} for i in range(20)])
+        calls = 0
+
+        def pred(doc):
+            nonlocal calls
+            calls += 1
+            return True
+
+        res = list(collection.find({}).where(pred).limit(3))
+        assert len(res) == 3
+        assert calls == 3
+
+    def test_datetime_query_respects_min_max_and_where(self, collection):
+        """Datetime fast-path applies cursor min/max and where predicate."""
+        from datetime import datetime
+
+        docs = [
+            {
+                "created": datetime(2025, 1, 1, i, tzinfo=UTC),
+                "score": i * 10,
+                "keep": i % 2 == 0,
+            }
+            for i in range(1, 7)
+        ]
+        collection.insert_many(docs)
+
+        def keep_doc(doc):
+            return doc["keep"]
+
+        start = datetime(2025, 1, 1, 0, tzinfo=UTC)
+        res = list(
+            collection.find({"created": {"$gte": start}})
+            .min([("score", 20)])
+            .max([("score", 60)])
+            .where(keep_doc)
+        )
+        assert sorted(d["score"] for d in res) == [20, 40]
+
+    def test_minmax_with_objectid_and_text_search(self, collection):
+        """min/max handles ObjectId _id bounds and $text queries."""
+        collection.insert_many(
+            [
+                {"title": "python database engine", "rank": 1},
+                {"title": "python sqlite cursor", "rank": 5},
+                {"title": "python aggregation pipeline", "rank": 10},
+            ]
+        )
+        collection.create_index("title", fts=True)
+
+        fts_res = list(
+            collection.find({"$text": {"$search": "python"}})
+            .min([("rank", 2)])
+            .max([("rank", 10)])
+        )
+        assert [d["rank"] for d in fts_res] == [5]
+
+        all_ids = sorted(d["_id"] for d in collection.find({}))
+        bounded = list(
+            collection.find({})
+            .min([("_id", all_ids[1])])
+            .max([("_id", all_ids[2])])
+        )
+        assert [d["_id"] for d in bounded] == [all_ids[1]]
+
+    def test_collation_strength_and_case_level_sorting(self, collection):
+        """Default strength=3 is case-sensitive; strength<=2 & not caseLevel is NOCASE."""
+        collection.insert_many(
+            [{"name": "b"}, {"name": "A"}, {"name": "a"}, {"name": "B"}]
+        )
+        # Default strength=3 -> case-sensitive ASCII order (uppercase before lowercase)
+        default_coll = [
+            d["name"]
+            for d in collection.find({})
+            .sort("name", 1)
+            .collation({"locale": "en", "caseLevel": False})
+        ]
+        assert default_coll == ["A", "B", "a", "b"]
+
+        # strength=2, caseLevel=True -> case-sensitive
+        with_case_level = [
+            d["name"]
+            for d in collection.find({})
+            .sort("name", 1)
+            .collation({"strength": 2, "caseLevel": True})
+        ]
+        assert with_case_level == ["A", "B", "a", "b"]
+
+        # strength=2, caseLevel=False -> case-insensitive in Python fallback too
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            nocase = [
+                d["name"].lower()
+                for d in collection.find({})
+                .sort("name", 1)
+                .collation({"strength": 2, "caseLevel": False})
+            ]
+            assert nocase == ["a", "a", "b", "b"]
+
+            cs_fallback = [
+                d["name"]
+                for d in collection.find({})
+                .sort("name", 1)
+                .collation({"strength": 3})
+            ]
+            assert cs_fallback == ["A", "B", "a", "b"]
+        finally:
+            set_force_fallback(original_state)
+
+    def test_mixed_naive_and_aware_datetime_sorting_and_meta_sort(
+        self, collection
+    ):
+        """Sorting naive + tz-aware datetimes and $meta textScore spec work."""
+        from datetime import datetime
+
+        collection.insert_many(
+            [
+                {
+                    "text": "alpha beta",
+                    "ts": datetime(2025, 1, 2, tzinfo=UTC),
+                },
+                {
+                    "text": "alpha alpha beta",
+                    "ts": datetime(2025, 1, 1),
+                },
+            ]
+        )
+        collection.create_index("text", fts=True)
+
+        # Sorting mixed naive and aware datetimes in Python fallback
+        original_state = get_force_fallback()
+        try:
+            set_force_fallback(True)
+            sorted_docs = list(collection.find({}).sort("ts", 1))
+            assert sorted_docs[0]["ts"].day == 1
+            assert sorted_docs[1]["ts"].day == 2
+        finally:
+            set_force_fallback(original_state)
+
+        # Collection.find(sort=...) preserves dict directions like $meta
+        meta_docs = list(
+            collection.find(
+                {"$text": {"$search": "alpha"}},
+                sort=[("score", {"$meta": "textScore"})],
+            )
+        )
+        assert len(meta_docs) == 2
+
+    def test_raw_batch_cursor_projection_hint_and_cleanup(self, collection):
+        """RawBatchCursor applies projection & hint in SQL path and cleans up."""
+        import json
+
+        collection.insert_many(
+            [
+                {"name": "Alice", "age": 30, "secret": "s1"},
+                {"name": "Bob", "age": 25, "secret": "s2"},
+            ]
+        )
+        collection.create_index("age")
+        rb = collection.find_raw_batches(
+            {"age": {"$gte": 20}},
+            projection={"name": 1, "_id": 0},
+            hint="age_1",
+        )
+        batches = list(rb)
+        decoded = [
+            json.loads(line)
+            for b in batches
+            for line in b.decode("utf-8").splitlines()
+            if line
+        ]
+        assert decoded == [{"name": "Bob"}, {"name": "Alice"}] or decoded == [
+            {"name": "Alice"},
+            {"name": "Bob"},
+        ]
+        assert all("secret" not in d and "_id" not in d for d in decoded)
+
+        # Temporary tables tracked for cleanup are dropped when iteration ends
+        rb._tables_to_cleanup.append("_tmp_test_190_cleanup")
+        collection.db.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS _tmp_test_190_cleanup (x INT)"
+        )
+        list(rb)
+        assert rb._tables_to_cleanup == []
+        row = collection.db.execute(
+            "SELECT name FROM sqlite_temp_master WHERE type='table' AND name='_tmp_test_190_cleanup'"
+        ).fetchone()
+        assert row is None
+
+    def test_aggregation_cursor_to_list_length_and_position(self, collection):
+        """AggregationCursor.to_list accepts length and advances position."""
+        collection.insert_many([{"a": i} for i in range(5)])
+        cursor = collection.aggregate([{"$match": {}}, {"$sort": {"a": 1}}])
+
+        first = next(cursor)
+        assert first["a"] == 0
+        chunk = cursor.to_list(2)
+        assert [d["a"] for d in chunk] == [1, 2]
+        assert cursor.retrieved == 3
+        assert cursor.alive is True
+
+        rest = cursor.to_list()
+        assert [d["a"] for d in rest] == [3, 4]
+        assert cursor.retrieved == 5
+        assert cursor.alive is False
+        assert cursor.to_list() == []

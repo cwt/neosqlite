@@ -1075,8 +1075,8 @@ class Collection:
 
     @staticmethod
     def _normalize_sort_spec(
-        sort: list[tuple[str, int]] | dict[str, int] | str | tuple[str, int],
-    ) -> list[tuple[str, int]]:
+        sort: list[tuple[str, Any]] | dict[str, Any] | str | tuple[str, Any],
+    ) -> list[tuple[str, Any]]:
         """Normalize PyMongo-style sort specifications to key/direction pairs.
 
         Args:
@@ -1084,18 +1084,24 @@ class Collection:
                 single ``(field, direction)`` tuple, or iterable of pairs.
 
         Returns:
-            list[tuple[str, int]]: Normalized list of ``(field, direction)``
-            tuples with integer directions.
+            list[tuple[str, Any]]: Normalized list of ``(field, direction)``
+            tuples with integer or metadata-dict directions.
         """
+
+        def _coerce_dir(direction: Any) -> Any:
+            return direction if isinstance(direction, dict) else int(direction)
+
         if isinstance(sort, str):
             return [(sort, 1)]
         if isinstance(sort, dict):
-            return [(key, int(direction)) for key, direction in sort.items()]
+            return [
+                (key, _coerce_dir(direction)) for key, direction in sort.items()
+            ]
         if isinstance(sort, tuple):
             if len(sort) == 2 and isinstance(sort[0], str):
-                return [(sort[0], int(sort[1]))]
-            return [(key, int(direction)) for key, direction in sort]
-        return [(key, int(direction)) for key, direction in list(sort)]
+                return [(sort[0], _coerce_dir(sort[1]))]
+            return [(key, _coerce_dir(direction)) for key, direction in sort]
+        return [(key, _coerce_dir(direction)) for key, direction in list(sort)]
 
     def _is_gridfs_collection(self) -> bool:
         """Check whether this collection is a GridFS system collection.
@@ -1258,7 +1264,7 @@ class Collection:
         filter: dict[str, Any] | None = None,
         limit: int | None = None,
         skip: int | None = None,
-        sort: list[tuple[str, int]] | None = None,
+        sort: list[tuple[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """Query chunk documents directly from a GridFS ``_chunks`` table."""
         table = quote_table_name(self.name)

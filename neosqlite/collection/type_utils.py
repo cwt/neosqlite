@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import math
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from ..exceptions import InvalidOperation
@@ -259,9 +259,34 @@ def bson_sort_key(value: Any) -> tuple:
     if isinstance(value, (list, tuple)):
         return (4, tuple(bson_sort_key(v) for v in value))
     if isinstance(value, datetime):
-        return (6, value)
+        aware = (
+            value.astimezone(UTC)
+            if value.tzinfo is not None
+            else value.replace(tzinfo=UTC)
+        )
+        return (6, aware)
     # Unknown types: order by class name, then repr — always comparable
     return (9, type(value).__name__, repr(value))
+
+
+def is_case_insensitive_collation(collation: dict[str, Any] | None) -> bool:
+    """Return True when a MongoDB collation requires case-insensitive order.
+
+    In MongoDB collation semantics, strengths ``1`` and ``2`` compare case
+    insensitively unless ``caseLevel`` is ``True``. Strength ``3`` (the default)
+    and higher always preserve case.
+
+    Args:
+        collation: Collation specification dictionary, or ``None``.
+
+    Returns:
+        bool: ``True`` if strings should be compared case-insensitively.
+    """
+    if not collation:
+        return False
+    strength = collation.get("strength", 3)
+    case_level = collation.get("caseLevel", False)
+    return bool(strength <= 2 and not case_level)
 
 
 # =============================================================================

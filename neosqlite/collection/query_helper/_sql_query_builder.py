@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
 from ..type_correction import normalize_id_query_for_db
+from ..type_utils import is_case_insensitive_collation
 from .utils import sanitize_fts_query
 
 if TYPE_CHECKING:
@@ -202,7 +203,7 @@ class SqlQueryBuilderMixin:
             sort: Mapping from field names to sort directions or ``$meta``
                 sort descriptors, or ``None`` for no sorting.
             collation: Optional collation dictionary controlling case
-                sensitivity (``strength <= 2`` or falsy ``caseLevel`` adds
+                sensitivity (``strength <= 2`` with falsy ``caseLevel`` adds
                 ``COLLATE NOCASE``).
 
         Returns:
@@ -213,12 +214,11 @@ class SqlQueryBuilderMixin:
             return ""
 
         clauses = []
-        collate_clause = ""
-        if collation:
-            strength = collation.get("strength", 3)
-            case_level = collation.get("caseLevel", False)
-            if strength <= 2 or not case_level:
-                collate_clause = " COLLATE NOCASE"
+        collate_clause = (
+            " COLLATE NOCASE"
+            if is_case_insensitive_collation(collation)
+            else ""
+        )
 
         for field, direction in sort.items():
             is_text_score_sort = (
@@ -997,7 +997,7 @@ class SqlQueryBuilderMixin:
 
         Sorts ``_id`` directly on the collection table and other fields via
         JSON extraction, adding ``COLLATE NOCASE`` when ``collation`` sets
-        ``strength <= 2`` or a falsy ``caseLevel``.
+        ``strength <= 2`` with a falsy ``caseLevel``.
 
         Args:
             sort: Mapping from field names to sort directions (1 for ASC, -1
@@ -1016,12 +1016,11 @@ class SqlQueryBuilderMixin:
         clauses = []
 
         # Get collation settings
-        collate_clause = ""
-        if collation:
-            strength = collation.get("strength", 3)
-            case_level = collation.get("caseLevel", False)
-            if strength <= 2 or not case_level:
-                collate_clause = " COLLATE NOCASE"
+        collate_clause = (
+            " COLLATE NOCASE"
+            if is_case_insensitive_collation(collation)
+            else ""
+        )
 
         data_col = (
             f"{quote_table_name(table_name)}.data" if table_name else "data"

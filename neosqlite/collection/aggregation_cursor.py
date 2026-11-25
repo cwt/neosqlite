@@ -66,6 +66,8 @@ class AggregationCursor:
         # Store allowDiskUse for API compatibility (ignored in NeoSQLite)
         self._allow_disk_use = allowDiskUse
         self._session = session
+        self._options = 0
+        self._max_await_time_ms: int | None = None
 
         # Validate session
         validate_session(session, collection._database)
@@ -351,17 +353,29 @@ class AggregationCursor:
         """
         return self.__next__()
 
-    def to_list(self) -> list[dict[str, Any]]:
-        """Convert the cursor to a list of documents.
+    def to_list(self, length: int | None = None) -> list[dict[str, Any]]:
+        """Convert remaining documents in the cursor to a list.
 
-        Executes the pipeline if not yet executed. Drains all items from a
-        ``CompressedQueue`` if ``quez`` was used, or returns a shallow copy of
-        the internal result list.
+        Executes the pipeline if not yet executed. Draws up to ``length``
+        documents (or all remaining documents when ``length`` is ``None``)
+        starting from the current cursor position and advances ``_position``.
+
+        Args:
+            length: Maximum number of documents to return, or ``None`` for all
+                remaining documents. Non-positive integers return ``[]``.
 
         Returns:
-            list[dict[str, Any]]: List containing all documents in the result
-            set.
+            list[dict[str, Any]]: List containing up to ``length`` documents
+            from the current position in the result set.
+
+        Raises:
+            ValueError: If ``length`` is provided and is not an integer.
         """
+        if length is not None and (
+            not isinstance(length, int) or isinstance(length, bool)
+        ):
+            raise ValueError("length must be an integer or None")
+
         # Execute the pipeline if not already done
         if not self._executed:
             self._execute()
@@ -369,11 +383,16 @@ class AggregationCursor:
         if self._results is None:
             return []
 
+        if length is not None and length <= 0:
+            return []
+
         # Handle CompressedQueue results
         if QUEZ_AVAILABLE and isinstance(self._results, CompressedQueue):
-            # Extract all items from the queue
-            results = []
-            while not self._results.empty():
+            # Extract up to length items from the queue
+            results: list[dict[str, Any]] = []
+            while not self._results.empty() and (
+                length is None or len(results) < length
+            ):
                 try:
                     results.append(self._results.get(block=False))
                 except Exception as e:
@@ -383,9 +402,16 @@ class AggregationCursor:
                     break
             return results
 
-        # Handle list results
+        # Handle list results from current cursor position
         if isinstance(self._results, list):
-            return self._results[:]
+            start = self._position
+            stop = (
+                len(self._results)
+                if length is None
+                else min(start + length, len(self._results))
+            )
+            self._position = stop
+            return self._results[start:stop]
 
         return []
 

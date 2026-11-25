@@ -841,21 +841,25 @@ class TestBuildSortClause:
         assert "COLLATE NOCASE" in clause
 
     def test_sort_with_collation_case_level_false(self, query_helper):
-        """Test sorting with caseLevel=False."""
+        """Test sorting with strength<=2 and caseLevel=False."""
         clause = query_helper._build_sort_clause(
-            {"name": 1}, collation={"caseLevel": False}
+            {"name": 1}, collation={"strength": 2, "caseLevel": False}
         )
         assert "COLLATE NOCASE" in clause
 
+        clause_case_sensitive = query_helper._build_sort_clause(
+            {"name": 1}, collation={"strength": 2, "caseLevel": True}
+        )
+        assert "COLLATE NOCASE" not in clause_case_sensitive
+
     def test_sort_with_collation_strength_3(self, query_helper):
-        """Test sorting with strength=3 (default, may still use NOCASE based on implementation)."""
+        """Test sorting with default strength=3 is case-sensitive."""
         clause = query_helper._build_sort_clause(
             {"name": 1}, collation={"strength": 3}
         )
-        # strength=3 with default caseLevel=False may still use NOCASE
-        # Just verify the clause is built correctly
         assert "ORDER BY" in clause
         assert "ASC" in clause
+        assert "COLLATE NOCASE" not in clause
 
     def test_sort_none_returns_empty(self, query_helper):
         """Test None sort returns empty string."""

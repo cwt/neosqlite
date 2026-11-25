@@ -49,7 +49,7 @@ class RawBatchCursor:
         collection: Collection,
         filter: dict[str, Any] | None = None,
         projection: dict[str, Any] | None = None,
-        hint: str | None = None,
+        hint: str | list[tuple[str, int]] | None = None,
         batch_size: int = 100,
         pipeline: list[dict[str, Any]] | None = None,
         session: ClientSession | None = None,
@@ -61,7 +61,7 @@ class RawBatchCursor:
             filter: Optional query filter dictionary; defaults to None ({}).
             projection: Optional field projection dictionary; defaults to
                 None ({}).
-            hint: Optional index hint string for the query.
+            hint: Optional index hint string or key list for the query.
             batch_size: Number of documents to serialize per yielded batch.
                 Defaults to 100.
             pipeline: Optional aggregation pipeline stages to execute instead
@@ -72,11 +72,11 @@ class RawBatchCursor:
         self._query_helpers = collection.query_engine.helpers
         self._filter = filter or {}
         self._projection = projection or {}
-        self._hint = hint
+        self._hint: str | list[tuple[str, int]] | None = hint
         self._batch_size = batch_size
         self._skip = 0
         self._limit: int | None = None
-        self._sort: dict[str, int] | None = None
+        self._sort: dict[str, int] | list[tuple[str, Any]] | None = None
         self._pipeline = pipeline
         self._session = session
         self._tables_to_cleanup: list[str] = []
@@ -103,137 +103,173 @@ class RawBatchCursor:
         Yields:
             bytes: UTF-8 encoded newline-delimited JSON documents for a batch.
         """
-        # If we have a pipeline, use aggregation
-        if self._pipeline is not None:
-            # Execute the aggregation pipeline
-            results = list(self._collection.aggregate(self._pipeline))
+        from .cursor import execute_sql_with_hint, resolve_hint_index
 
-            # Split results into batches
-            yield from _iter_json_batches(results, self._batch_size)
-            return
+        try:
+            # If we have a pipeline, use aggregation
+            if self._pipeline is not None:
+                # Execute the aggregation pipeline
+                results = list(self._collection.aggregate(self._pipeline))
 
-        # Build the query using the collection's SQL-building methods
-        where_result = self._query_helpers._build_simple_where_clause(
-            self._filter
-        )
+                # Split results into batches
+                yield from _iter_json_batches(results, self._batch_size)
+                return
 
-        if where_result is not None:
-            # Use SQL-based filtering
-            where_clause, params, tables = where_result
-
-            # Track tables for cleanup
-            if tables:
-                self._tables_to_cleanup.extend(tables)
-
-            # Use the collection's JSONB context to select data
-            jsonb = self._collection.query_engine.jsonb
-            json_func = jsonb.json_function_prefix
-
-            # Build ORDER BY clause. With no explicit sort we still order
-            # by the rowid so OFFSET pagination is deterministic across
-            # batches (#149); unordered LIMIT/OFFSET can skip or repeat
-            # documents when the plan changes between statements.
-            order_by = ""
-            if not self._sort:
-                order_by = (
-                    f"ORDER BY {quote_table_name(self._collection.name)}.id ASC"
-                )
-            if self._sort:
-                sort_clauses = []
-                table_ref = quote_table_name(self._collection.name)
-                for key, direction in self._sort.items():
-                    direction_sql = "DESC" if direction == -1 else "ASC"
-                    if key == "_id":
-                        # _id lives in a dedicated column (#113); ordering by
-                        # it also makes OFFSET pagination deterministic.
-                        sort_clauses.append(f"{table_ref}._id {direction_sql}")
-                    else:
-                        sort_clauses.append(
-                            f"{json_func}_extract(data, '{parse_json_path(key)}') "
-                            f"{direction_sql}"
-                        )
-                order_by = "ORDER BY " + ", ".join(sort_clauses)
-
-            # Build the full query with proper WHERE clause handling
-            if where_clause and where_clause.strip():
-                cmd = (
-                    f"SELECT id, _id, {jsonb.data_column()} as data "
-                    f"FROM {quote_table_name(self._collection.name)} {where_clause} {order_by}"
-                )
-            else:
-                cmd = (
-                    f"SELECT id, _id, {jsonb.data_column()} as data "
-                    f"FROM {quote_table_name(self._collection.name)} {order_by}"
-                )
-
-            # Execute and process in batches
-            offset = self._skip
-            total_returned = 0
-
-            while True:
-                # Calculate how many records to fetch in this batch
-                batch_limit = self._batch_size
-                if self._limit is not None and self._limit != 0:
-                    remaining_limit = abs(self._limit) - total_returned
-                    if remaining_limit <= 0:
-                        break
-                    batch_limit = min(batch_limit, remaining_limit)
-
-                # Add LIMIT and OFFSET for this batch
-                batch_cmd = f"{cmd} LIMIT {batch_limit} OFFSET {offset}"
-                db_cursor = self._collection.db.execute(batch_cmd, params)
-                rows = db_cursor.fetchall()
-
-                if not rows:
-                    break
-
-                # Convert rows to documents
-                docs = [
-                    self._collection._load_with_stored_id(
-                        row[0], row[2], row[1]
-                    )
-                    for row in rows
-                ]
-
-                # Convert to JSON batch using custom encoder to handle ObjectIds
-                batch_json = "\n".join(
-                    neosqlite_json_dumps(doc) for doc in docs
-                )
-                yield batch_json.encode("utf-8")
-
-                # Update counters
-                returned_count = len(rows)
-                total_returned += returned_count
-                offset += returned_count
-
-                # If we got fewer rows than requested, we're done
-                if returned_count < batch_limit:
-                    break
-
-                # If we've hit our limit, we're done
-                if (
-                    self._limit is not None
-                    and self._limit != 0
-                    and total_returned >= abs(self._limit)
-                ):
-                    break
-        else:
-            # Fallback to the original method for complex queries
-            # Get all documents first by using the collection's find method
-            cursor = self._collection.find(
-                self._filter, self._projection, self._hint
+            # Build the query using the collection's SQL-building methods
+            where_result = self._query_helpers._build_simple_where_clause(
+                self._filter
             )
-            # Apply any cursor modifications
-            if self._sort:
-                cursor._sort = self._sort
-            cursor._skip = self._skip
-            cursor._limit = self._limit
 
-            # Get all documents
-            docs = list(cursor)
+            if where_result is not None:
+                # Use SQL-based filtering
+                where_clause, params, tables = where_result
 
-            # Split into batches
-            yield from _iter_json_batches(docs, self._batch_size)
+                # Track tables for cleanup
+                if tables:
+                    self._tables_to_cleanup.extend(tables)
+
+                # Use the collection's JSONB context to select data
+                jsonb = self._collection.query_engine.jsonb
+                json_func = jsonb.json_function_prefix
+                table_name = quote_table_name(self._collection.name)
+
+                # Build ORDER BY clause. With no explicit sort we still order
+                # by the rowid so OFFSET pagination is deterministic across
+                # batches (#149); unordered LIMIT/OFFSET can skip or repeat
+                # documents when the plan changes between statements.
+                if not self._sort:
+                    order_by = f"ORDER BY {table_name}.id ASC"
+                else:
+                    sort_clauses = []
+                    sort_items = (
+                        self._sort.items()
+                        if isinstance(self._sort, dict)
+                        else self._sort
+                    )
+                    for key, direction in sort_items:
+                        direction_sql = "DESC" if direction == -1 else "ASC"
+                        if key == "_id":
+                            # _id lives in a dedicated column (#113); ordering by
+                            # it also makes OFFSET pagination deterministic.
+                            sort_clauses.append(
+                                f"{table_name}._id {direction_sql}"
+                            )
+                        else:
+                            sort_clauses.append(
+                                f"{json_func}_extract(data, '{parse_json_path(key)}') "
+                                f"{direction_sql}"
+                            )
+                    order_by = "ORDER BY " + ", ".join(sort_clauses)
+
+                hint_idx = resolve_hint_index(
+                    self._collection.db, self._collection.name, self._hint
+                )
+                indexed_by = (
+                    f" INDEXED BY {quote_table_name(hint_idx)}"
+                    if hint_idx
+                    else ""
+                )
+                where_part = (
+                    f" {where_clause}"
+                    if where_clause and where_clause.strip()
+                    else ""
+                )
+                cmd_without_hint = (
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
+                    f"FROM {table_name}{where_part} {order_by}"
+                )
+                cmd_with_hint = (
+                    f"SELECT id, _id, {jsonb.data_column()} as data "
+                    f"FROM {table_name}{indexed_by}{where_part} {order_by}"
+                )
+
+                # Execute and process in batches
+                offset = self._skip
+                total_returned = 0
+
+                while True:
+                    # Calculate how many records to fetch in this batch
+                    batch_limit = self._batch_size
+                    if self._limit is not None and self._limit != 0:
+                        remaining_limit = abs(self._limit) - total_returned
+                        if remaining_limit <= 0:
+                            break
+                        batch_limit = min(batch_limit, remaining_limit)
+
+                    # Add LIMIT and OFFSET for this batch
+                    batch_with_hint = (
+                        f"{cmd_with_hint} LIMIT {batch_limit} OFFSET {offset}"
+                    )
+                    batch_without_hint = f"{cmd_without_hint} LIMIT {batch_limit} OFFSET {offset}"
+                    db_cursor = execute_sql_with_hint(
+                        self._collection.db,
+                        batch_with_hint,
+                        batch_without_hint,
+                        params,
+                    )
+                    rows = db_cursor.fetchall()
+
+                    if not rows:
+                        break
+
+                    # Convert rows to documents
+                    docs = [
+                        self._collection._load_with_stored_id(
+                            row[0], row[2], row[1]
+                        )
+                        for row in rows
+                    ]
+                    if self._projection:
+                        docs = [
+                            self._query_helpers._apply_projection(
+                                self._projection, doc
+                            )
+                            for doc in docs
+                        ]
+
+                    # Convert to JSON batch using custom encoder to handle ObjectIds
+                    batch_json = "\n".join(
+                        neosqlite_json_dumps(doc) for doc in docs
+                    )
+                    yield batch_json.encode("utf-8")
+
+                    # Update counters
+                    returned_count = len(rows)
+                    total_returned += returned_count
+                    offset += returned_count
+
+                    # If we got fewer rows than requested, we're done
+                    if returned_count < batch_limit:
+                        break
+
+                    # If we've hit our limit, we're done
+                    if (
+                        self._limit is not None
+                        and self._limit != 0
+                        and total_returned >= abs(self._limit)
+                    ):
+                        break
+            else:
+                # Fallback to the original method for complex queries
+                cursor = self._collection.find(self._filter, self._projection)
+                try:
+                    if self._hint is not None:
+                        cursor = cursor.hint(self._hint)
+                    # Apply any cursor modifications
+                    if self._sort:
+                        cursor._sort = dict(self._sort)
+                    cursor._skip = self._skip
+                    cursor._limit = self._limit
+
+                    # Get all documents
+                    docs = list(cursor)
+                finally:
+                    cursor.close()
+
+                # Split into batches
+                yield from _iter_json_batches(docs, self._batch_size)
+        finally:
+            self._cleanup()
 
     def __del__(self) -> None:
         """Clean up resources on garbage collection."""
@@ -245,7 +281,7 @@ class RawBatchCursor:
             return
         for table in self._tables_to_cleanup:
             try:
-                self._collection._database.execute(
+                self._collection.db.execute(
                     f"DROP TABLE IF EXISTS {quote_table_name(table)}"
                 )
             except Exception as e:

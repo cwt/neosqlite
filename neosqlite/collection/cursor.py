@@ -9,9 +9,15 @@ from itertools import islice
 from typing import TYPE_CHECKING, Any, Self
 
 from .._sqlite import sqlite3
+from ..objectid import ObjectId
 from ..sql_utils import quote_table_name
 from .json_path_utils import parse_json_path
-from .type_utils import bson_sort_key, validate_session
+from .type_utils import (
+    bson_sort_key,
+    is_case_insensitive_collation,
+    serialize_sql_query_value,
+    validate_session,
+)
 
 if TYPE_CHECKING:
     from ..client_session import ClientSession
@@ -45,6 +51,151 @@ def _sanitize_sql_comment(comment: str) -> str:
             .replace("--", "- -")
         )
     return sanitized
+
+
+def parse_mongo_index_name(name: str) -> list[str] | None:
+    """Parse a MongoDB-style index name into its component field keys.
+
+    Handles ``"_id_"`` as ``["_id"]`` and names formatted like ``"age_1"``
+    or ``"a_1_b_-1"`` (preserving underscores inside field names).
+
+    Args:
+        name: MongoDB index name string.
+
+    Returns:
+        list[str] | None: List of indexed field names, or ``None`` if
+            ``name`` is empty or malformed.
+    """
+    if not name or name == "_id_":
+        return ["_id"] if name == "_id_" else None
+    tokens = name.split("_")
+    keys: list[str] = []
+    buf: list[str] = []
+    for tok in tokens:
+        if tok in ("1", "-1") and buf:
+            keys.append("_".join(buf))
+            buf = []
+        else:
+            buf.append(tok)
+    if buf or not keys:
+        return None
+    return keys
+
+
+def resolve_hint_index(
+    db: Any,
+    collection_name: str,
+    hint: str | list[tuple[str, int]] | None,
+) -> str | None:
+    """Resolve a cursor index ``hint`` to an existing SQLite index name.
+
+    Inspects ``sqlite_master`` for non-autoindex indexes on the collection
+    table and matches raw index names, ``"_id_"``, MongoDB-style index
+    names, or lists of ``(field, direction)`` tuples via stored index
+    metadata or naming convention.
+
+    Args:
+        db: SQLite database connection object.
+        collection_name: Name of the collection table.
+        hint: Index name string or sequence of ``(field, direction)`` tuples.
+
+    Returns:
+        str | None: Matching SQLite index name, or ``None`` if no hint is
+            set, fallback is forced, or no matching index exists.
+    """
+    from .index_manager import _load_index_keys
+    from .query_helper.utils import get_force_fallback
+
+    if hint is None or get_force_fallback():
+        return None
+
+    try:
+        rows = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
+            (collection_name,),
+        ).fetchall()
+    except Exception:
+        return None
+
+    idx_names = [
+        r[0]
+        for r in rows
+        if isinstance(r[0], str) and not r[0].startswith("sqlite_autoindex_")
+    ]
+    if not idx_names:
+        return None
+
+    quoted_tbl = quote_table_name(collection_name)
+    id_idx = f"idx_{quoted_tbl}_id"
+
+    if isinstance(hint, str):
+        if hint in idx_names:
+            return hint
+        if hint == "_id_":
+            return id_idx if id_idx in idx_names else None
+        target_keys = parse_mongo_index_name(hint) or [hint]
+    elif isinstance(hint, (list, tuple)) and hint:
+        if not all(
+            isinstance(item, (list, tuple))
+            and len(item) == 2
+            and isinstance(item[0], str)
+            for item in hint
+        ):
+            return None
+        target_keys = [item[0] for item in hint]
+        if target_keys == ["_id"]:
+            return id_idx if id_idx in idx_names else None
+    else:
+        return None
+
+    expected_suffix = "_" + "_".join(k.replace(".", "_") for k in target_keys)
+    for idx_name in idx_names:
+        if idx_name == id_idx:
+            continue
+        stored = _load_index_keys(db, idx_name)
+        if stored is not None and stored == target_keys:
+            return idx_name
+        if idx_name == f"idx_{quoted_tbl}{expected_suffix}":
+            return idx_name
+    return None
+
+
+def execute_sql_with_hint(
+    db: Any,
+    cmd_with_hint: str,
+    cmd_without_hint: str,
+    params: list[Any] | tuple[Any, ...],
+) -> Any:
+    """Execute a SQL query with an optional ``INDEXED BY`` fallback.
+
+    Attempts ``cmd_with_hint`` first and retries ``cmd_without_hint`` if
+    SQLite raises ``OperationalError`` indicating the hinted index cannot
+    be used.
+
+    Args:
+        db: SQLite database connection object.
+        cmd_with_hint: SQL query containing an ``INDEXED BY`` hint clause.
+        cmd_without_hint: Equivalent SQL query without ``INDEXED BY``.
+        params: Positional parameter sequence for the SQL statement.
+
+    Returns:
+        Any: Executed SQLite cursor object.
+
+    Raises:
+        sqlite3.OperationalError: Re-raised when the error is unrelated to
+            index hint usability or no fallback SQL differs.
+    """
+    try:
+        return db.execute(cmd_with_hint, params)
+    except sqlite3.OperationalError as e:
+        msg = str(e).lower()
+        if cmd_with_hint != cmd_without_hint and (
+            "cannot use index" in msg
+            or "no such index" in msg
+            or "no query solution" in msg
+        ):
+            return db.execute(cmd_without_hint, params)
+        raise
 
 
 class Cursor:
@@ -96,6 +247,10 @@ class Cursor:
         self._closed = False
         self._active_generator: Any = None
         self._generator_closed = False
+        self._options = 0
+        self._max_await_time_ms: int | None = None
+        self._exhausted = False
+        self._iter: Iterator[dict[str, Any]] | None = None
 
         # Validate session
         validate_session(session, collection._database)
@@ -166,7 +321,59 @@ class Cursor:
             Iterator[dict[str, Any]]: Iterator yielding documents after
                 filtering, sorting, pagination, and projection.
         """
-        return self._execute_query()
+        if self._closed:
+            return iter(())
+        if self._iter is not None and not self._exhausted:
+            return self._iter
+        self._exhausted = False
+        self._iter = self._execute_query()
+        return self._iter
+
+    def __next__(self) -> dict[str, Any]:
+        """Return the next matching document from the cursor.
+
+        Returns:
+            dict[str, Any]: Next matching document dictionary.
+
+        Raises:
+            StopIteration: When the cursor is closed or exhausted.
+        """
+        if self._closed or self._exhausted:
+            raise StopIteration
+        if self._iter is None:
+            self._iter = self._execute_query()
+        try:
+            return next(self._iter)
+        except StopIteration:
+            self._exhausted = True
+            self._iter = None
+            raise
+
+    def next(self) -> dict[str, Any]:
+        """Return the next document in the cursor (PyMongo compatibility)."""
+        return self.__next__()
+
+    def rewind(self) -> Self:
+        """Reset this cursor back to its initial unevaluated state.
+
+        Closes any active streaming generator, drops temporary tables, and
+        resets iteration state and ``retrieved`` count to ``0``.
+
+        Returns:
+            Self: This cursor instance for method chaining.
+        """
+        gen = getattr(self, "_active_generator", None)
+        if gen is not None:
+            try:
+                gen.close()
+            except Exception as e:
+                logger.debug(f"Failed to close generator on rewind: {e}")
+            self._active_generator = None
+        self._cleanup_tables()
+        self._iter = None
+        self._retrieved = 0
+        self._exhausted = False
+        return self
 
     def limit(self, limit: int) -> Self:
         """Limit the maximum number of documents returned by this cursor.
@@ -384,17 +591,22 @@ class Cursor:
             >>> adults = cursor.to_list()
             >>> first_5 = cursor.to_list(5)
         """
+        if self._closed or self._exhausted:
+            return []
         if length is None:
             return list(self)
+        if length <= 0:
+            return []
         # islice bounds work/memory to exactly `length` docs (#153)
-        return list(islice(self, max(length, 0)))
+        return list(islice(self, length))
 
     def clone(self) -> Self:
         """Create an unevaluated copy of this cursor with identical options.
 
-        Deep-copies filter, sort, min, max, and collation settings while
-        preserving projection, hint, skip, limit, comment, session, and
-        ``_where_predicate`` with ``retrieved`` reset to ``0``.
+        Deep-copies filter, projection, hint, sort, min, max, and collation
+        settings while preserving pagination, batch size, options, await
+        timeout, comment, session, and ``_where_predicate`` with
+        ``retrieved`` reset to ``0``.
 
         Returns:
             Self: New cursor instance with the same query configuration.
@@ -408,11 +620,14 @@ class Cursor:
         cloned = self.__class__(
             self._collection,
             filter=deepcopy(self._filter),
-            projection=self._projection,
-            hint=self._hint,  # type: ignore[arg-type]
+            projection=deepcopy(self._projection),
+            hint=deepcopy(self._hint),  # type: ignore[arg-type]
         )
         cloned._skip = self._skip
         cloned._limit = self._limit
+        cloned._batch_size = self._batch_size
+        cloned._options = self._options
+        cloned._max_await_time_ms = self._max_await_time_ms
         cloned._sort = deepcopy(self._sort) if self._sort else None
         cloned._comment = self._comment
         cloned._min = deepcopy(self._min) if self._min else None
@@ -441,16 +656,14 @@ class Cursor:
         """Check whether the cursor may still have documents to yield.
 
         Returns:
-            bool: ``False`` once iteration completes or ``_limit`` documents
-                have been retrieved; ``True`` otherwise.
+            bool: ``False`` once closed, iteration completes, or ``_limit``
+                documents have been retrieved; ``True`` otherwise.
         """
-        # Cursor is alive if we haven't retrieved any documents yet
-        # or if we haven't reached the limit
-        if hasattr(self, "_exhausted"):
-            return False  # iteration completed (#157)
+        if self._closed or self._exhausted:
+            return False
         if self._limit is not None and self._limit != 0:
             return self._retrieved < abs(self._limit)
-        return self._retrieved == 0
+        return True
 
     @property
     def collection(self):
@@ -484,111 +697,14 @@ class Cursor:
             return (f"sqlite://{db_name}", 0)
 
     def _parse_mongo_index_name(self, name: str) -> list[str] | None:
-        """Parse a MongoDB-style index name into its component field keys.
-
-        Handles ``"_id_"`` as ``["_id"]`` and names formatted like
-        ``"age_1"`` or ``"a_1_b_-1"`` (preserving underscores inside field
-        names).
-
-        Args:
-            name: MongoDB index name string.
-
-        Returns:
-            list[str] | None: List of indexed field names, or ``None`` if
-                ``name`` is empty or malformed.
-        """
-        if not name or name == "_id_":
-            return ["_id"] if name == "_id_" else None
-        tokens = name.split("_")
-        keys: list[str] = []
-        buf: list[str] = []
-        i = 0
-        while i < len(tokens):
-            tok = tokens[i]
-            if tok in ("1", "-1") and buf:
-                keys.append("_".join(buf))
-                buf = []
-                i += 1
-            else:
-                buf.append(tok)
-                i += 1
-        if buf or not keys:
-            return None
-        return keys
+        """Delegate MongoDB index name parsing to ``parse_mongo_index_name``."""
+        return parse_mongo_index_name(name)
 
     def _resolve_hint_index(self) -> str | None:
-        """Resolve ``self._hint`` to an existing SQLite index name.
-
-        Inspects ``sqlite_master`` for non-autoindex indexes on the collection
-        table and matches raw index names, ``"_id_"``, MongoDB-style index
-        names, or lists of ``(field, direction)`` tuples via stored index
-        metadata or naming convention.
-
-        Returns:
-            str | None: Matching SQLite index name, or ``None`` if no hint is
-                set, fallback is forced, or no matching index exists.
-        """
-        from .query_helper.utils import get_force_fallback
-
-        if self._hint is None or get_force_fallback():
-            return None
-
-        try:
-            rows = self._collection.db.execute(
-                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=?",
-                (self._collection.name,),
-            ).fetchall()
-        except Exception:
-            return None
-
-        idx_names = [
-            r[0]
-            for r in rows
-            if isinstance(r[0], str)
-            and not r[0].startswith("sqlite_autoindex_")
-        ]
-        if not idx_names:
-            return None
-
-        quoted_tbl = quote_table_name(self._collection.name)
-        id_idx = f"idx_{quoted_tbl}_id"
-
-        if isinstance(self._hint, str):
-            if self._hint in idx_names:
-                return self._hint
-            if self._hint == "_id_":
-                return id_idx if id_idx in idx_names else None
-            target_keys = self._parse_mongo_index_name(self._hint) or [
-                self._hint
-            ]
-        elif isinstance(self._hint, (list, tuple)) and self._hint:
-            if not all(
-                isinstance(item, (list, tuple))
-                and len(item) == 2
-                and isinstance(item[0], str)
-                for item in self._hint
-            ):
-                return None
-            target_keys = [item[0] for item in self._hint]
-            if target_keys == ["_id"]:
-                return id_idx if id_idx in idx_names else None
-        else:
-            return None
-
-        from .index_manager import _load_index_keys
-
-        expected_suffix = "_" + "_".join(
-            k.replace(".", "_") for k in target_keys
+        """Delegate index hint resolution to ``resolve_hint_index``."""
+        return resolve_hint_index(
+            self._collection.db, self._collection.name, self._hint
         )
-        for idx_name in idx_names:
-            if idx_name == id_idx:
-                continue
-            stored = _load_index_keys(self._collection.db, idx_name)
-            if stored is not None and stored == target_keys:
-                return idx_name
-            if idx_name == f"idx_{quoted_tbl}{expected_suffix}":
-                return idx_name
-        return None
 
     def _build_sql_projection_expr(
         self, sql_sorted: bool, data_col: str = "data"
@@ -684,35 +800,10 @@ class Cursor:
         cmd_without_hint: str,
         params: list[Any] | tuple[Any, ...],
     ) -> Any:
-        """Execute a SQL query with an optional ``INDEXED BY`` fallback.
-
-        Attempts ``cmd_with_hint`` first and retries ``cmd_without_hint`` if
-        SQLite raises ``OperationalError`` indicating the hinted index cannot
-        be used.
-
-        Args:
-            cmd_with_hint: SQL query containing an ``INDEXED BY`` hint clause.
-            cmd_without_hint: Equivalent SQL query without ``INDEXED BY``.
-            params: Positional parameter sequence for the SQL statement.
-
-        Returns:
-            Any: Executed SQLite cursor object.
-
-        Raises:
-            sqlite3.OperationalError: Re-raised when the error is unrelated to
-                index hint usability or no fallback SQL differs.
-        """
-        try:
-            return self._collection.db.execute(cmd_with_hint, params)
-        except sqlite3.OperationalError as e:
-            msg = str(e).lower()
-            if cmd_with_hint != cmd_without_hint and (
-                "cannot use index" in msg
-                or "no such index" in msg
-                or "no query solution" in msg
-            ):
-                return self._collection.db.execute(cmd_without_hint, params)
-            raise
+        """Delegate hinted SQL execution to ``execute_sql_with_hint``."""
+        return execute_sql_with_hint(
+            self._collection.db, cmd_with_hint, cmd_without_hint, params
+        )
 
     def explain(self, verbosity: str = "queryPlanner") -> dict[str, Any]:
         """Return the SQLite query execution plan for this cursor.
@@ -896,6 +987,8 @@ class Cursor:
         Yields:
             dict[str, Any]: Each matching document dictionary.
         """
+        if self._closed:
+            return
         validate_session(self._session, self._collection._database)
 
         # track if SQL handled sorting, pagination, and projection
@@ -907,15 +1000,17 @@ class Cursor:
         docs = self._get_filtered_documents()
 
         # Apply sorting if not handled by SQL
-        if not self._sql_handled_sort:
+        if self._sort and not self._sql_handled_sort:
             docs = self._apply_sorting(docs)
 
         # Apply skip and limit if not handled by SQL
-        if not self._sql_handled_pagination:
+        if not self._sql_handled_pagination and (
+            self._skip != 0 or (self._limit is not None and self._limit != 0)
+        ):
             docs = self._apply_pagination(docs)
 
         # Apply projection if not handled by SQL
-        if not self._sql_handled_projection:
+        if self._projection and not self._sql_handled_projection:
             docs = self._apply_projection(docs)
 
         # Mark cursor as having been iterated (for address property)
@@ -923,6 +1018,8 @@ class Cursor:
 
         # Yield results and track count
         for doc in docs:
+            if self._closed:
+                return
             if "_textScore" in doc and (
                 not self._projection or "_textScore" not in self._projection
             ):
@@ -932,6 +1029,7 @@ class Cursor:
 
         # Mark as exhausted
         self._exhausted = True
+        self._iter = None
 
     def _get_filtered_documents(self) -> Iterable[dict[str, Any]]:
         """Retrieve documents matching ``self._filter`` using optimal tiers.
@@ -955,16 +1053,14 @@ class Cursor:
                 datetime_processor = DateTimeQueryProcessor(
                     self._collection, use_global_kill_switch=True
                 )
-                dt_docs = datetime_processor.process_datetime_query(
-                    self._filter
+                dt_docs: Iterable[dict[str, Any]] = (
+                    datetime_processor.process_datetime_query(self._filter)
                 )
                 if self._min or self._max:
-                    from .query_helper.utils import get_force_fallback
-
-                    if get_force_fallback():
-                        dt_docs = [
-                            d for d in dt_docs if self._matches_minmax(d)
-                        ]
+                    dt_docs = (d for d in dt_docs if self._matches_minmax(d))
+                if self._where_predicate:
+                    predicate = self._where_predicate
+                    dt_docs = (d for d in dt_docs if predicate(d))
                 return dt_docs
             except Exception as e:
                 # If datetime processor fails, fall back to normal processing
@@ -982,18 +1078,21 @@ class Cursor:
             not get_force_fallback()
             and self._query_helpers._is_text_search_query(self._filter)
         ):
+            has_python_post_filter = bool(
+                self._where_predicate or self._min or self._max
+            )
             fts_query_result = self._query_helpers._build_full_fts_query(
                 self._filter,
                 self._sort,
                 self._collation,
-                self._limit if not self._where_predicate else 0,
-                self._skip if not self._where_predicate else 0,
+                self._limit if not has_python_post_filter else 0,
+                self._skip if not has_python_post_filter else 0,
             )
             if fts_query_result is not None:
                 cmd, params = fts_query_result
                 if self._sort:
                     self._sql_handled_sort = True
-                if not self._where_predicate and (self._limit or self._skip):
+                if not has_python_post_filter and (self._limit or self._skip):
                     self._sql_handled_pagination = True
 
                 if self._comment:
@@ -1017,13 +1116,16 @@ class Cursor:
                     finally:
                         db_cursor.close()
 
-                fts_docs = doc_generator()
+                fts_docs: Iterable[dict[str, Any]] = doc_generator()
                 self._active_generator = fts_docs
+                if self._min or self._max:
+                    fts_docs = (d for d in fts_docs if self._matches_minmax(d))
                 if self._where_predicate:
-                    fts_docs = filter(self._where_predicate, fts_docs)  # type: ignore[arg-type]
+                    predicate = self._where_predicate
+                    fts_docs = (d for d in fts_docs if predicate(d))
                 qe = getattr(self._collection, "query_engine", None)
                 if qe is not None and hasattr(qe, "_notify_tier_change"):
-                    tier = "tier3" if self._where_predicate else "tier1"
+                    tier = "tier3" if has_python_post_filter else "tier1"
                     qe._notify_tier_change(tier, [self._filter])
                 return fts_docs
 
@@ -1180,7 +1282,7 @@ class Cursor:
                 "", (), self._min, self._max
             )
             # Remove leading " WHERE" if present and add our own
-            minmax_clause = minmax_clause.lstrip().lstrip("WHERE").lstrip()
+            minmax_clause = minmax_clause.strip().removeprefix("WHERE").lstrip()
             cmd = f"{cmd} WHERE {minmax_clause}"
             params = minmax_params
         else:
@@ -1457,30 +1559,26 @@ class Cursor:
         jsonb = self._collection.query_engine.jsonb
         json_func = jsonb.json_function_prefix
 
-        # Add minimum bounds
-        if min_spec:
-            for field, value in min_spec.items():
+        # Add minimum bounds (>=) and maximum bounds (<)
+        for spec, op in ((min_spec, ">="), (max_spec, "<")):
+            if not spec:
+                continue
+            for field, value in spec.items():
                 if field == "_id":
                     # _id lives in a dedicated column, not inside data (#113)
-                    additional_conditions.append("_id >= ?")
+                    additional_conditions.append(f"_id {op} ?")
+                    param_val = (
+                        str(value) if isinstance(value, ObjectId) else value
+                    )
                 else:
                     json_path = parse_json_path(field)
-                    additional_conditions.append(
-                        f"{json_func}_extract(data, '{json_path}') >= ?"
+                    param_val, placeholder = serialize_sql_query_value(
+                        value, jsonb.jsonb_supported
                     )
-                additional_params.append(value)
-
-        # Add maximum bounds (strict less than for max)
-        if max_spec:
-            for field, value in max_spec.items():
-                if field == "_id":
-                    additional_conditions.append("_id < ?")
-                else:
-                    json_path = parse_json_path(field)
                     additional_conditions.append(
-                        f"{json_func}_extract(data, '{json_path}') < ?"
+                        f"{json_func}_extract(data, '{json_path}') {op} {placeholder}"
                     )
-                additional_params.append(value)
+                additional_params.append(param_val)
 
         if additional_conditions:
             conditions_sql = " AND ".join(additional_conditions)
@@ -1629,7 +1727,7 @@ class Cursor:
 
     def _apply_sorting(
         self, docs: Iterable[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
+    ) -> Iterable[dict[str, Any]]:
         """Sort documents in Python according to ``self._sort``.
 
         Applies multi-key stable sorting in reverse key priority order,
@@ -1640,24 +1738,18 @@ class Cursor:
             docs: Iterable of document dictionaries to sort.
 
         Returns:
-            list[dict[str, Any]]: Sorted list of documents (or materialized
-                list if ``self._sort`` is unset).
+            Iterable[dict[str, Any]]: Sorted list of documents, or ``docs``
+                unmodified when ``self._sort`` is unset.
         """
         if not self._sort:
-            return list(docs)
+            return docs
 
         sort_keys = list(self._sort.keys())
         sort_keys.reverse()
         sorted_docs = list(docs)
 
         # Get collation settings for case-insensitive sorting
-        case_insensitive = False
-        if self._collation:
-            strength = self._collation.get("strength", 3)
-            case_level = self._collation.get("caseLevel", False)
-            # Strength 1-2 means case-insensitive
-            if strength <= 2 or not case_level:
-                case_insensitive = True
+        case_insensitive = is_case_insensitive_collation(self._collation)
 
         for key in sort_keys:
             direction = self._sort[key]
@@ -1759,38 +1851,40 @@ class Cursor:
 
     def _apply_pagination(
         self, docs: Iterable[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Apply ``self._skip`` and ``self._limit`` in Python via ``islice``.
+    ) -> Iterable[dict[str, Any]]:
+        """Apply ``self._skip`` and ``self._limit`` lazily via ``islice``.
 
         Args:
             docs: Iterable of document dictionaries to paginate.
 
         Returns:
-            list[dict[str, Any]]: Paginated list of documents.
+            Iterable[dict[str, Any]]: Lazy iterator over paginated documents.
         """
         # Use islice for memory-efficient skip without loading all docs first
         skipped = islice(docs, self._skip, None)
 
         # Apply limit if specified
         if self._limit is not None and self._limit != 0:
-            return list(islice(skipped, abs(self._limit)))
-        return list(skipped)
+            return islice(skipped, abs(self._limit))
+        return skipped
 
     def _apply_projection(
         self, docs: Iterable[dict[str, Any]]
-    ) -> list[dict[str, Any]]:
-        """Apply ``self._projection`` to each document in Python.
+    ) -> Iterable[dict[str, Any]]:
+        """Apply ``self._projection`` lazily to each document in Python.
 
         Args:
             docs: Iterable of document dictionaries to project.
 
         Returns:
-            list[dict[str, Any]]: List of projected document dictionaries.
+            Iterable[dict[str, Any]]: Lazy iterator over projected documents.
         """
+        if not self._projection:
+            return docs
         project = partial(
             self._query_helpers._apply_projection, self._projection
         )
-        return list(map(project, docs))
+        return map(project, docs)
 
     def close(self) -> None:
         """Close the cursor, stop active generators, and drop temp tables."""
