@@ -59,55 +59,75 @@ class ComparisonMixin(BaseSqlMixin):
         left_sql, left_params = self._convert_operand_to_sql(operands[0])
         right_sql, right_params = self._convert_operand_to_sql(operands[1])
 
-        # $eq between two FIELD references: missing-vs-missing counts as
-        # equal (Python tier semantics, #121); null-vs-null handled by the
-        # literal branch below.
+        # $eq/$ne between two FIELD references: missing-vs-missing counts as
+        # equal ($eq -> 1, $ne -> 0), while missing-vs-present (including null)
+        # is not equal ($eq -> 0, $ne -> 1).
+        def _is_doc_field(op: Any) -> bool:
+            return (
+                isinstance(op, str)
+                and op.startswith("$")
+                and not op.startswith("$$")
+            )
+
         if (
-            operator == "$eq"
-            and isinstance(operands[0], str)
-            and operands[0].startswith("$")
-            and not operands[0].startswith("$$")
-            and isinstance(operands[1], str)
-            and operands[1].startswith("$")
-            and not operands[1].startswith("$$")
+            operator in ("$eq", "$ne")
+            and _is_doc_field(operands[0])
+            and _is_doc_field(operands[1])
         ):
             from ...json_path_utils import parse_json_path
 
             p1 = "'" + parse_json_path(operands[0][1:]) + "'"
             p2 = "'" + parse_json_path(operands[1][1:]) + "'"
             d = self.data_column
-            sql = (
-                f"(CASE "
-                f"WHEN json_type({d}, {p1}) IS NULL AND "
-                f"json_type({d}, {p2}) IS NULL THEN 1 "
-                f"WHEN {left_sql} IS {right_sql} THEN 1 ELSE 0 END)"
-            )
+            if operator == "$eq":
+                sql = (
+                    f"(CASE "
+                    f"WHEN json_type({d}, {p1}) IS NULL AND "
+                    f"json_type({d}, {p2}) IS NULL THEN 1 "
+                    f"WHEN json_type({d}, {p1}) IS NULL OR "
+                    f"json_type({d}, {p2}) IS NULL THEN 0 "
+                    f"WHEN {left_sql} IS {right_sql} THEN 1 ELSE 0 END)"
+                )
+            else:
+                sql = (
+                    f"(CASE "
+                    f"WHEN json_type({d}, {p1}) IS NULL AND "
+                    f"json_type({d}, {p2}) IS NULL THEN 0 "
+                    f"WHEN json_type({d}, {p1}) IS NULL OR "
+                    f"json_type({d}, {p2}) IS NULL THEN 1 "
+                    f"WHEN {left_sql} IS NOT {right_sql} THEN 1 ELSE 0 END)"
+                )
             return sql, []
 
-        if (
-            operator == "$ne"
-            and isinstance(operands[0], str)
-            and operands[0].startswith("$")
-            and not operands[0].startswith("$$")
-            and not (operands[1] is None)
-            and not (
-                isinstance(operands[1], str) and operands[1].startswith("$")
+        if operator == "$ne" and (
+            (
+                _is_doc_field(operands[0])
+                and operands[1] is not None
+                and not _is_doc_field(operands[1])
+            )
+            or (
+                _is_doc_field(operands[1])
+                and operands[0] is not None
+                and not _is_doc_field(operands[0])
             )
         ):
-            # $ne field-vs-scalar: missing fields DO match ($ne semantics,
-            # #121); null-vs-missing does not. Use the two-arg json_type to
-            # separate absent keys from explicit nulls.
+            # $ne field-vs-non-null-scalar/expression (symmetric regardless of
+            # operand order): missing fields DO match ($ne semantics, #121).
             from ...json_path_utils import parse_json_path
 
-            p1 = "'" + parse_json_path(operands[0][1:]) + "'"
+            if _is_doc_field(operands[0]):
+                field_op, field_sql = operands[0], left_sql
+                other_sql, other_params = right_sql, right_params
+            else:
+                field_op, field_sql = operands[1], right_sql
+                other_sql, other_params = left_sql, left_params
+            p1 = "'" + parse_json_path(field_op[1:]) + "'"
             d = self.data_column
-            lit_sql, lit_params = self._convert_operand_to_sql(operands[1])
             sql = (
                 f"(CASE WHEN json_type({d}, {p1}) IS NULL THEN 1"
-                f" WHEN {left_sql} IS NULL THEN 0"
-                f" ELSE ({left_sql} IS NOT {lit_sql}) END)"
+                f" ELSE ({field_sql} IS NOT {other_sql}) END)"
             )
-            return sql, lit_params
+            return sql, other_params
 
         # $eq/$ne with a None literal: use IS / IS NOT.
         # Also handle missing-field-vs-null distinction via json_type:

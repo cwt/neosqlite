@@ -185,7 +185,11 @@ class TempTableExprEvaluator:
                 cached = self._translation_cache.get(cache_key)
                 if cached is not None:
                     # Build query with cached translation
-                    return self._build_from_cache(expr, collection_name, cached)
+                    result = self._build_from_cache(
+                        expr, collection_name, cached
+                    )
+                    self._temp_tables.clear()
+                    return result
 
             # Build the evaluation query
             result = self._build_tier2_query(expr, collection_name, filter_expr)
@@ -439,10 +443,18 @@ class TempTableExprEvaluator:
                         for op in operands:
                             if isinstance(op, dict):
                                 score += self._analyze_complexity(op)
+                case "$gt" | "$gte" | "$lt" | "$lte" | "$eq" | "$ne" | "$cmp":
+                    if isinstance(operands, list):
+                        for op in operands:
+                            if isinstance(op, dict):
+                                score += self._analyze_complexity(op)
                 case "$not":
-                    if isinstance(operands, list) and operands:
-                        if isinstance(operands[0], dict):
-                            score += self._analyze_complexity(operands[0])
+                    not_ops = (
+                        [operands] if isinstance(operands, dict) else operands
+                    )
+                    if isinstance(not_ops, list) and not_ops:
+                        if isinstance(not_ops[0], dict):
+                            score += self._analyze_complexity(not_ops[0])
                 case "$size" | "$in" | "$arrayElemAt":
                     score += 2
                 case "$concat" | "$substr" | "$trim":
@@ -776,6 +788,9 @@ class TempTableExprEvaluator:
         Raises:
             ValueError: If operand shape or count is invalid for ``operator``.
         """
+        if operator == "$not" and not isinstance(operands, list):
+            operands = [operands]
+
         if not isinstance(operands, list):
             raise ValueError(f"{operator} requires a list of expressions")
 
@@ -887,6 +902,18 @@ class TempTableExprEvaluator:
             )
             sql_parts.append(operand_sql)
             all_params.extend(operand_params)
+
+        if operator == "$mod":
+            mod_id = getattr(self, "_mod_counter", 0) + 1
+            self._mod_counter = mod_id
+            acc_sql = sql_parts[0]
+            for idx, part in enumerate(sql_parts[1:]):
+                cte = f"_tmod_{mod_id}_{idx}"
+                acc_sql = (
+                    f"(WITH {cte}(l, r) AS (SELECT {acc_sql}, {part}) "
+                    f"SELECT l - r * CAST(l / r AS INTEGER) FROM {cte})"
+                )
+            return acc_sql, all_params
 
         op_mapping = {
             "$add": "+",

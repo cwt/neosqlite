@@ -107,7 +107,7 @@ class TestArithmeticOperatorsSQL:
         expr = {"$mod": ["$a", 3]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "%" in sql
+        assert "CAST(" in sql
         assert params == [3]
 
 

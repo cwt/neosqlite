@@ -125,11 +125,12 @@ class TestTypeConvertersDirectAndSQL:
             assert evaluator._get_operator_return_type(op) == "array", op
 
         # Object operators return "object"
-        for op in ("$mergeObjects", "$setField", "$unsetField", "$getField"):
+        for op in ("$mergeObjects", "$setField", "$unsetField"):
             assert evaluator._get_operator_return_type(op) == "object", op
 
         # Ambiguous / unsupported / dynamic return types return None
         for op in (
+            "$getField",
             "$degreesToRadians",
             "$radiansToDegrees",
             "$ifNull",
@@ -232,11 +233,11 @@ class TestTypeConvertersDirectAndSQL:
             "$toBool", {"$mergeObjects": [{"a": 1}]}
         ) == ("1", [])
 
-        # Unknown/ambiguous return type dict falls back to typeof CASE in SQL
+        # Unknown/ambiguous return type dict falls back to typeof CTE in SQL
         sql, params = evaluator._convert_type_operator(
             "$toBool", {"$regexFind": {"input": "$a", "regex": "x"}}
         )
-        assert "typeof(json(" in sql
+        assert "WITH _v(v) AS" in sql and "typeof(v)" in sql
         assert params == ["x"]
 
         # Literal $toBool cases
@@ -257,11 +258,15 @@ class TestTypeConvertersDirectAndSQL:
             "1",
             [],
         )
-        # Empty/literal dict falls through to SQL typeof CASE
+        # Empty/literal dict falls through to SQL typeof CTE
         sql_obj, params_obj = evaluator._convert_type_operator(
             "$toBool", {"k": "v"}
         )
-        assert "typeof(json(" in sql_obj and params_obj == ['{"k": "v"}']
+        assert (
+            "WITH _v(v) AS" in sql_obj
+            and "typeof(v)" in sql_obj
+            and params_obj == ['{"k": "v"}']
+        )
 
         # $isNumber with sub-expressions and literals
         assert evaluator._convert_type_operator(

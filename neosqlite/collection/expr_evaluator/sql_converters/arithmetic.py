@@ -52,6 +52,20 @@ class ArithmeticMixin(BaseSqlMixin):
             sql_parts.append(operand_sql)
             all_params.extend(operand_params)
 
+        if operator == "$mod":
+            # SQLite '%' truncates operands to integers; fold via CTE so each
+            # operand is evaluated once while computing floating-point fmod.
+            mod_id = getattr(self, "_mod_counter", 0) + 1
+            self._mod_counter = mod_id
+            acc_sql = sql_parts[0]
+            for idx, part in enumerate(sql_parts[1:]):
+                cte = f"_mod_{mod_id}_{idx}"
+                acc_sql = (
+                    f"(WITH {cte}(l, r) AS (SELECT {acc_sql}, {part}) "
+                    f"SELECT l - r * CAST(l / r AS INTEGER) FROM {cte})"
+                )
+            return acc_sql, all_params
+
         sql_operator = self._map_arithmetic_operator(operator)
         if operator == "$divide":
             # SQLite '/' on two integers truncates; MongoDB always returns

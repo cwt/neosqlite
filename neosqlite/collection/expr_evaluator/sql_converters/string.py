@@ -266,20 +266,18 @@ class StringMixin(BaseSqlMixin):
                 str2_sql, str2_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                # Use CASE expression to return -1, 0, or 1
-                sql = f"""
-                    CASE
-                        WHEN {str1_sql} COLLATE NOCASE < {str2_sql} COLLATE NOCASE THEN -1
-                        WHEN {str1_sql} COLLATE NOCASE > {str2_sql} COLLATE NOCASE THEN 1
+                # Return NULL when either operand is NULL to match Python/MongoDB,
+                # and bind each operand once via a scalar CTE.
+                sql = f"""(
+                    WITH _sc(s1, s2) AS (SELECT {str1_sql}, {str2_sql})
+                    SELECT CASE
+                        WHEN s1 IS NULL OR s2 IS NULL THEN NULL
+                        WHEN CAST(s1 AS TEXT) COLLATE NOCASE < CAST(s2 AS TEXT) COLLATE NOCASE THEN -1
+                        WHEN CAST(s1 AS TEXT) COLLATE NOCASE > CAST(s2 AS TEXT) COLLATE NOCASE THEN 1
                         ELSE 0
-                    END
-                """
-                # Both fragments appear twice; duplicate params in SQL order:
-                # str1, str2, str1, str2.
-                return (
-                    sql,
-                    str1_params + str2_params + str1_params + str2_params,
-                )
+                    END FROM _sc
+                )"""
+                return sql, str1_params + str2_params
             case "$substrBytes":
                 # Substring by bytes - SQLite's substr works on characters, not bytes
                 # For ASCII this is the same, for UTF-8 we need special handling
@@ -473,33 +471,16 @@ class StringMixin(BaseSqlMixin):
                 replace_sql, replace_params = self._convert_operand_to_sql(
                     replace_operand
                 )
-                # Use instr() and substr() to replace only first occurrence
-                # Note: string_sql and find_sql are used multiple times, so we
-                # need to duplicate params for each occurrence
+                # Bind each operand once in a scalar CTE before calling instr()/substr()
                 sql = (
-                    f"CASE WHEN instr({string_sql}, {find_sql}) > 0 THEN "
-                    f"substr({string_sql}, 1, instr({string_sql}, {find_sql}) - 1) || "
-                    f"{replace_sql} || "
-                    f"substr({string_sql}, instr({string_sql}, {find_sql}) + length({find_sql})) "
-                    f"ELSE {string_sql} END"
+                    f"(WITH _r(s, f, rep) AS (SELECT {string_sql}, {find_sql}, {replace_sql}) "
+                    f"SELECT CASE WHEN instr(s, f) > 0 THEN "
+                    f"substr(s, 1, instr(s, f) - 1) || "
+                    f"rep || "
+                    f"substr(s, instr(s, f) + length(f)) "
+                    f"ELSE s END FROM _r)"
                 )
-                # Duplicate params to match SQL order:
-                # 1. instr(string, find) - string_params + find_params
-                # 2. instr(string, find) - string_params + find_params
-                # 3. replace - replace_params
-                # 4. instr(string, find) - string_params + find_params
-                # 5. length(find) - find_params
-                all_params = (
-                    string_params
-                    + find_params  # 1st instr
-                    + string_params
-                    + find_params  # 2nd instr
-                    + replace_params  # replacement
-                    + string_params
-                    + find_params  # 3rd instr
-                    + find_params  # length
-                )
-                return sql, all_params
+                return sql, string_params + find_params + replace_params
             case "$strLenCP":
                 # Normalize operands
                 if not isinstance(operands, list):
@@ -521,9 +502,9 @@ class StringMixin(BaseSqlMixin):
                 substr_sql, substr_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                # SQLite instr(haystack, needle) returns 1-based index, convert to 0-based
-                # Note: The haystack comes first, needle second (opposite of MongoDB's order)
-                sql = f"instr({string_sql}, {substr_sql}) - 1"
+                # SQLite instr(haystack, needle) returns 1-based index, convert to 0-based;
+                # NULL on either side returns -1 in MongoDB/Python.
+                sql = f"COALESCE(instr({string_sql}, {substr_sql}) - 1, -1)"
                 return sql, string_params + substr_params
             case _:
                 raise NotImplementedError(

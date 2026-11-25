@@ -4,7 +4,12 @@ Tests for $expr SQL vs Python consistency.
 Verifies that SQL (Tier 1) and Python (Tier 3) implementations produce identical results.
 """
 
+import pytest
+
+import neosqlite
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+from neosqlite.collection.query_helper import set_force_fallback
 
 
 class TestSQLPythonConsistency:
@@ -160,3 +165,262 @@ class TestSQLPythonConsistency:
         # Verify Python results
         assert evaluator._evaluate_expr_python(expr, {"value": -5.5}) == 5.5
         assert evaluator._evaluate_expr_python(expr, {"value": 10}) == 10
+
+
+class TestExprIssue201Parity:
+    """Regression and Tier 1 vs Tier 3 parity tests for issue #201."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fallback(self):
+        yield
+        set_force_fallback(False)
+
+    def _run_aggregate_both_tiers(self, coll, pipeline):
+        set_force_fallback(False)
+        tier1 = list(coll.aggregate(pipeline))
+        set_force_fallback(True)
+        tier3 = list(coll.aggregate(pipeline))
+        set_force_fallback(False)
+        return tier1, tier3
+
+    def _run_find_both_tiers(self, coll, query):
+        set_force_fallback(False)
+        tier1 = list(coll.find(query, {"_id": 1}).sort("_id", 1))
+        set_force_fallback(True)
+        tier3 = list(coll.find(query, {"_id": 1}).sort("_id", 1))
+        set_force_fallback(False)
+        return tier1, tier3
+
+    def test_param_binding_in_type_conversion_and_replace_one(self):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.c
+            coll.insert_one({"_id": 1, "text": "foo bar foo"})
+            pipeline = [
+                {
+                    "$project": {
+                        "_id": 0,
+                        "int_ok": {"$toInt": "42"},
+                        "int_bad": {"$toInt": "invalid"},
+                        "int_zero": {"$toInt": "0"},
+                        "dbl_ok": {"$toDouble": "3.14"},
+                        "dbl_bad": {"$toDouble": "nope"},
+                        "lng_ok": {"$toLong": "99"},
+                        "bool_str": {"$toBool": "abc"},
+                        "bool_empty": {"$toBool": ""},
+                        "type_str": {"$type": "hello"},
+                        "rep_hit": {
+                            "$replaceOne": {
+                                "input": "foo bar foo",
+                                "find": "foo",
+                                "replacement": "baz",
+                            }
+                        },
+                        "rep_miss": {"$replaceOne": ["$text", "xyz", "abc"]},
+                    }
+                }
+            ]
+            tier1, tier3 = self._run_aggregate_both_tiers(coll, pipeline)
+            assert tier1 == tier3
+            assert tier1 == [
+                {
+                    "int_ok": 42,
+                    "int_bad": None,
+                    "int_zero": 0,
+                    "dbl_ok": 3.14,
+                    "dbl_bad": None,
+                    "lng_ok": 99,
+                    "bool_str": True,
+                    "bool_empty": False,
+                    "type_str": "string",
+                    "rep_hit": "baz bar foo",
+                    "rep_miss": "foo bar foo",
+                }
+            ]
+
+    def test_getfield_dynamic_type_inference(self):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.c
+            coll.insert_many(
+                [
+                    {"_id": 1, "val": 42},
+                    {"_id": 2, "val": "hello"},
+                    {"_id": 3, "val": False},
+                    {"_id": 4, "val": 0},
+                    {"_id": 5},
+                ]
+            )
+            pipeline = [
+                {"$sort": {"_id": 1}},
+                {
+                    "$project": {
+                        "_id": 1,
+                        "is_num": {
+                            "$isNumber": {"$getField": {"field": "val"}}
+                        },
+                        "btype": {"$type": {"$getField": {"field": "val"}}},
+                        "as_bool": {"$toBool": {"$getField": {"field": "val"}}},
+                    }
+                },
+            ]
+            tier1, tier3 = self._run_aggregate_both_tiers(coll, pipeline)
+            assert tier1 == tier3
+            assert [d["is_num"] for d in tier1] == [
+                True,
+                False,
+                False,
+                True,
+                False,
+            ]
+            assert [d["btype"] for d in tier1] == [
+                "int",
+                "string",
+                "bool",
+                "int",
+                "null",
+            ]
+            assert [d["as_bool"] for d in tier1] == [
+                1,
+                1,
+                0,
+                0,
+                0,
+            ] or [bool(d["as_bool"]) for d in tier1] == [
+                True,
+                True,
+                False,
+                False,
+                False,
+            ]
+
+    def test_merge_objects_mod_object_to_array_and_string_nulls(self):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.c
+            coll.insert_one(
+                {
+                    "_id": 1,
+                    "a": {"sub": {"x": 1, "y": 2}, "k": 9, "flag": True},
+                    "b": {"sub": {"x": 10}, "k": None},
+                    "arr": [10, None],
+                    "obj": {"flag": False, "nested": {"z": 1}, "items": [1, 2]},
+                    "s": "hello",
+                }
+            )
+            pipeline = [
+                {
+                    "$project": {
+                        "_id": 0,
+                        "merged": {"$mergeObjects": ["$a", "$b"]},
+                        "merged_missing": {"$mergeObjects": ["$a", "$missing"]},
+                        "merged_only_missing": {"$mergeObjects": ["$missing"]},
+                        "fmod": {"$mod": [5.5, 2]},
+                        "neg_fmod": {"$mod": [-7.5, 3]},
+                        "has_null": {"$in": [None, "$arr"]},
+                        "null_idx": {"$indexOfArray": ["$arr", None]},
+                        "ota": {"$objectToArray": "$obj"},
+                        "ota_missing": {"$objectToArray": "$missing"},
+                        "idx_null": {"$indexOfCP": ["$missing", "a"]},
+                        "cmp_null": {"$strcasecmp": ["$s", "$missing"]},
+                    }
+                }
+            ]
+            tier1, tier3 = self._run_aggregate_both_tiers(coll, pipeline)
+            assert tier1 == tier3
+            assert tier1[0]["merged"] == {
+                "sub": {"x": 10},
+                "k": None,
+                "flag": True,
+            }
+            assert tier1[0]["merged_missing"] == {
+                "sub": {"x": 1, "y": 2},
+                "k": 9,
+                "flag": True,
+            }
+            assert tier1[0]["merged_only_missing"] == {}
+            assert tier1[0]["fmod"] == 1.5
+            assert tier1[0]["neg_fmod"] == -1.5
+            assert tier1[0]["has_null"] in (True, 1)
+            assert tier1[0]["null_idx"] == 1
+            assert tier1[0]["ota"] == [
+                {"k": "flag", "v": False},
+                {"k": "nested", "v": {"z": 1}},
+                {"k": "items", "v": [1, 2]},
+            ]
+            assert tier1[0]["ota_missing"] == []
+            assert tier1[0]["idx_null"] == -1
+            assert tier1[0]["cmp_null"] is None
+
+    def test_logical_ne_and_set_operators_parity(self):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.c
+            coll.insert_many(
+                [
+                    {
+                        "_id": 1,
+                        "a": [1, None, "false"],
+                        "b": [None, 1],
+                        "falsy": ["false", "", []],
+                        "all_falsy": [0, False, None],
+                        "x": 5,
+                    },
+                    {
+                        "_id": 2,
+                        "a": [1, 2],
+                        "b": [1, None],
+                        "falsy": [0],
+                        "all_falsy": [0, 1],
+                    },
+                ]
+            )
+            queries = [
+                {"$expr": {"$not": [{"$gt": ["$missing", 5]}]}},
+                {
+                    "$expr": {
+                        "$nor": [
+                            {"$gt": ["$missing", 5]},
+                            {"$gt": ["$missing", 1]},
+                        ]
+                    }
+                },
+                {"$expr": {"$ne": ["$x", 5]}},
+                {"$expr": {"$ne": [5, "$x"]}},
+                {"$expr": {"$setEquals": ["$a", [None, "false", 1]]}},
+                {"$expr": {"$setIsSubset": [[None], "$a"]}},
+                {"$expr": {"$in": [None, {"$setIntersection": ["$a", "$b"]}]}},
+                {"$expr": {"$in": [None, {"$setUnion": ["$a", "$b"]}]}},
+                {"$expr": {"$in": [None, {"$setDifference": ["$b", "$a"]}]}},
+                {"$expr": {"$anyElementTrue": ["$falsy"]}},
+                {"$expr": {"$allElementsTrue": ["$falsy"]}},
+            ]
+            for query in queries:
+                tier1, tier3 = self._run_find_both_tiers(coll, query)
+                assert tier1 == tier3, f"Mismatch for query {query}"
+
+    def test_temp_table_complexity_and_cache_cleanup(self):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.c
+            coll.insert_many(
+                [{"a": 1, "b": 2, "c": 2}, {"a": 1, "b": 1, "c": 5}]
+            )
+            evaluator = TempTableExprEvaluator(conn.db)
+
+            assert evaluator._analyze_complexity({"$eq": ["$a", "$b"]}) == 1
+            assert (
+                evaluator._analyze_complexity(
+                    {"$gt": [{"$add": ["$a", "$b"]}, "$c"]}
+                )
+                >= 2
+            )
+
+            expr = {"$gt": [{"$add": ["$a", "$b"]}, "$c"]}
+            sql1, params1, tables1 = evaluator.evaluate(expr, coll.name)
+            assert sql1 is not None
+            assert len(tables1) == 1
+            assert evaluator._temp_tables == []
+
+            # Second call hits TranslationCache and must still clear _temp_tables
+            sql2, params2, tables2 = evaluator.evaluate(expr, coll.name)
+            assert sql2 is not None
+            assert len(tables2) == 1
+            assert evaluator._temp_tables == []
+            for t in tables1 + tables2:
+                conn.db.execute(f'DROP TABLE IF EXISTS "{t}"')

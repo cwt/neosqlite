@@ -1813,6 +1813,7 @@ class StageBuildersMixin:
         from ..objectid import ObjectId
         from .type_utils import (
             build_json_containment_clause,
+            expr_truthiness_sql,
             is_encoded_json_value,
             json_type_guard_sql,
             regex_to_sql_pattern,
@@ -1825,19 +1826,6 @@ class StageBuildersMixin:
         op_translator = translator.operator_translator
         all_params: list[Any] = []
         where_clauses: list[str] = []
-
-        def _wrap_for_where(expr_sql: str) -> str:
-            """Wrap an expression for SQL WHERE if it yields JSON booleans.
-
-            Args:
-                expr_sql: Compiled SQL expression string.
-
-            Returns:
-                str: SQL predicate suitable for a ``WHERE`` clause.
-            """
-            if "json('true')" in expr_sql or 'json("true")' in expr_sql:
-                return f"({expr_sql} = json('true'))"
-            return expr_sql
 
         for field, value in spec.items():
             if field == "$jsonSchema":
@@ -1860,7 +1848,7 @@ class StageBuildersMixin:
                 expr_sql, expr_params = self.evaluator.evaluate(value)
                 if not expr_sql:
                     return None, []
-                where_clauses.append(_wrap_for_where(expr_sql))
+                where_clauses.append(expr_truthiness_sql(expr_sql))
                 all_params.extend(expr_params)
             elif field in ("$and", "$or", "$nor"):
                 if not isinstance(value, list) or not value:
@@ -1916,7 +1904,7 @@ class StageBuildersMixin:
                 )
                 if not expr_sql:
                     return None, []
-                where_clauses.append(_wrap_for_where(expr_sql))
+                where_clauses.append(expr_truthiness_sql(expr_sql))
                 all_params.extend(expr_params)
             elif field.startswith("$"):
                 return None, []

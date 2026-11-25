@@ -103,6 +103,15 @@ def _set_key(v: Any) -> Any:
     return ("o", str(v))
 
 
+def _is_mongo_truthy(val: Any) -> bool:
+    """Return MongoDB truthiness for $anyElementTrue/$allElementsTrue."""
+    if val is None or isinstance(val, bool):
+        return bool(val)
+    if isinstance(val, (int, float)):
+        return val != 0
+    return True
+
+
 def _dedupe(seq: list) -> list:
     """Deduplicate elements in a list while preserving first-seen order.
 
@@ -529,7 +538,7 @@ class ArrayPythonMixin(BasePythonMixin):
                     )
                 array = self._evaluate_operand_python(operands[0], document)
                 if isinstance(array, list):
-                    return any(array)
+                    return any(_is_mongo_truthy(item) for item in array)
                 return False
             case "$allElementsTrue":
                 # Handle both list and single operand formats
@@ -541,7 +550,7 @@ class ArrayPythonMixin(BasePythonMixin):
                     )
                 array = self._evaluate_operand_python(operands[0], document)
                 if isinstance(array, list):
-                    return all(array)
+                    return all(_is_mongo_truthy(item) for item in array)
                 return False
             case _:
                 raise NotImplementedError(

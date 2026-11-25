@@ -75,7 +75,7 @@ class TestMergeObjectsExpressionValues:
         sql, params = evaluator.evaluate_for_aggregation(
             {"$mergeObjects": ["$nested", {"total": {"$sum": "$values"}}]}
         )
-        assert "json_patch(" in sql
+        assert "json_group_object(" in sql
         assert "json_object('total'" in sql
         assert "SUM(" in sql
         assert params == []

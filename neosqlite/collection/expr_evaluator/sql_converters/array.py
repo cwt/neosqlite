@@ -86,7 +86,7 @@ class ArrayMixin(BaseSqlMixin):
                 in_alias = f"_inj_{self._je_counter}"
                 sql = (
                     f"EXISTS (SELECT 1 FROM {json_each}({array_sql}) AS {in_alias} "
-                    f"WHERE {in_alias}.value = {value_sql})"
+                    f"WHERE {in_alias}.value IS {value_sql})"
                 )
                 # Bind in SQL order: array placeholders come first.
                 return sql, array_params + value_params
@@ -240,7 +240,7 @@ class ArrayMixin(BaseSqlMixin):
                 value_sql, value_params = self._convert_operand_to_sql(
                     operands[1]
                 )
-                sql = f"(SELECT COALESCE((SELECT key FROM {json_each}({array_sql}) WHERE value = {value_sql} LIMIT 1), -1))"
+                sql = f"(SELECT COALESCE((SELECT key FROM {json_each}({array_sql}) WHERE value IS {value_sql} LIMIT 1), -1))"
                 return sql, array_params + value_params
             case "$arrayElemAt":
                 if not isinstance(operands, list) or len(operands) != 2:

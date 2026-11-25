@@ -335,7 +335,7 @@ class TestConvertExprToTempSql:
             evaluator = TempTableExprEvaluator(conn.db)
             expr = {"$mod": ["$a", "$b"]}
             sql, params = evaluator._convert_expr_to_temp_sql(expr, "temp")
-            assert "%" in sql
+            assert "CAST(" in sql
 
     def test_convert_arithmetic_wrong_operand_count(self):
         """Test arithmetic with wrong operand count."""

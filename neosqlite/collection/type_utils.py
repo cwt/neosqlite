@@ -923,9 +923,12 @@ def expr_truthiness_sql(sql_expr: str) -> str:
     Returns:
         str: SQL boolean predicate matching MongoDB truthiness semantics.
     """
-    if "json('true')" in sql_expr or 'json("true")' in sql_expr:
-        return f"({sql_expr} = json('true'))"
-    return f"(COALESCE(({sql_expr}), 0) != 0)"
+    return (
+        f"(WITH _et(v) AS (SELECT ({sql_expr})) "
+        f"SELECT COALESCE(CASE WHEN v = json('true') THEN 1 "
+        f"WHEN v = json('false') THEN 0 "
+        f"ELSE COALESCE(v, 0) != 0 END, 0) FROM _et)"
+    )
 
 
 def build_json_containment_parts(

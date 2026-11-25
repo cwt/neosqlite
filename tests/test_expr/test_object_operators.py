@@ -148,7 +148,7 @@ class TestObjectOperatorsSQL:
         }
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "json_patch" in sql
+        assert "json_group_object" in sql
 
     def test_getField_sql(self):
         """Test $getField SQL conversion."""

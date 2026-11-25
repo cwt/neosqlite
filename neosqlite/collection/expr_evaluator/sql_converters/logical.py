@@ -55,7 +55,7 @@ class LogicalMixin(BaseSqlMixin):
             if len(operands) != 1:
                 raise ValueError("$not requires exactly one operand")
             inner_sql, inner_params = self._convert_expr_to_sql(operands[0])
-            return f"NOT ({inner_sql})", inner_params
+            return f"NOT COALESCE(({inner_sql}), 0)", inner_params
 
         # $and, $or, $nor
         if len(operands) < 2:
@@ -75,7 +75,10 @@ class LogicalMixin(BaseSqlMixin):
             case "$or":
                 sql = " OR ".join(sql_parts)
             case "$nor":
-                sql = f"NOT ({' OR '.join(sql_parts)})"
+                coalesced = " OR ".join(
+                    f"COALESCE({part}, 0)" for part in sql_parts
+                )
+                sql = f"NOT ({coalesced})"
             case _:
                 raise ValueError(f"Unknown logical operator: {operator}")
 

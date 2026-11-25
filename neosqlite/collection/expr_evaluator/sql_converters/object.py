@@ -97,21 +97,49 @@ class ObjectMixin(BaseSqlMixin):
             case "$mergeObjects":
                 if not isinstance(operands, list) or len(operands) < 1:
                     raise ValueError("$mergeObjects requires a list of objects")
-                sql_parts = []
-                all_params = []
-                for obj in operands:
+                mo_id = getattr(self, "_mo_counter", 0) + 1
+                self._mo_counter = mo_id
+                json_each = self.json_each_function
+                operand_ctes: list[str] = []
+                entry_unions: list[str] = []
+                all_params: list[Any] = []
+                for idx, obj in enumerate(operands):
                     obj_sql, obj_params = self._convert_object_literal_to_sql(
                         obj
                     )
-                    sql_parts.append(obj_sql)
+                    cte_name = f"_mo_{mo_id}_{idx}"
+                    operand_ctes.append(f"{cte_name}(v) AS (SELECT {obj_sql})")
+                    valid_expr = (
+                        f"typeof({cte_name}.v) IN ('text', 'blob') "
+                        f"AND json_valid({cte_name}.v, 5)"
+                        if self.jsonb.jsonb_supported
+                        else f"typeof({cte_name}.v) = 'text' "
+                        f"AND json_valid({cte_name}.v)"
+                    )
+                    entry_unions.append(
+                        f"SELECT {idx} AS idx, j.key AS k, j.value AS val, j.type AS tp "
+                        f"FROM {cte_name}, {json_each}(CASE WHEN {valid_expr} "
+                        f"AND json_type({cte_name}.v) = 'object' "
+                        f"THEN {cte_name}.v ELSE '{{}}' END) AS j"
+                    )
                     all_params.extend(obj_params)
-                # Use json_patch to merge objects (works with both JSON and JSONB)
-                if len(sql_parts) == 1:
-                    sql = sql_parts[0]
-                else:
-                    sql = f"json_patch({sql_parts[0]}, {sql_parts[1]})"
-                    for part in sql_parts[2:]:
-                        sql = f"json_patch({sql}, {part})"
+                ctes_sql = ", ".join(operand_ctes)
+                unions_sql = " UNION ALL ".join(entry_unions)
+                sql = (
+                    f"(WITH {ctes_sql}, "
+                    f"_me_{mo_id} AS ({unions_sql}), "
+                    f"_mf_{mo_id} AS ("
+                    f"SELECT k, val, tp, "
+                    f"ROW_NUMBER() OVER (PARTITION BY k ORDER BY idx DESC) AS rn "
+                    f"FROM _me_{mo_id}) "
+                    f"SELECT json_group_object(k, "
+                    f"CASE WHEN tp = 'true' THEN json('true') "
+                    f"WHEN tp = 'false' THEN json('false') "
+                    f"WHEN tp = 'null' THEN json('null') "
+                    f"WHEN tp IN ('object', 'array') THEN json(val) "
+                    f"ELSE val END) "
+                    f"FROM _mf_{mo_id} WHERE rn = 1)"
+                )
                 return sql, all_params
             case "$getField":
                 if not isinstance(operands, dict) or "field" not in operands:
@@ -165,9 +193,27 @@ class ObjectMixin(BaseSqlMixin):
                 sql_input, params = self._convert_operand_to_sql(operands)
                 json_group_array = self.json_group_array_function
                 json_each = self.json_each_function
+                oa_id = getattr(self, "_oa_counter", 0) + 1
+                self._oa_counter = oa_id
+                valid_expr = (
+                    f"typeof(_oa_{oa_id}.v) IN ('text', 'blob') "
+                    f"AND json_valid(_oa_{oa_id}.v, 5)"
+                    if self.jsonb.jsonb_supported
+                    else f"typeof(_oa_{oa_id}.v) = 'text' "
+                    f"AND json_valid(_oa_{oa_id}.v)"
+                )
 
-                # Use a subquery with json_each to build the array
-                sql = f"json((SELECT {json_group_array}(json_object('k', key, 'v', value)) FROM {json_each}({sql_input})))"
+                sql = (
+                    f"(WITH _oa_{oa_id}(v) AS (SELECT {sql_input}) "
+                    f"SELECT json((SELECT {json_group_array}(json_object('k', j.key, 'v', "
+                    f"CASE WHEN j.type = 'true' THEN json('true') "
+                    f"WHEN j.type = 'false' THEN json('false') "
+                    f"WHEN j.type IN ('object', 'array') THEN json(j.value) "
+                    f"ELSE j.value END)) "
+                    f"FROM _oa_{oa_id}, {json_each}(CASE WHEN {valid_expr} "
+                    f"AND json_type(_oa_{oa_id}.v) = 'object' "
+                    f"THEN _oa_{oa_id}.v ELSE '{{}}' END) AS j)))"
+                )
                 return sql, params
             case "$literal":
                 # Return operand as-is without interpretation.

@@ -145,7 +145,7 @@ class TestArrayOperatorsSQL:
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
         # The array operand's placeholder precedes the value's.
-        assert sql.index("json_each") < sql.index("value = ?")
+        assert sql.index("json_each") < sql.index("value IS ?")
         assert params[0] == "[1, 2, 3]"
         assert params[1] == 1
 

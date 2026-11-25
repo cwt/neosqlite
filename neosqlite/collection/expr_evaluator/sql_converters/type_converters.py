@@ -154,7 +154,7 @@ class TypeConvertersMixin(BaseSqlMixin):
                 return "array"
 
             # Operators returning objects
-            case "$mergeObjects" | "$getField" | "$setField" | "$unsetField":
+            case "$mergeObjects" | "$setField" | "$unsetField":
                 return "object"
 
             case _:
@@ -238,30 +238,30 @@ class TypeConvertersMixin(BaseSqlMixin):
             case "$toString":
                 # Cast to text
                 sql = f"cast({value_sql} as text)"
-            case "$toInt":
-                # Cast to integer, handle non-numeric strings by returning NULL
-                # SQLite CAST('abc' AS INTEGER) returns 0, we want NULL for compatibility
+            case "$toInt" | "$toLong":
+                # Cast to integer via single-evaluation CTE, returning NULL for
+                # non-numeric strings (SQLite CAST('abc' AS INTEGER) returns 0)
                 sql = (
-                    f"CASE WHEN typeof({value_sql}) IN ('integer', 'real') THEN CAST({value_sql} AS INTEGER) "
-                    f"WHEN typeof({value_sql}) = 'text' AND (CAST({value_sql} AS INTEGER) != 0 OR {value_sql} IN ('0', '0.0')) "
-                    f"THEN CAST({value_sql} AS INTEGER) ELSE NULL END"
+                    f"(WITH _v(v) AS (SELECT {value_sql}) "
+                    f"SELECT CASE WHEN typeof(v) IN ('integer', 'real') THEN CAST(v AS INTEGER) "
+                    f"WHEN typeof(v) = 'text' AND (CAST(v AS INTEGER) != 0 OR v IN ('0', '0.0')) "
+                    f"THEN CAST(v AS INTEGER) ELSE NULL END FROM _v)"
                 )
             case "$toDouble":
-                # Cast to real/float, handle non-numeric strings by returning NULL
+                # Cast to real/float via single-evaluation CTE, returning NULL
+                # for non-numeric strings
                 sql = (
-                    f"CASE WHEN typeof({value_sql}) IN ('integer', 'real') THEN CAST({value_sql} AS REAL) "
-                    f"WHEN typeof({value_sql}) = 'text' AND (CAST({value_sql} AS REAL) != 0.0 OR {value_sql} IN ('0', '0.0')) "
-                    f"THEN CAST({value_sql} AS REAL) ELSE NULL END"
-                )
-            case "$toLong":
-                # SQLite integers are already 64-bit, same as toInt logic
-                sql = (
-                    f"CASE WHEN typeof({value_sql}) IN ('integer', 'real') THEN CAST({value_sql} AS INTEGER) "
-                    f"WHEN typeof({value_sql}) = 'text' AND (CAST({value_sql} AS INTEGER) != 0 OR {value_sql} IN ('0', '0.0')) "
-                    f"THEN CAST({value_sql} AS INTEGER) ELSE NULL END"
+                    f"(WITH _v(v) AS (SELECT {value_sql}) "
+                    f"SELECT CASE WHEN typeof(v) IN ('integer', 'real') THEN CAST(v AS REAL) "
+                    f"WHEN typeof(v) = 'text' AND (CAST(v AS REAL) != 0.0 OR v IN ('0', '0.0')) "
+                    f"THEN CAST(v AS REAL) ELSE NULL END FROM _v)"
                 )
             case "$toBool":
-                if isinstance(operand, str) and operand.startswith("$"):
+                if (
+                    isinstance(operand, str)
+                    and operand.startswith("$")
+                    and not operand.startswith("$$")
+                ):
                     field_path = operand[1:]
                     if field_path == "_id":
                         # _id lives in a dedicated column, not inside the
@@ -274,13 +274,14 @@ class TypeConvertersMixin(BaseSqlMixin):
                     json_path = parse_json_path(field_path)
                     type_expr = f"json_type({self.data_column}, '{json_path}')"
                     sql = (
-                        f"CASE WHEN {type_expr} = 'null' THEN 0 "
+                        f"(WITH _v(v) AS (SELECT {value_sql}) "
+                        f"SELECT CASE WHEN {type_expr} = 'null' THEN 0 "
                         f"WHEN {type_expr} = 'false' THEN 0 "
                         f"WHEN {type_expr} = 'true' THEN 1 "
-                        f"WHEN {type_expr} IN ('integer', 'real') THEN CASE WHEN {value_sql} != 0 THEN 1 ELSE 0 END "
-                        f"WHEN {type_expr} = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN 1 ELSE 0 END "
+                        f"WHEN {type_expr} IN ('integer', 'real') THEN CASE WHEN v != 0 THEN 1 ELSE 0 END "
+                        f"WHEN {type_expr} = 'text' THEN CASE WHEN length(v) > 0 THEN 1 ELSE 0 END "
                         f"WHEN {type_expr} IN ('array', 'object') THEN 1 "
-                        f"ELSE 0 END"
+                        f"ELSE 0 END FROM _v)"
                     )
                 else:
                     inferred_type = None
@@ -307,9 +308,10 @@ class TypeConvertersMixin(BaseSqlMixin):
                         value_params = []
                     else:
                         sql = (
-                            f"CASE WHEN typeof({value_sql}) = 'text' THEN CASE WHEN length({value_sql}) > 0 THEN 1 ELSE 0 END "
-                            f"WHEN typeof({value_sql}) = 'null' THEN 0 "
-                            f"ELSE CASE WHEN {value_sql} != 0 THEN 1 ELSE 0 END END"
+                            f"(WITH _v(v) AS (SELECT {value_sql}) "
+                            f"SELECT CASE WHEN typeof(v) = 'text' THEN CASE WHEN length(v) > 0 THEN 1 ELSE 0 END "
+                            f"WHEN typeof(v) = 'null' THEN 0 "
+                            f"ELSE CASE WHEN v != 0 THEN 1 ELSE 0 END END FROM _v)"
                         )
             case "$toDecimal":
                 # SQLite doesn't have native Decimal128, use REAL
@@ -359,9 +361,24 @@ class TypeConvertersMixin(BaseSqlMixin):
                             "Ambiguous type for $isNumber in SQL tier"
                         )
             case "$type":
-                if isinstance(operand, str) and operand.startswith("$"):
-                    # Direct field reference
-                    field_path = operand[1:]
+                if (
+                    isinstance(operand, str)
+                    and operand.startswith("$")
+                    and not operand.startswith("$$")
+                ) or (
+                    isinstance(operand, dict)
+                    and len(operand) == 1
+                    and next(iter(operand)) == "$getField"
+                    and isinstance(operand["$getField"], dict)
+                    and operand["$getField"].get("input") is None
+                    and isinstance(operand["$getField"].get("field"), str)
+                ):
+                    # Direct field reference (or top-level $getField on data column)
+                    field_path = (
+                        operand[1:]
+                        if isinstance(operand, str)
+                        else operand["$getField"]["field"]
+                    )
                     if field_path == "_id":
                         # _id lives in a dedicated column, not inside the
                         # data JSON; the SQL tier cannot inspect it there (#113)
@@ -385,6 +402,7 @@ class TypeConvertersMixin(BaseSqlMixin):
                         f"  ELSE 'object' END "
                         f"ELSE 'unknown' END"
                     )
+                    value_params = []
                 else:
                     # Computed expression or literal
                     inferred_type = None
@@ -410,23 +428,26 @@ class TypeConvertersMixin(BaseSqlMixin):
                         value_params = []
                     elif inferred_type == "object":
                         sql = (
-                            f"CASE WHEN typeof({value_sql}) = 'text' THEN "
-                            f"  CASE WHEN json_extract({value_sql}, '$.__neosqlite_binary__') = 1 THEN 'binData' "
-                            f"  WHEN json_extract({value_sql}, '$.__neosqlite_objectid__') = 1 THEN 'objectId' "
+                            f"(WITH _v(v) AS (SELECT {value_sql}) "
+                            f"SELECT CASE WHEN typeof(v) = 'null' THEN 'null' "
+                            f"WHEN typeof(v) = 'text' AND json_valid(v) THEN "
+                            f"  CASE WHEN json_extract(v, '$.__neosqlite_binary__') = 1 THEN 'binData' "
+                            f"  WHEN json_extract(v, '$.__neosqlite_objectid__') = 1 THEN 'objectId' "
                             f"  ELSE 'object' END "
-                            f"ELSE 'object' END"
+                            f"ELSE 'object' END FROM _v)"
                         )
                     elif inferred_type == "null":
                         sql = "'null'"
                         value_params = []
                     else:
-                        # Fallback to typeof
+                        # Fallback to typeof with single-evaluation CTE
                         sql = (
-                            f"CASE WHEN typeof({value_sql}) = 'null' THEN 'null' "
-                            f"WHEN typeof({value_sql}) = 'integer' THEN 'int' "
-                            f"WHEN typeof({value_sql}) = 'real' THEN 'double' "
-                            f"WHEN typeof({value_sql}) = 'text' THEN 'string' "
-                            f"ELSE 'unknown' END"
+                            f"(WITH _v(v) AS (SELECT {value_sql}) "
+                            f"SELECT CASE WHEN typeof(v) = 'null' THEN 'null' "
+                            f"WHEN typeof(v) = 'integer' THEN 'int' "
+                            f"WHEN typeof(v) = 'real' THEN 'double' "
+                            f"WHEN typeof(v) = 'text' THEN 'string' "
+                            f"ELSE 'unknown' END FROM _v)"
                         )
             case "$convert":
                 # $convert is complex - requires 'to' field specification

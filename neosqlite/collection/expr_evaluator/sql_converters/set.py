@@ -53,6 +53,18 @@ class SetMixin(BaseSqlMixin):
         ) and not isinstance(operands, list):
             operands = [operands]
 
+        # MongoDB element projection preserving booleans and nested containers
+        def _elem_sql(alias: str = "") -> str:
+            p = f"{alias}." if alias else ""
+            return (
+                f"CASE WHEN {p}type = 'true' THEN json('true') "
+                f"WHEN {p}type = 'false' THEN json('false') "
+                f"WHEN {p}type IN ('object', 'array') THEN json({p}value) "
+                f"ELSE {p}value END"
+            )
+
+        elem_eq = "(a1.type = a2.type AND a1.value IS a2.value)"
+
         match operator:
             case "$setEquals":
                 if len(operands) != 2:
@@ -73,7 +85,7 @@ class SetMixin(BaseSqlMixin):
                     SELECT 1 FROM {json_each}({array1_sql}) AS a1
                     WHERE NOT EXISTS (
                       SELECT 1 FROM {json_each}({array2_sql}) AS a2
-                      WHERE a2.value = a1.value
+                      WHERE {elem_eq}
                     )
                   )
                   AND
@@ -81,7 +93,7 @@ class SetMixin(BaseSqlMixin):
                     SELECT 1 FROM {json_each}({array2_sql}) AS a2
                     WHERE NOT EXISTS (
                       SELECT 1 FROM {json_each}({array1_sql}) AS a1
-                      WHERE a1.value = a2.value
+                      WHERE {elem_eq}
                     )
                   )
                 )
@@ -109,9 +121,9 @@ class SetMixin(BaseSqlMixin):
 
                 # SELECT elements from array1 that exist in array2
                 sql = f"""
-                json((SELECT {json_group_array}(DISTINCT CASE WHEN a1.type IN ('object', 'array') THEN json(a1.value) ELSE a1.value END)
+                json((SELECT {json_group_array}(DISTINCT {_elem_sql('a1')})
                  FROM {json_each}({array1_sql}) AS a1
-                 WHERE EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value)))
+                 WHERE EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE {elem_eq})))
                 """
                 return sql, array1_params + array2_params
 
@@ -128,7 +140,7 @@ class SetMixin(BaseSqlMixin):
 
                 # SELECT DISTINCT elements from both arrays
                 sql = f"""
-                json((SELECT {json_group_array}(DISTINCT CASE WHEN type IN ('object', 'array') THEN json(value) ELSE value END)
+                json((SELECT {json_group_array}({_elem_sql()})
                  FROM (
                    SELECT value, type FROM {json_each}({array1_sql})
                    UNION
@@ -152,9 +164,9 @@ class SetMixin(BaseSqlMixin):
 
                 # SELECT elements from array1 that don't exist in array2
                 sql = f"""
-                json((SELECT {json_group_array}(CASE WHEN a1.type IN ('object', 'array') THEN json(a1.value) ELSE a1.value END)
+                json((SELECT {json_group_array}({_elem_sql('a1')})
                  FROM {json_each}({array1_sql}) AS a1
-                 WHERE NOT EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value)))
+                 WHERE NOT EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE {elem_eq})))
                 """
                 return sql, array1_params + array2_params
 
@@ -174,7 +186,7 @@ class SetMixin(BaseSqlMixin):
                 (
                   NOT EXISTS (
                     SELECT 1 FROM {json_each}({array1_sql}) AS a1
-                    WHERE NOT EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE a2.value = a1.value)
+                    WHERE NOT EXISTS (SELECT 1 FROM {json_each}({array2_sql}) AS a2 WHERE {elem_eq})
                   )
                 )
                 """
@@ -190,12 +202,14 @@ class SetMixin(BaseSqlMixin):
                     operands[0]
                 )
 
-                # Check if any element is truthy (not false, null, or 0)
+                # MongoDB falsy elements: false, null, or numeric 0.
+                # Strings like "false", "", and empty containers are truthy.
                 sql = f"""
                 (
                   EXISTS (
                     SELECT 1 FROM {json_each}({array_sql}) AS a
-                    WHERE a.value IS NOT NULL AND a.value != 0 AND a.value != json('false') AND a.value != json('null')
+                    WHERE a.type NOT IN ('null', 'false')
+                      AND NOT (a.type IN ('integer', 'real') AND a.value = 0)
                   )
                 )
                 """
@@ -211,13 +225,13 @@ class SetMixin(BaseSqlMixin):
                     operands[0]
                 )
 
-                # Check if all elements are truthy (no false, null, or 0 elements)
-                # Empty array returns True (vacuous truth, matching Python's all([]))
+                # Empty array returns True; only false, null, and numeric 0 are falsy.
                 sql = f"""
                 (
                   NOT EXISTS (
                     SELECT 1 FROM {json_each}({array_sql}) AS a
-                    WHERE a.value IS NULL OR a.value = 0 OR a.value = json('false') OR a.value = json('null')
+                    WHERE a.type IN ('null', 'false')
+                       OR (a.type IN ('integer', 'real') AND a.value = 0)
                   )
                 )
                 """

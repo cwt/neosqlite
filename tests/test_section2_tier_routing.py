@@ -650,7 +650,7 @@ class TestSection2BQueriesAndCursors:
         # Tier-1 $expr with document field named 'data' plus sort/skip/limit
         res = _assert_find_parity(
             coll,
-            {"$expr": {"$gt": [{"$add": ["$a", "$b"]}, 10]}},
+            {"$expr": {"$gt": ["$a", 5]}},
             "tier1",
             sort=[("data", -1)],
             skip=1,
