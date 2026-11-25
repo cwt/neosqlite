@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import operator
 import re
+import threading
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
-from .objectid import ObjectId
 from .sql_utils import quote_table_name
 
 if TYPE_CHECKING:
@@ -16,7 +18,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_registry_lock = threading.Lock()
 _stream_registry: dict[int, dict[str, Any]] = {}
+
+
+def clear_changestream_registry(db: Any) -> None:
+    """Remove any ChangeStream registry entry associated with ``db``."""
+    with _registry_lock:
+        entry = _stream_registry.get(id(db))
+        if entry is not None and entry["db"] is db:
+            _stream_registry.pop(id(db), None)
+
 
 # Rows of history retained per collection when the last stream closes, so a
 # later ``watch(resume_after=token)`` can still replay recent events instead
@@ -91,6 +103,39 @@ def _field_present(document: Any, path: str) -> bool:
     return True
 
 
+_RANGE_OPS: dict[str, Callable[[Any, Any], bool]] = {
+    "$gt": operator.gt,
+    "$gte": operator.ge,
+    "$lt": operator.lt,
+    "$lte": operator.le,
+}
+
+
+def _compare_range_op(
+    value: Any, expected: Any, comparator: Callable[[Any, Any], bool]
+) -> bool:
+    """Compare two values with a range operator, guarding incompatible types."""
+    if value is None or expected is None:
+        return False
+    # In Python bool subclasses int, so exclude bool from int/float comparisons.
+    if isinstance(value, bool) or isinstance(expected, bool):
+        if not (isinstance(value, bool) and isinstance(expected, bool)):
+            return False
+    elif isinstance(value, (int, float)) and isinstance(expected, (int, float)):
+        pass
+    elif isinstance(value, (bytes, bytearray)) and isinstance(
+        expected, (bytes, bytearray)
+    ):
+        pass
+    elif type(value) is not type(expected):
+        return False
+
+    try:
+        return comparator(value, expected)
+    except TypeError:
+        return False
+
+
 def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
     """Evaluate field-level ``$match`` comparison operators on a value.
 
@@ -112,23 +157,22 @@ def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
         elif op == "$ne":
             if value == expected:
                 return False
-        elif op == "$gt":
-            if not (value is not None and value > expected):
-                return False
-        elif op == "$gte":
-            if not (value is not None and value >= expected):
-                return False
-        elif op == "$lt":
-            if not (value is not None and value < expected):
-                return False
-        elif op == "$lte":
-            if not (value is not None and value <= expected):
+        elif op in _RANGE_OPS:
+            if not _compare_range_op(value, expected, _RANGE_OPS[op]):
                 return False
         elif op == "$in":
-            if value not in expected:
+            try:
+                matched = value in expected
+            except TypeError:
+                return False
+            if not matched:
                 return False
         elif op == "$nin":
-            if value in expected:
+            try:
+                matched = value in expected
+            except TypeError:
+                return False
+            if matched:
                 return False
         elif op == "$exists":
             exists = value is not None
@@ -265,7 +309,7 @@ class ChangeStream:
                 Mutually exclusive with ``start_after``.
             max_await_time_ms: Polling timeout in milliseconds before
                 ``__next__`` raises ``StopIteration``. Defaults to ``10000``
-                ms when ``None`` or ``0``.
+                ms when ``None``; ``0`` performs a single non-blocking poll.
             batch_size: Query limit per poll cycle (defaults to ``1`` when
                 falsy or ``None``).
             collation: Accepted collation configuration stored on the stream.
@@ -349,7 +393,7 @@ class ChangeStream:
                 operation TEXT NOT NULL,
                 document_id INTEGER,
                 document_data TEXT,
-                document_id_value TEXT,  -- Store the actual _id value separately
+                document_id_value BLOB,  -- Store the actual _id value without TEXT coercion
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """)
@@ -357,57 +401,73 @@ class ChangeStream:
         # Register this stream BEFORE creating shared triggers (#110): each
         # collection's triggers are created once and shared by all streams;
         # events are consumed via per-stream watermarks instead of deletion.
-        entry = _registry_entry(self._collection.db)
-        counts = entry["counts"]
-        streams: dict[int, ChangeStream] = entry["streams"].setdefault(
-            self._collection.name, {}
-        )
-        streams[id(self)] = self
-        first = counts.get(self._collection.name, 0) == 0
+        with _registry_lock:
+            entry = _registry_entry(self._collection.db)
+            counts = entry["counts"]
+            streams: dict[int, ChangeStream] = entry["streams"].setdefault(
+                self._collection.name, {}
+            )
+            streams[id(self)] = self
+            first = counts.get(self._collection.name, 0) == 0
+            counts[self._collection.name] = (
+                counts.get(self._collection.name, 0) + 1
+            )
 
         # Create triggers for INSERT, UPDATE, DELETE operations
         # Store normalized JSON text in changelog so JSONB writes remain readable
         # by change stream JSON decoders (including fullDocument=updateLookup).
-        if first:
-            from .collection.jsonb_support import JSONBContext
+        try:
+            if first:
+                from .collection.jsonb_support import JSONBContext
 
-            jsonb = JSONBContext.from_db(self._collection.db)
-            new_data_expr = jsonb.data_column("NEW.data")
-            old_data_expr = jsonb.data_column("OLD.data")
+                jsonb = JSONBContext.from_db(self._collection.db)
+                new_data_expr = jsonb.data_column("NEW.data")
+                old_data_expr = jsonb.data_column("OLD.data")
 
-            # Insert trigger
-            self._collection.db.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_insert_trigger
-            AFTER INSERT ON {quote_table_name(self._sanitized_name)}
-            BEGIN
-                INSERT INTO _neosqlite_changestream
-                (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._sanitized_name}', 'insert', NEW.id, {new_data_expr}, NEW._id);
-            END
-            """)
+                # Insert trigger
+                self._collection.db.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_insert_trigger
+                AFTER INSERT ON {quote_table_name(self._sanitized_name)}
+                BEGIN
+                    INSERT INTO _neosqlite_changestream
+                    (collection_name, operation, document_id, document_data, document_id_value)
+                    VALUES ('{self._sanitized_name}', 'insert', NEW.id, {new_data_expr}, NEW._id);
+                END
+                """)
 
-            # Update trigger
-            self._collection.db.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_update_trigger
-            AFTER UPDATE ON {quote_table_name(self._sanitized_name)}
-            BEGIN
-                INSERT INTO _neosqlite_changestream
-                (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._sanitized_name}', 'update', NEW.id, {new_data_expr}, NEW._id);
-            END
-            """)
+                # Update trigger
+                self._collection.db.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_update_trigger
+                AFTER UPDATE ON {quote_table_name(self._sanitized_name)}
+                BEGIN
+                    INSERT INTO _neosqlite_changestream
+                    (collection_name, operation, document_id, document_data, document_id_value)
+                    VALUES ('{self._sanitized_name}', 'update', NEW.id, {new_data_expr}, NEW._id);
+                END
+                """)
 
-            # Delete trigger
-            self._collection.db.execute(f"""
-            CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_delete_trigger
-            AFTER DELETE ON {quote_table_name(self._sanitized_name)}
-            BEGIN
-                INSERT INTO _neosqlite_changestream
-                (collection_name, operation, document_id, document_data, document_id_value)
-                VALUES ('{self._sanitized_name}', 'delete', OLD.id, {old_data_expr}, OLD._id);
-            END
-            """)
-        counts[self._collection.name] = counts.get(self._collection.name, 0) + 1
+                # Delete trigger
+                self._collection.db.execute(f"""
+                CREATE TRIGGER IF NOT EXISTS _neosqlite_{self._sanitized_name}_delete_trigger
+                AFTER DELETE ON {quote_table_name(self._sanitized_name)}
+                BEGIN
+                    INSERT INTO _neosqlite_changestream
+                    (collection_name, operation, document_id, document_data, document_id_value)
+                    VALUES ('{self._sanitized_name}', 'delete', OLD.id, {old_data_expr}, OLD._id);
+                END
+                """)
+        except Exception:
+            with _registry_lock:
+                streams.pop(id(self), None)
+                remaining = counts.get(self._collection.name, 1) - 1
+                if remaining <= 0:
+                    counts.pop(self._collection.name, None)
+                    entry["streams"].pop(self._collection.name, None)
+                else:
+                    counts[self._collection.name] = remaining
+                if not counts and not entry["streams"]:
+                    _stream_registry.pop(id(self._collection.db), None)
+            raise
 
         # Commit the changes only if not inside an active transaction
         if not self._collection.db.in_transaction:
@@ -455,6 +515,39 @@ class ChangeStream:
         except Exception:
             return False
 
+    def _retain_recent_changelog_rows(
+        self, before_id: int | None = None
+    ) -> None:
+        """Delete changelog rows beyond the newest ``_RESUME_RETENTION_ROWS``.
+
+        Args:
+            before_id: When provided, restrict deletion to rows strictly below
+                this changelog row id so unconsumed co-stream rows stay intact.
+        """
+        before_clause = "AND id < ? " if before_id is not None else ""
+        params: tuple[Any, ...]
+        if before_id is not None:
+            params = (
+                self._collection.name,
+                before_id,
+                self._collection.name,
+                _RESUME_RETENTION_ROWS,
+            )
+        else:
+            params = (
+                self._collection.name,
+                self._collection.name,
+                _RESUME_RETENTION_ROWS,
+            )
+        self._collection.db.execute(
+            f"DELETE FROM _neosqlite_changestream "
+            f"WHERE collection_name = ? {before_clause}AND id NOT IN ("
+            f"SELECT id FROM _neosqlite_changestream "
+            f"WHERE collection_name = ? "
+            f"ORDER BY id DESC LIMIT ?)",
+            params,
+        )
+
     def _cleanup_triggers(self):
         """Drop shared triggers on last close and prune unconsumable rows.
 
@@ -464,14 +557,26 @@ class ChangeStream:
         otherwise prunes rows already consumed by every active co-stream.
         Called from ``close()`` after ``_closed`` is set.
         """
-        entry = _registry_entry(self._collection.db)
-        counts: dict[str, int] = entry["counts"]
-        streams_by_coll: dict[str, dict[int, ChangeStream]] = entry["streams"]
-        streams = streams_by_coll.get(self._collection.name, {})
-        streams.pop(id(self), None)
+        with _registry_lock:
+            entry = _stream_registry.get(id(self._collection.db))
+            remaining = 0
+            if entry is not None and entry["db"] is self._collection.db:
+                counts: dict[str, int] = entry["counts"]
+                streams_by_coll: dict[str, dict[int, ChangeStream]] = entry[
+                    "streams"
+                ]
+                streams = streams_by_coll.get(self._collection.name, {})
+                streams.pop(id(self), None)
 
-        remaining = counts.get(self._collection.name, 0) - 1
-        counts[self._collection.name] = max(remaining, 0)
+                remaining = max(counts.get(self._collection.name, 0) - 1, 0)
+                if remaining <= 0:
+                    counts.pop(self._collection.name, None)
+                    streams_by_coll.pop(self._collection.name, None)
+                else:
+                    counts[self._collection.name] = remaining
+
+                if not counts and not streams_by_coll:
+                    _stream_registry.pop(id(self._collection.db), None)
 
         try:
             if remaining <= 0:
@@ -488,25 +593,11 @@ class ChangeStream:
                     f"DROP TRIGGER IF EXISTS _neosqlite_{self._sanitized_name}_delete_trigger"
                 )
                 if self._changelog_table_exists():
-                    self._collection.db.execute(
-                        "DELETE FROM _neosqlite_changestream "
-                        "WHERE collection_name = ? AND id NOT IN ("
-                        "SELECT id FROM _neosqlite_changestream "
-                        "WHERE collection_name = ? "
-                        "ORDER BY id DESC LIMIT ?)",
-                        (
-                            self._collection.name,
-                            self._collection.name,
-                            _RESUME_RETENTION_ROWS,
-                        ),
-                    )
+                    self._retain_recent_changelog_rows()
             else:
                 # Other streams still active: prune only rows every active
-                # stream has already consumed.
+                # stream has already consumed beyond the retention window.
                 self._prune_consumed()
-            if counts.get(self._collection.name, 0) == 0:
-                counts.pop(self._collection.name, None)
-                streams_by_coll.pop(self._collection.name, None)
             if not self._collection.db.in_transaction:
                 self._collection.db.commit()
         except Exception as e:
@@ -524,22 +615,24 @@ class ChangeStream:
         """Delete changelog rows consumed by every active co-stream (#111).
 
         Computes the minimum ``_last_id`` watermark across all open streams
-        watching the same collection and deletes rows with smaller ids.
+        watching the same collection and deletes rows with smaller ids while
+        retaining the newest ``_RESUME_RETENTION_ROWS`` rows (#186).
         """
         try:
-            entry = _registry_entry(self._collection.db)
-            streams = entry["streams"].get(self._collection.name, {})
-            marks = [
-                st._last_id
-                for sid, st in streams.items()
-                if not st._closed and sid != id(self)
-            ]
+            with _registry_lock:
+                entry = _stream_registry.get(id(self._collection.db))
+                if entry is not None and entry["db"] is self._collection.db:
+                    streams = entry["streams"].get(self._collection.name, {})
+                    marks = [
+                        st._last_id
+                        for sid, st in streams.items()
+                        if not st._closed and sid != id(self)
+                    ]
+                else:
+                    marks = []
             watermark = min(marks + [self._last_id])
             if watermark > 0 and self._changelog_table_exists():
-                self._collection.db.execute(
-                    "DELETE FROM _neosqlite_changestream WHERE collection_name = ? AND id < ?",
-                    (self._collection.name, watermark),
-                )
+                self._retain_recent_changelog_rows(before_id=watermark)
         except Exception as e:
             logger.debug(f"ChangeStream prune skipped: {e}")
 
@@ -567,14 +660,46 @@ class ChangeStream:
             return None
         return {"id": self._last_token_id}
 
+    @staticmethod
+    def _decode_document_data(
+        document_data: Any,
+    ) -> tuple[dict[str, Any] | None, bool]:
+        """Decode stored trigger JSON payloads using ``neosqlite_json_loads``.
+
+        Returns:
+            tuple[dict[str, Any] | None, bool]: ``(parsed_dict, utf8_failed)``.
+        """
+        if document_data is None:
+            return None, False
+        if isinstance(document_data, bytes):
+            try:
+                document_str = document_data.decode("utf-8")
+            except UnicodeDecodeError as e:
+                logger.debug(f"Failed to decode document_data as UTF-8: {e}")
+                return None, True
+        else:
+            document_str = document_data
+
+        try:
+            from .collection.json_helpers import neosqlite_json_loads
+
+            parsed = neosqlite_json_loads(document_str)
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug(f"Failed to parse document JSON: {e}")
+            return None, False
+
+        return (parsed, False) if isinstance(parsed, dict) else (None, False)
+
     def __next__(self) -> dict[str, Any]:
         """Poll for and return the next matching change event.
 
-        Polls ``_neosqlite_changestream`` in 0.1-second intervals until a new
-        event matching ``self._pipeline`` arrives or ``max_await_time_ms``
-        elapses (default 10 seconds). Decodes document ids, attaches
-        ``fullDocument`` when ``full_document == "updateLookup"``, advances
-        this stream's watermark, and prunes rows consumed by all active
+        Polls ``_neosqlite_changestream`` in up to 0.05-second intervals until
+        a new event matching ``self._pipeline`` arrives or ``max_await_time_ms``
+        elapses (default 10 seconds when ``None``; ``0`` performs a single poll).
+        Decodes document ids and BSON types via ``neosqlite_json_loads``,
+        attaches ``fullDocument`` when ``full_document == "updateLookup"``,
+        advances this stream's watermark, and prunes rows beyond
+        ``_RESUME_RETENTION_ROWS`` that have been consumed by all active
         co-streams.
 
         Returns:
@@ -589,18 +714,15 @@ class ChangeStream:
         if self._closed:
             raise StopIteration("Change stream is closed")
 
-        # Record the start time for timeout checking
-        start_time = time.time()
-        timeout = (
-            self._max_await_time_ms or 10000
-        ) / 1000.0  # Convert to seconds
+        timeout_s = (
+            10.0
+            if self._max_await_time_ms is None
+            else max(0.0, self._max_await_time_ms / 1000.0)
+        )
+        deadline = time.monotonic() + timeout_s
 
         # Poll for changes
         while True:
-            # Check if we've exceeded the timeout
-            if time.time() - start_time > timeout:
-                raise StopIteration("Change stream timeout exceeded")
-
             cursor = self._collection.db.execute(
                 """
                 SELECT id, operation, document_id, document_data, document_id_value, timestamp
@@ -612,167 +734,72 @@ class ChangeStream:
                 (self._collection.name, self._last_id, self._batch_size),
             )
             rows = cursor.fetchall()
-            if rows:
+            if not rows:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise StopIteration("Change stream timeout exceeded")
+                time.sleep(min(0.05, remaining))
+                continue
 
-                if rows:
-                    # Process the first change
-                    row = rows[0]
-                    (
-                        change_id,
-                        operation,
-                        document_id,
-                        document_data,
-                        document_id_value,
-                        timestamp,
-                    ) = row
+            row = rows[0]
+            (
+                change_id,
+                operation,
+                document_id,
+                document_data,
+                document_id_value,
+                timestamp,
+            ) = row
 
-                    # Get the actual _id of the document
-                    # Try to get _id from the stored document_id_value first (this works even for deleted documents)
-                    actual_id = document_id  # Default to integer ID if nothing else works
-                    if document_id_value is not None:
-                        # Use the stored _id value
-                        # If it looks like a hex string (ObjectId), convert it back to ObjectId
-                        try:
-                            actual_id = ObjectId(document_id_value)
-                        except (ValueError, TypeError) as e:
-                            # If not a valid ObjectId hex, use as-is
-                            logger.debug(
-                                f"Document ID '{document_id_value}' is not a valid ObjectId: {e}"
-                            )
-                            actual_id = document_id_value
-                    elif document_data:
-                        try:
-                            # Handle bytes data - decode to string first
-                            if isinstance(document_data, bytes):
-                                try:
-                                    document_str = document_data.decode("utf-8")
-                                except UnicodeDecodeError as e:
-                                    # If UTF-8 decoding fails, use default ID
-                                    logger.debug(
-                                        f"Failed to decode document_data as UTF-8: {e}"
-                                    )
-                                    document_str = None
-                            else:
-                                document_str = document_data
+            parsed_doc, utf8_failed = self._decode_document_data(document_data)
+            if self._full_document == "updateLookup" and utf8_failed:
+                self._advance_watermark(change_id)
+                self._prune_consumed()
+                if timeout_s > 0 and time.monotonic() >= deadline:
+                    raise StopIteration("Change stream timeout exceeded")
+                continue
 
-                            doc_dict = (
-                                json.loads(document_str)
-                                if document_str is not None
-                                else None
-                            )
-                            if doc_dict and "_id" in doc_dict:
-                                actual_id = doc_dict["_id"]
-                            else:
-                                # If not in JSON, try to get from the _id column in the database
-                                stored_id = self._collection._get_stored_id(
-                                    document_id
-                                )
-                                actual_id = (
-                                    stored_id
-                                    if stored_id is not None
-                                    else document_id
-                                )
-                        except (json.JSONDecodeError, TypeError) as e:
-                            # If JSON parsing fails, try database lookup
-                            logger.debug(f"Failed to parse document JSON: {e}")
-                            stored_id = self._collection._get_stored_id(
-                                document_id
-                            )
-                            actual_id = (
-                                stored_id
-                                if stored_id is not None
-                                else document_id
-                            )
-                    else:
-                        # No JSON data, try database lookup
-                        stored_id = self._collection._get_stored_id(document_id)
-                        actual_id = (
-                            stored_id if stored_id is not None else document_id
-                        )
+            if parsed_doc is not None and "_id" in parsed_doc:
+                actual_id = parsed_doc["_id"]
+            elif document_id_value is not None:
+                actual_id = document_id_value
+            else:
+                stored_id = self._collection._get_stored_id(document_id)
+                actual_id = stored_id if stored_id is not None else document_id
 
-                    # Create the change document
-                    change_doc = {
-                        "_id": {"id": change_id},
-                        "operationType": operation,
-                        "clusterTime": timestamp,
-                        "ns": {
-                            "db": (
-                                "default"
-                            ),  # Default database name since Connection doesn't have a name property
-                            "coll": self._collection.name,
-                        },
-                        "documentKey": {"_id": actual_id},
-                    }
+            change_doc: dict[str, Any] = {
+                "_id": {"id": change_id},
+                "operationType": operation,
+                "clusterTime": timestamp,
+                "ns": {
+                    "db": "default",  # Default database name since Connection doesn't have a name property
+                    "coll": self._collection.name,
+                },
+                "documentKey": {"_id": actual_id},
+            }
 
-                    # Add full document if requested
-                    skip_change = False
-                    if self._full_document == "updateLookup" and document_data:
-                        full_doc_str: str | None = None
-                        try:
-                            # Handle bytes data - decode to string first
-                            if isinstance(document_data, bytes):
-                                try:
-                                    full_doc_str = document_data.decode("utf-8")
-                                except UnicodeDecodeError as e:
-                                    # If UTF-8 decoding fails, skip this change
-                                    logger.debug(
-                                        f"Failed to decode full document data: {e}"
-                                    )
-                                    skip_change = True
-                            else:
-                                full_doc_str = document_data
+            if self._full_document == "updateLookup" and parsed_doc is not None:
+                doc = dict(parsed_doc)
+                if "_id" not in doc:
+                    doc["_id"] = actual_id
+                change_doc["fullDocument"] = doc
 
-                            if not skip_change and full_doc_str is not None:
-                                doc = json.loads(full_doc_str)
-                                # Ensure the _id in the full document is correct
-                                # Use the stored document_id_value if available (e.g., for deleted docs)
-                                if document_id_value is not None:
-                                    try:
-                                        actual_doc_id = ObjectId(
-                                            document_id_value
-                                        )
-                                    except (ValueError, TypeError) as e:
-                                        logger.debug(
-                                            f"Document ID '{document_id_value}' is not a valid ObjectId: {e}"
-                                        )
-                                        actual_doc_id = document_id_value
-                                    doc["_id"] = actual_doc_id
-                                elif "_id" not in doc:
-                                    # Fallback: get from database if not in JSON
-                                    stored_id = self._collection._get_stored_id(
-                                        document_id
-                                    )
-                                    doc["_id"] = (
-                                        stored_id
-                                        if stored_id is not None
-                                        else document_id
-                                    )
-                                change_doc["fullDocument"] = doc
-                        except (json.JSONDecodeError, TypeError) as e:
-                            logger.debug(f"Failed to parse document JSON: {e}")
-                            pass
+            if self._pipeline and not _pipeline_matches(
+                change_doc, self._pipeline
+            ):
+                self._advance_watermark(change_id)
+                self._prune_consumed()
+                if timeout_s > 0 and time.monotonic() >= deadline:
+                    raise StopIteration("Change stream timeout exceeded")
+                continue
 
-                    if skip_change:
-                        self._advance_watermark(change_id)
-                        continue
+            # Events are NOT deleted on read (#110): other active
+            # streams on this collection keep their own watermarks.
+            self._last_id = change_id
+            self._last_token_id = change_id
+            self._prune_consumed()
 
-                    if self._pipeline and not _pipeline_matches(
-                        change_doc, self._pipeline
-                    ):
-                        self._advance_watermark(change_id)
-                        self._prune_consumed()
-                        continue
-
-                    # Events are NOT deleted on read (#110): other active
-                    # streams on this collection keep their own watermarks.
-                    self._last_id = change_id
-                    self._last_token_id = change_id
-                    self._prune_consumed()
-
-                    return change_doc
-                del rows
-            # No changes were found; sleep before retrying
-            time.sleep(0.1)
+            return change_doc
 
     def __enter__(self) -> Self:
         """Enter the context manager and return this change stream.

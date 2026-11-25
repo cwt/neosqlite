@@ -4,6 +4,7 @@ Tests for the watch() method and ChangeStream functionality
 
 import json
 import time
+from datetime import UTC
 
 import pytest
 
@@ -449,10 +450,10 @@ def test_updatelookup_json_fail(collection):
 
 
 def test_updatelookup_non_objectid_value(collection):
-    """Test updateLookup with non-ObjectId document_id_value."""
+    """Test updateLookup fallback with non-ObjectId document_id_value when _id absent in JSON."""
     stream = collection.watch(full_document="updateLookup")
 
-    doc_data = json.dumps({"_id": 1, "name": "test"})
+    doc_data = json.dumps({"name": "test"})
     collection.db.execute(
         "INSERT INTO _neosqlite_changestream (collection_name, operation, document_id, document_data, document_id_value) VALUES (?, ?, ?, ?, ?)",
         (collection.name, "update", 1, doc_data, "string-id"),
@@ -582,3 +583,211 @@ def test_changestream_last_id_updated_after_commit(collection):
     # Verify the change is valid
     assert change["operationType"] == "insert"
     stream.close()
+
+
+def test_changestream_preserves_id_types_across_insert_update_delete(
+    connection,
+):
+    """Verify int, float, 24-hex str, Binary, and ObjectId _id types round-trip cleanly."""
+    from neosqlite.binary import Binary
+    from neosqlite.objectid import ObjectId
+
+    coll = connection.id_types_test
+    oid_val = ObjectId()
+    hex_str_val = "507f1f77bcf86cd799439011"
+    bin_val = Binary(b"0123456789ab")
+    ids = [1, 2.5, hex_str_val, bin_val, oid_val]
+
+    with coll.watch(
+        full_document="updateLookup", max_await_time_ms=500
+    ) as stream:
+        for idx, doc_id in enumerate(ids):
+            coll.insert_one({"_id": doc_id, "step": idx})
+            ev_ins = next(stream)
+            assert ev_ins["operationType"] == "insert"
+            assert ev_ins["documentKey"]["_id"] == doc_id
+            assert type(ev_ins["documentKey"]["_id"]) is type(doc_id)
+            assert ev_ins["fullDocument"]["_id"] == doc_id
+            assert type(ev_ins["fullDocument"]["_id"]) is type(doc_id)
+
+            coll.update_one({"_id": doc_id}, {"$set": {"step": idx + 10}})
+            ev_upd = next(stream)
+            assert ev_upd["operationType"] == "update"
+            assert ev_upd["documentKey"]["_id"] == doc_id
+            assert type(ev_upd["documentKey"]["_id"]) is type(doc_id)
+            assert ev_upd["fullDocument"]["_id"] == doc_id
+            assert type(ev_upd["fullDocument"]["_id"]) is type(doc_id)
+
+            coll.delete_one({"_id": doc_id})
+            ev_del = next(stream)
+            assert ev_del["operationType"] == "delete"
+            assert ev_del["documentKey"]["_id"] == doc_id
+            assert type(ev_del["documentKey"]["_id"]) is type(doc_id)
+            assert ev_del["fullDocument"]["_id"] == doc_id
+            assert type(ev_del["fullDocument"]["_id"]) is type(doc_id)
+
+
+def test_changestream_decodes_bson_types_in_full_document(connection):
+    """Verify datetime, ObjectId, and Binary fields decode in fullDocument via neosqlite_json_loads."""
+    from datetime import datetime
+
+    from neosqlite.binary import Binary
+    from neosqlite.objectid import ObjectId
+
+    coll = connection.bson_full_doc
+    run_at = datetime(2026, 5, 1, 12, 0, tzinfo=UTC)
+    owner = ObjectId()
+    payload = Binary(b"\xde\xad\xbe\xef")
+
+    with coll.watch(
+        full_document="updateLookup", max_await_time_ms=500
+    ) as stream:
+        coll.insert_one(
+            {
+                "_id": 1,
+                "next_run": run_at,
+                "owner": owner,
+                "nested": {"sig": payload},
+            }
+        )
+        ev = next(stream)
+        assert ev["documentKey"]["_id"] == 1
+        assert type(ev["documentKey"]["_id"]) is int
+        full_doc = ev["fullDocument"]
+        assert isinstance(full_doc["next_run"], datetime)
+        assert full_doc["next_run"] == run_at
+        assert isinstance(full_doc["owner"], ObjectId)
+        assert full_doc["owner"] == owner
+        assert isinstance(full_doc["nested"]["sig"], Binary)
+        assert full_doc["nested"]["sig"] == payload
+
+
+def test_changestream_mixed_type_match_does_not_wedge(connection):
+    """Verify mixed-type $gt/$lte in $match return False safely without wedging _last_id."""
+    coll = connection.mixed_match
+
+    with coll.watch(
+        pipeline=[{"$match": {"fullDocument.score": {"$gt": 0}}}],
+        full_document="updateLookup",
+        max_await_time_ms=100,
+    ) as stream:
+        coll.insert_one({"_id": 1, "score": "not-a-number"})
+        coll.insert_one({"_id": 2, "score": True})
+        coll.insert_one({"_id": 3, "score": 25})
+
+        ev = next(stream)
+        assert ev["documentKey"]["_id"] == 3
+        assert ev["fullDocument"]["score"] == 25
+
+        with pytest.raises(StopIteration, match="timeout exceeded"):
+            next(stream)
+
+
+def test_changestream_prune_consumed_retains_resume_rows(
+    connection, monkeypatch
+):
+    """Verify _prune_consumed honors _RESUME_RETENTION_ROWS for concurrent streams and bounded pruning."""
+    from neosqlite import changestream as cs_mod
+
+    monkeypatch.setattr(cs_mod, "_RESUME_RETENTION_ROWS", 3)
+    coll = connection.prune_retention
+
+    s1 = coll.watch(max_await_time_ms=100)
+    s2 = coll.watch(max_await_time_ms=100)
+    tokens = []
+    try:
+        for i in range(6):
+            coll.insert_one({"seq": i})
+            ev1 = next(s1)
+            next(s2)
+            tokens.append(ev1["_id"])
+
+        row_count = connection.db.execute(
+            "SELECT COUNT(*) FROM _neosqlite_changestream WHERE collection_name = ?",
+            (coll.name,),
+        ).fetchone()[0]
+        assert row_count == 3
+
+        # Replaying after the 3rd-to-last retained token must still work while live
+        with coll.watch(
+            resume_after=tokens[3], max_await_time_ms=100
+        ) as replayed:
+            ev_r1 = next(replayed)
+            ev_r2 = next(replayed)
+            assert ev_r1["_id"] == tokens[4]
+            assert ev_r2["_id"] == tokens[5]
+    finally:
+        s1.close()
+        s2.close()
+
+
+def test_changestream_registry_cleanup_and_thread_safety():
+    """Verify _stream_registry releases closed connections and handles concurrent access."""
+    import concurrent.futures
+
+    import neosqlite
+    from neosqlite.changestream import _stream_registry
+
+    snapshot_before = set(_stream_registry.keys())
+
+    # 1. Explicit stream close clears registry entry when last stream closes
+    conn1 = neosqlite.Connection(":memory:")
+    with conn1.items.watch(max_await_time_ms=20) as cs:
+        assert id(conn1.db) in _stream_registry
+        conn1.items.insert_one({"x": 1})
+        next(cs)
+    assert id(conn1.db) not in _stream_registry
+    conn1.close()
+
+    # 2. Connection.close() clears registry even if stream was left unclosed
+    conn2 = neosqlite.Connection(":memory:")
+    abandoned = conn2.items.watch(max_await_time_ms=20)
+    assert id(conn2.db) in _stream_registry
+    conn2.close()
+    assert id(conn2.db) not in _stream_registry
+    assert abandoned is not None
+
+    # 3. Concurrent stream open/close across connections stays thread-safe
+    def open_and_close_stream(idx: int) -> int:
+        local_conn = neosqlite.Connection(":memory:")
+        try:
+            with local_conn[f"t_{idx}"].watch(max_await_time_ms=20) as st:
+                local_conn[f"t_{idx}"].insert_one({"idx": idx})
+                return next(st)["operationType"] == "insert"
+        finally:
+            local_conn.close()
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        results = list(pool.map(open_and_close_stream, range(12)))
+    assert all(results)
+    assert set(_stream_registry.keys()) <= snapshot_before
+
+
+def test_changestream_max_await_time_ms_zero_and_short_timeout(connection):
+    """Verify max_await_time_ms=0 is non-blocking and short timeouts finish without 100ms sleep."""
+    import time
+
+    coll = connection.await_timing
+
+    # 0ms timeout with no queued events returns StopIteration immediately
+    with coll.watch(max_await_time_ms=0) as zero_stream:
+        start = time.monotonic()
+        with pytest.raises(StopIteration, match="timeout exceeded"):
+            next(zero_stream)
+        elapsed_empty = time.monotonic() - start
+        assert elapsed_empty < 0.05
+
+        # 0ms timeout returns an already-queued matching event cleanly, then stops
+        coll.insert_one({"ready": True})
+        ev = next(zero_stream)
+        assert ev["operationType"] == "insert"
+        with pytest.raises(StopIteration, match="timeout exceeded"):
+            next(zero_stream)
+
+    # 30ms timeout must not sleep a fixed 100ms
+    with coll.watch(max_await_time_ms=30) as short_stream:
+        start = time.monotonic()
+        with pytest.raises(StopIteration, match="timeout exceeded"):
+            next(short_stream)
+        elapsed_short = time.monotonic() - start
+        assert elapsed_short < 0.09

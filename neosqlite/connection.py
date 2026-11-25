@@ -579,6 +579,13 @@ class Connection:
                 pass
 
             try:
+                from .changestream import clear_changestream_registry
+
+                clear_changestream_registry(db)
+            except Exception:
+                pass
+
+            try:
                 db.close()
             except Exception as e:
                 if not from_gc and logger is not None:
