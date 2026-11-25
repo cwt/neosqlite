@@ -1114,6 +1114,58 @@ class StageBuildersMixin:
         sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} ORDER BY RANDOM() LIMIT ?"
         return sql, [size]
 
+    def _compile_bucket_accumulators(
+        self,
+        output: dict[str, Any],
+        agg_ctx: AggregationContext,
+    ) -> tuple[list[str] | None, list[Any], list[tuple[str, str]], set[str]]:
+        """Compile ``$bucket``/``$bucketAuto`` output accumulators to SQL.
+
+        Args:
+            output: Mapping of output field names to accumulator specs.
+            agg_ctx: Active aggregation expression context.
+
+        Returns:
+            tuple: ``(acc_select_parts, acc_params, output_aliases, array_fields)``
+                where ``acc_select_parts`` is ``None`` when any accumulator is
+                unsupported in SQL Tier 1.
+        """
+        acc_parts: list[str] = []
+        acc_params: list[Any] = []
+        output_aliases: list[tuple[str, str]] = []
+        array_fields: set[str] = set()
+
+        for field, acc_spec in output.items():
+            if not isinstance(acc_spec, dict) or len(acc_spec) != 1:
+                return None, [], [], set()
+            op, expr = next(iter(acc_spec.items()))
+            sql_alias = f"__acc_{len(output_aliases)}"
+            if op == "$count":
+                acc_parts.append(f"COUNT(*) AS {sql_alias}")
+            elif op == "$sum" and expr == 1 and not isinstance(expr, bool):
+                acc_parts.append(f"COUNT(*) AS {sql_alias}")
+            else:
+                agg_result = self._map_accumulator_to_sql(op)
+                if not agg_result:
+                    return None, [], [], set()
+                sql_agg, use_distinct = agg_result
+                expr_sql, expr_params = self.evaluator.build_select_expression(
+                    expr, context=agg_ctx
+                )
+                if expr_sql is None:
+                    return None, [], [], set()
+                acc_params.extend(expr_params)
+                distinct_str = "DISTINCT " if use_distinct else ""
+                agg_call = f"{sql_agg}({distinct_str}{expr_sql})"
+                if op == "$sum":
+                    agg_call = f"COALESCE({agg_call}, 0)"
+                acc_parts.append(f"{agg_call} AS {sql_alias}")
+                if sql_agg == "json_group_array":
+                    array_fields.add(field)
+            output_aliases.append((field, sql_alias))
+
+        return acc_parts, acc_params, output_aliases, array_fields
+
     def _build_bucket_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
@@ -1123,6 +1175,8 @@ class StageBuildersMixin:
         defined by ``boundaries`` (with an optional ``default`` bucket
         defaulting to ``"Other"``) and computes ``output`` accumulators per
         bucket while preserving the ``(id, _id, data)`` CTE column contract.
+        ``groupBy`` is precomputed once in an inner subquery so bound
+        parameters are never duplicated across boundary ``CASE`` branches.
 
         Args:
             spec: Bucket specification containing ``"groupBy"``,
@@ -1143,54 +1197,44 @@ class StageBuildersMixin:
         default = spec.get("default", "Other")
         output = spec.get("output", {"count": {"$sum": 1}})
 
-        if not group_by or not boundaries:
+        if group_by is None or group_by == "" or not boundaries:
+            return None, []
+
+        try:
+            sorted_boundaries = sorted(boundaries)
+        except TypeError:
             return None, []
 
         agg_ctx = self._make_agg_context(context, preserve_root)
-        all_params = []
         key_sql, key_params = self.evaluator.build_select_expression(
             group_by, context=agg_ctx
         )
-        all_params.extend(key_params)
+        if key_sql is None:
+            return None, []
 
-        # Build CASE for boundaries
+        acc_parts, acc_params, output_aliases, array_fields = (
+            self._compile_bucket_accumulators(output, agg_ctx)
+        )
+        if acc_parts is None:
+            return None, []
+
         case_parts = []
-        for lower, upper in pairwise(boundaries):
-            case_parts.append(f"WHEN {key_sql} >= ? AND {key_sql} < ? THEN ?")
-            all_params.extend([lower, upper, lower])
+        case_params: list[Any] = []
+        for lower, upper in pairwise(sorted_boundaries):
+            case_parts.append("WHEN __gval >= ? AND __gval < ? THEN ?")
+            case_params.extend([lower, upper, lower])
 
-        if default is not None:
-            case_parts.append("ELSE ?")
-            all_params.append(default)
-
-        bucket_id_sql = f"CASE {' '.join(case_parts)} END"
-
-        # Build accumulators into an inner SELECT; the outer projection
-        # references those aliases to satisfy the (id, _id, data) invariant
-        # without self-referencing them at the same SELECT level (#94).
-        # The bucket key alias must not collide with the input's own _id
-        # column, so it is named __bucket_id and projected as _id outside.
-        sub_parts = [f"{bucket_id_sql} AS __bucket_id"]
-        output_aliases: list[tuple[str, str]] = []
-        array_fields: set[str] = set()
-        for field, acc_spec in output.items():
-            op, expr = next(iter(acc_spec.items()))
-            agg_result = self._map_accumulator_to_sql(op)
-            if not agg_result:
-                return None, []
-            sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(
-                expr, context=agg_ctx
-            )
-            all_params.extend(expr_params)
-            distinct_str = "DISTINCT " if use_distinct else ""
-            sql_alias = f"__acc_{len(output_aliases)}"
-            sub_parts.append(
-                f"{sql_agg}({distinct_str}{expr_sql}) AS {sql_alias}"
-            )
-            output_aliases.append((field, sql_alias))
-            if sql_agg == "json_group_array":
-                array_fields.add(field)
+        if not case_parts:
+            if default is not None:
+                bucket_id_sql = "?"
+                case_params.append(default)
+            else:
+                bucket_id_sql = "NULL"
+        else:
+            if default is not None:
+                case_parts.append("ELSE ?")
+                case_params.append(default)
+            bucket_id_sql = f"CASE {' '.join(case_parts)} END"
 
         json_args = ", ".join(
             ["'_id', __bucket_id"]
@@ -1204,8 +1248,6 @@ class StageBuildersMixin:
             ]
         )
 
-        # GROUP BY __bucket_id (an unambiguous name), so the CASE expression
-        # — and its bound parameters — appear exactly once.
         outer_cols = [
             "NULL AS id",
             "__bucket_id AS _id",
@@ -1213,22 +1255,33 @@ class StageBuildersMixin:
         ]
         if context.has_root:
             outer_cols.append(f"json_object({json_args}) AS root_data")
+
+        sub_parts = ["__bucket_id"] + acc_parts
+        all_params = acc_params + case_params + list(key_params)
         sql = (
             f"SELECT {', '.join(outer_cols)} "
-            f"FROM (SELECT {', '.join(sub_parts)} FROM {prev_stage} "
-            f"GROUP BY __bucket_id)"
+            f"FROM ("
+            f"SELECT {', '.join(sub_parts)} "
+            f"FROM ("
+            f"SELECT __bucket_src.*, {bucket_id_sql} AS __bucket_id "
+            f"FROM (SELECT *, ({key_sql}) AS __gval FROM {prev_stage}) AS __bucket_src"
+            f") "
+            f"GROUP BY __bucket_id"
+            f") "
+            f"ORDER BY __bucket_id"
         )
         return sql, all_params
 
     def _build_bucket_auto_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
     ):
-        """Build SQL for the ``$bucketAuto`` stage using equal-width bins.
+        """Build SQL for the ``$bucketAuto`` stage using equal-count bins.
 
-        Partitions documents across up to ``buckets`` (default ``10``) uniform
-        intervals spanning ``[MIN(key), MAX(key)]`` and outputs
-        ``{_id: {min, max}, ...}`` documents. Falls back to ``(None, [])``
-        when ``groupBy`` is missing, ``granularity`` is specified, or an
+        Partitions documents across up to ``buckets`` (default ``10``) groups
+        ordered by ``groupBy`` using ``DENSE_RANK`` so identical values remain
+        in the same bucket, emitting ``{_id: {min, max}, ...}`` documents.
+        Falls back to ``(None, [])`` when ``groupBy`` is missing,
+        ``granularity`` is specified, SQLite is older than 3.25.0, or an
         accumulator cannot be mapped to SQL.
 
         Args:
@@ -1262,68 +1315,25 @@ class StageBuildersMixin:
                 f"got {buckets!r}"
             )
 
-        if not group_by:
+        if group_by is None or group_by == "" or granularity:
             return None, []
 
-        if granularity:
+        if not _check_sqlite_version("3.25.0"):
             return None, []
 
         agg_ctx = self._make_agg_context(context, preserve_root)
         key_sql, key_params = self.evaluator.build_select_expression(
             group_by, context=agg_ctx
         )
+        if key_sql is None:
+            return None, []
 
-        min_max_sql = f"""
-            SELECT
-                MIN({key_sql}) as min_val,
-                MAX({key_sql}) as max_val
-            FROM {prev_stage}
-        """
+        acc_parts, grouped_params, output_aliases, array_fields = (
+            self._compile_bucket_accumulators(output, agg_ctx)
+        )
+        if acc_parts is None:
+            return None, []
 
-        bucket_calc_sql = f"""
-            SELECT
-                min_val,
-                max_val,
-                CASE
-                    WHEN max_val = min_val THEN 0
-                    ELSE (max_val - min_val) * 1.0 / ?
-                END as bucket_width,
-                ? AS num_buckets
-            FROM ({min_max_sql})
-        """
-
-        grouped_parts: list[str] = [
-            # MongoDB's $bucketAuto reports each bucket's boundaries as an
-            # {_id: {min, max}} document computed over the bucketed values.
-            "MIN(val) AS __bmin",
-            "MAX(val) AS __bmax",
-        ]
-        grouped_params: list[Any] = []
-        output_aliases: list[tuple[str, str]] = []
-        array_fields: set[str] = set()
-        for field, acc_spec in output.items():
-            op, expr = next(iter(acc_spec.items()))
-            agg_result = self._map_accumulator_to_sql(op)
-            if not agg_result:
-                return None, []
-            sql_agg, use_distinct = agg_result
-            expr_sql, expr_params = self.evaluator.build_select_expression(
-                expr, context=agg_ctx
-            )
-            grouped_params.extend(expr_params)
-            distinct_str = "DISTINCT " if use_distinct else ""
-            sql_alias = f"__acc_{len(output_aliases)}"
-            grouped_parts.append(
-                f"{sql_agg}({distinct_str}{expr_sql}) AS {sql_alias}"
-            )
-            output_aliases.append((field, sql_alias))
-            if sql_agg == "json_group_array":
-                array_fields.add(field)
-
-        # Wrap the grouped SELECT in an outer projection: json_object must
-        # reference the accumulator aliases from an enclosing level (#94).
-        # The bucket key is aliased __bucket_id to avoid colliding with the
-        # input's own _id column.
         json_args = ", ".join(
             ["'_id', json_object('min', __bmin, 'max', __bmax)"]
             + [
@@ -1341,6 +1351,7 @@ class StageBuildersMixin:
             if context.has_root
             else ""
         )
+        acc_select_sql = f", {', '.join(acc_parts)}" if acc_parts else ""
         sql = f"""
             SELECT
                 NULL AS id,
@@ -1348,46 +1359,34 @@ class StageBuildersMixin:
                 json_object({json_args}) AS data{root_select_col}
             FROM (
                 SELECT
-                    i.bucket_id AS __bucket_id,
-                    MIN(i.val) AS __bmin,
-                    MAX(i.val) AS __bmax,
-                    {', '.join(grouped_parts)}
+                    __bucket_id,
+                    CASE WHEN MAX(CASE WHEN __gval IS NULL THEN 1 ELSE 0 END) = 1 THEN NULL ELSE MIN(__gval) END AS __bmin,
+                    MAX(__gval) AS __bmax{acc_select_sql}
                 FROM (
                     SELECT
-                        __src.id AS __rid,
-                        {key_sql} as val,
-                        CASE
-                            WHEN max_val = min_val THEN 0
-                            ELSE MIN(
-                                CAST(
-                                    ({key_sql} - min_val) * 1.0
-                                    / NULLIF(bucket_width, 0)
-                                    AS INTEGER
-                                ),
-                                num_buckets - 1
-                            )
-                        END as bucket_id
-                    FROM {prev_stage} AS __src, ({bucket_calc_sql})
-                    WHERE min_val IS NOT NULL AND max_val IS NOT NULL
-                ) AS i
-                JOIN {prev_stage} AS __src2
-                    ON __src2.id = i.__rid
-                GROUP BY i.bucket_id
+                        __dr.*,
+                        ((__dr.__drank - 1) * ?) / NULLIF(MAX(__dr.__drank) OVER (), 0) AS __bucket_id
+                    FROM (
+                        SELECT
+                            __bsrc.*,
+                            DENSE_RANK() OVER (ORDER BY __bsrc.__gval) AS __drank
+                        FROM (
+                            SELECT
+                                *,
+                                ({key_sql}) AS __gval
+                            FROM {prev_stage}
+                        ) AS __bsrc
+                    ) AS __dr
+                )
+                GROUP BY __bucket_id
             )
-            ORDER BY _id
+            ORDER BY __bmin
         """
         # Bind parameters in textual SQL order:
-        # 1) grouped_parts accumulators (in middle SELECT)
-        # 2) i SELECT key_sql x2
-        # 3) bucket_calc_sql (? / ?, min_max_sql key_sql x2)
-        all_params = (
-            grouped_params
-            + list(key_params)
-            + list(key_params)
-            + [buckets, buckets]
-            + list(key_params)
-            + list(key_params)
-        )
+        # 1) grouped accumulator params
+        # 2) NTILE-equivalent bucket count divisor (?)
+        # 3) single inner groupBy expression key_params
+        all_params = grouped_params + [buckets] + list(key_params)
         return sql, all_params
 
     def _build_union_with_sql(

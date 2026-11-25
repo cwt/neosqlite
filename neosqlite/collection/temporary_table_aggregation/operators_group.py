@@ -9,6 +9,7 @@ from typing import Any
 from ...sql_utils import quote_table_name
 from ..expr_evaluator import AggregationContext, _is_expression
 from ..json_path_utils import parse_json_path
+from ..query_helper.utils import _check_sqlite_version
 from .operators_base import OperatorsBaseMixin
 from .operators_hybrid import python_hybrid_fallback
 
@@ -906,14 +907,110 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 results.append(doc)
         return results
 
+    def _compile_bucket_expr(
+        self,
+        expr: Any,
+        agg_ctx: AggregationContext,
+        has_underscore_id: bool,
+    ) -> tuple[str, list[Any]]:
+        """Compile a ``$bucket``/``$bucketAuto`` expression or field ref.
+
+        Args:
+            expr: MongoDB field reference, variable, or expression dict.
+            agg_ctx: Active aggregation expression context.
+            has_underscore_id: Whether the input table includes an ``_id``
+                column as a fallback for ``$_id``.
+
+        Returns:
+            tuple[str, list[Any]]: Compiled SQL expression and bound params.
+
+        Raises:
+            NotImplementedError: If the expression is unsupported in SQL tier.
+        """
+        if expr == "$_id" and has_underscore_id:
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
+            return f"COALESCE({json_extract}(data, '$._id'), _id)", []
+        expr_sql, expr_params = self.expr_evaluator.build_select_expression(
+            expr, context=agg_ctx
+        )
+        if expr_sql is None:
+            raise NotImplementedError(
+                f"Bucket expression {expr!r} not supported in SQL tier"
+            )
+        return expr_sql, list(expr_params)
+
+    def _compile_bucket_accumulators(
+        self,
+        output_spec: dict[str, Any],
+        agg_ctx: AggregationContext,
+        has_underscore_id: bool,
+    ) -> tuple[list[str], list[Any], list[tuple[str, str]], list[str]]:
+        """Compile ``$bucket``/``$bucketAuto`` output accumulators for Tier 2.
+
+        Args:
+            output_spec: Mapping of output field names to accumulator specs.
+            agg_ctx: Active aggregation expression context.
+            has_underscore_id: Whether the input table has an ``_id`` column.
+
+        Returns:
+            tuple: ``(acc_parts, acc_params, output_aliases, array_fields)``.
+
+        Raises:
+            NotImplementedError: If any accumulator requires Python fallback.
+        """
+        acc_parts: list[str] = []
+        acc_params: list[Any] = []
+        output_aliases: list[tuple[str, str]] = []
+        array_fields: list[str] = []
+        op_map = {
+            "$sum": ("SUM", False),
+            "$avg": ("AVG", False),
+            "$min": ("MIN", False),
+            "$max": ("MAX", False),
+            "$push": ("json_group_array", False),
+            "$addToSet": ("json_group_array", True),
+        }
+
+        for field_name, acc_spec in output_spec.items():
+            if not isinstance(acc_spec, dict) or len(acc_spec) != 1:
+                raise NotImplementedError(
+                    f"Bucket accumulator {acc_spec!r} requires Python fallback"
+                )
+            op, expr = next(iter(acc_spec.items()))
+            sql_alias = f"__acc_{len(output_aliases)}"
+            if op == "$count":
+                acc_parts.append(f"COUNT(*) AS {sql_alias}")
+            elif op == "$sum" and expr == 1 and not isinstance(expr, bool):
+                acc_parts.append(f"COUNT(*) AS {sql_alias}")
+            elif op in op_map:
+                sql_agg, use_distinct = op_map[op]
+                expr_sql, expr_params = self._compile_bucket_expr(
+                    expr, agg_ctx, has_underscore_id
+                )
+                acc_params.extend(expr_params)
+                distinct_str = "DISTINCT " if use_distinct else ""
+                agg_call = f"{sql_agg}({distinct_str}{expr_sql})"
+                if op == "$sum":
+                    agg_call = f"COALESCE({agg_call}, 0)"
+                acc_parts.append(f"{agg_call} AS {sql_alias}")
+                if sql_agg == "json_group_array":
+                    array_fields.append(field_name)
+            else:
+                raise NotImplementedError(
+                    f"Bucket accumulator {op} requires Python fallback"
+                )
+            output_aliases.append((field_name, sql_alias))
+
+        return acc_parts, acc_params, output_aliases, array_fields
+
     @python_hybrid_fallback("$bucket")
     def _process_bucket_stage(self, create_temp, current_table, bucket_spec):
         """Process a ``$bucket`` stage grouping documents by boundary ranges.
 
-        Sorts ``boundaries``, builds a SQL ``CASE`` expression mapping values
-        into ``[lower, upper)`` intervals (or the ``default`` label, which
-        defaults to ``"Other"``), and aggregates ``output`` fields (defaulting
-        to ``{"count": {"$sum": 1}}``) ordered by ``_id``.
+        Compiles ``groupBy`` and ``output`` expressions with ``ExprEvaluator``,
+        evaluates ``groupBy`` once in an inner subquery, maps values into
+        ``[lower, upper)`` intervals (or the ``default`` label, defaulting to
+        ``"Other"``), and materializes a standard ``(id, _id, data)`` table.
 
         Args:
             create_temp: Callback used to create the stage's temporary table.
@@ -923,115 +1020,122 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 optional ``default``, and optional ``output``.
 
         Returns:
-            str: Name of the newly created temporary table, or
-                ``current_table`` unchanged if ``groupBy`` or ``boundaries``
-                is empty.
+            str: Name of the newly created temporary table.
         """
         group_by = bucket_spec.get("groupBy")
         boundaries = bucket_spec.get("boundaries", [])
         default_label = bucket_spec.get("default", "Other")
         output_spec = bucket_spec.get("output", {"count": {"$sum": 1}})
 
-        if not group_by or not boundaries:
-            return current_table
+        if group_by is None or group_by == "" or not boundaries:
+            return create_temp(
+                {"$bucket": bucket_spec},
+                "SELECT 1 AS id, NULL AS _id, '{}' AS data WHERE 0",
+            )
 
-        # Sort boundaries
         sorted_boundaries = sorted(boundaries)
 
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        has_underscore_id = any(col[1] == "_id" for col in columns)
+
+        agg_ctx = AggregationContext()
+        key_sql, key_params = self._compile_bucket_expr(
+            group_by, agg_ctx, has_underscore_id
+        )
+        acc_parts, acc_params, output_aliases, array_fields = (
+            self._compile_bucket_accumulators(
+                output_spec, agg_ctx, has_underscore_id
+            )
+        )
+
         # Build CASE expression for bucketing using bound parameters
-        # MongoDB uses the lower boundary as the _id value
         case_parts = []
         bucket_params: list[Any] = []
         for lower, upper in pairwise(sorted_boundaries):
-            case_parts.append(
-                "WHEN __bucket_val >= ? AND __bucket_val < ? THEN ?"
-            )
+            case_parts.append("WHEN __gval >= ? AND __gval < ? THEN ?")
             bucket_params.extend([lower, upper, lower])
-        # Default case - use the default label
-        if default_label is None:
-            case_parts.append("ELSE NULL")
+
+        if not case_parts:
+            if default_label is not None:
+                bucket_id_sql = "?"
+                bucket_params.append(default_label)
+            else:
+                bucket_id_sql = "NULL"
         else:
-            case_parts.append("ELSE ?")
-            bucket_params.append(default_label)
+            if default_label is not None:
+                case_parts.append("ELSE ?")
+                bucket_params.append(default_label)
+            bucket_id_sql = f"CASE {' '.join(case_parts)} END"
 
-        case_expr = "CASE " + " ".join(case_parts) + " END"
-
-        # Build output expressions
-        output_fields = ["__bucket_id AS _id"]
-
-        for field_name, accumulator in output_spec.items():
-            quoted_alias = f'"{field_name.replace(chr(34), chr(34) * 2)}"'
-            match accumulator:
-                case {"$sum": sum_expr}:
-                    output_fields.append(f"SUM({sum_expr}) AS {quoted_alias}")
-                case {"$avg": avg_expr}:
-                    output_fields.append(f"AVG({avg_expr}) AS {quoted_alias}")
-                case {"$count": _}:
-                    output_fields.append(f"COUNT(*) AS {quoted_alias}")
-                case {"$min": min_expr}:
-                    output_fields.append(f"MIN({min_expr}) AS {quoted_alias}")
-                case {"$max": max_expr}:
-                    output_fields.append(f"MAX({max_expr}) AS {quoted_alias}")
-                case {"$first": first_expr}:
-                    output_fields.append(f"MIN({first_expr}) AS {quoted_alias}")
-                case {"$last": last_expr}:
-                    output_fields.append(f"MAX({last_expr}) AS {quoted_alias}")
-                case {"$push": push_expr}:
-                    # Use json_group_array for push
-                    json_group_func = self.jsonb.json_group_array_function
-                    output_fields.append(
-                        f"{json_group_func}({push_expr}) AS {quoted_alias}"
-                    )
-                case _:
-                    # Default to count
-                    output_fields.append(f"COUNT(*) AS {quoted_alias}")
-
-        select_clause = ", ".join(output_fields)
-        group_by_expr = self._build_group_by_expr(group_by)
-
-        inner_bucket_sql = (
-            f"SELECT *, {case_expr} AS __bucket_id FROM "
-            f"(SELECT *, {group_by_expr} AS __bucket_val FROM {current_table})"
+        array_field_set = set(array_fields)
+        json_args = ", ".join(
+            ["'_id', __bucket_id"]
+            + [
+                (
+                    f"'{field_name.replace(chr(39), chr(39) * 2)}', json({alias})"
+                    if field_name in array_field_set
+                    else f"'{field_name.replace(chr(39), chr(39) * 2)}', {alias}"
+                )
+                for field_name, alias in output_aliases
+            ]
         )
+
+        id_expr = (
+            "ROW_NUMBER() OVER () AS id"
+            if _check_sqlite_version("3.25.0")
+            else "NULL AS id"
+        )
+        data_expr = self.jsonb.data_column(f"json_object({json_args})")
+        sub_parts = ["__bucket_id"] + acc_parts
+        all_params = acc_params + bucket_params + key_params
+
         new_table = create_temp(
             {"$bucket": bucket_spec},
-            f"SELECT {select_clause} FROM ({inner_bucket_sql}) GROUP BY __bucket_id ORDER BY _id",
-            params=bucket_params or None,
+            f"SELECT {id_expr}, __bucket_id AS _id, {data_expr} AS data "
+            f"FROM ("
+            f"SELECT {', '.join(sub_parts)} FROM ("
+            f"SELECT __bsrc.*, {bucket_id_sql} AS __bucket_id FROM ("
+            f"SELECT *, ({key_sql}) AS __gval FROM {current_table}"
+            f") AS __bsrc"
+            f") GROUP BY __bucket_id"
+            f") ORDER BY __bucket_id",
+            params=all_params or None,
         )
+
+        if not hasattr(self, "_array_fields_map"):
+            self._array_fields_map = {}
+        self._array_fields_map[new_table] = array_fields
 
         return new_table
 
     def _build_group_by_expr(self, group_by):
-        """Build a numeric SQL expression for a ``$bucket`` ``groupBy`` spec.
+        """Build a SQL expression for a ``$bucket`` ``groupBy`` spec.
 
-        Extracts a ``$``-prefixed field path via ``json_extract``/
-        ``jsonb_extract`` and casts it to ``REAL``; returns ``"1"`` when
-        ``group_by`` is not a ``$`` field string.
+        Delegates to ``expr_evaluator.build_select_expression`` when possible.
 
         Args:
-            group_by: Field reference string (such as ``"$price"``) or other
-                value.
+            group_by: Field reference string or expression dict.
 
         Returns:
-            str: SQL expression evaluating to a numeric bucket value.
+            str: SQL expression evaluating the bucket key.
         """
-        if isinstance(group_by, str) and group_by.startswith("$"):
-            field = group_by[1:]
-            json_path = parse_json_path(field)
-            json_extract = f"{self.jsonb.json_function_prefix}_extract"
-            return f"CAST({json_extract}(data, '{json_path}') AS REAL)"
-        return "1"
+        expr_sql, _ = self.expr_evaluator.build_select_expression(
+            group_by, context=AggregationContext()
+        )
+        return expr_sql
 
     @python_hybrid_fallback("$bucketAuto")
     def _process_bucket_auto_stage(
         self, create_temp, current_table, bucket_auto_spec
     ):
-        """Process a ``$bucketAuto`` stage into auto-sized buckets.
+        """Process a ``$bucketAuto`` stage into equal-count buckets.
 
-        Uses the SQL ``NTILE`` window function to partition rows into
-        ``buckets`` groups ordered by the ``groupBy`` field, then emits
-        ``{"min": ..., "max": ...}`` as ``_id`` along with the configured
-        ``output`` accumulators.
+        Compiles ``groupBy`` and ``output`` accumulators via
+        ``ExprEvaluator``, partitions rows using ``DENSE_RANK`` so tied values
+        stay together, and materializes a standard ``(id, _id, data)`` table
+        with ``{"min": ..., "max": ...}`` encoded in JSON ``data``.
 
         Args:
             create_temp: Callback used to create the stage's temporary table.
@@ -1041,9 +1145,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 ``buckets`` (default 10), and optional ``output``.
 
         Returns:
-            str: Name of the newly created temporary table, or
-                ``current_table`` unchanged if ``groupBy`` is missing or
-                ``buckets <= 0``.
+            str: Name of the newly created temporary table.
 
         Raises:
             ValueError: If ``buckets`` is not a positive non-boolean integer.
@@ -1051,6 +1153,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         group_by = bucket_auto_spec.get("groupBy")
         num_buckets = bucket_auto_spec.get("buckets", 10)
         output_spec = bucket_auto_spec.get("output", {"count": {"$sum": 1}})
+        granularity = bucket_auto_spec.get("granularity")
 
         if (
             not isinstance(num_buckets, int)
@@ -1062,60 +1165,87 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 f"got {num_buckets!r}"
             )
 
-        if not group_by:
-            return current_table
+        if group_by is None or group_by == "":
+            return create_temp(
+                {"$bucketAuto": bucket_auto_spec},
+                "SELECT 1 AS id, NULL AS _id, '{}' AS data WHERE 0",
+            )
 
-        # For bucketAuto, we need to calculate min/max and divide into buckets
-        # This is a simplified implementation using NTILE window function
-        json_extract = f"{self.jsonb.json_function_prefix}_extract"
-        field = (
-            group_by[1:]
-            if isinstance(group_by, str) and group_by.startswith("$")
-            else group_by
+        if granularity or not _check_sqlite_version("3.25.0"):
+            raise NotImplementedError(
+                "$bucketAuto options require Python fallback"
+            )
+
+        columns = self.db.execute(
+            f"PRAGMA table_info({quote_table_name(current_table)})"
+        ).fetchall()
+        has_underscore_id = any(col[1] == "_id" for col in columns)
+
+        agg_ctx = AggregationContext()
+        key_sql, key_params = self._compile_bucket_expr(
+            group_by, agg_ctx, has_underscore_id
         )
-        json_path = parse_json_path(field)
+        acc_parts, acc_params, output_aliases, array_fields = (
+            self._compile_bucket_accumulators(
+                output_spec, agg_ctx, has_underscore_id
+            )
+        )
 
-        # Use NTILE for automatic bucketing
-        # MongoDB returns _id as {min: <value>, max: <value>}
-        agg_fields = []
-        for field_name, accumulator in output_spec.items():
-            quoted_alias = f'"{field_name.replace(chr(34), chr(34) * 2)}"'
-            match accumulator:
-                case {"$sum": 1}:
-                    # Special case: $sum: 1 is a count
-                    agg_fields.append(f"COUNT(*) AS {quoted_alias}")
-                case {"$sum": _}:
-                    agg_fields.append(f"SUM(s.val) AS {quoted_alias}")
-                case {"$avg": _}:
-                    agg_fields.append(f"AVG(s.val) AS {quoted_alias}")
-                case {"$count": _}:
-                    agg_fields.append(f"COUNT(*) AS {quoted_alias}")
-                case {"$min": _}:
-                    agg_fields.append(f"MIN(s.val) AS {quoted_alias}")
-                case {"$max": _}:
-                    agg_fields.append(f"MAX(s.val) AS {quoted_alias}")
-                case _:
-                    agg_fields.append(f"COUNT(*) AS {quoted_alias}")
+        array_field_set = set(array_fields)
+        json_args = ", ".join(
+            ["'_id', json_object('min', __bmin, 'max', __bmax)"]
+            + [
+                (
+                    f"'{field_name.replace(chr(39), chr(39) * 2)}', json({alias})"
+                    if field_name in array_field_set
+                    else f"'{field_name.replace(chr(39), chr(39) * 2)}', {alias}"
+                )
+                for field_name, alias in output_aliases
+            ]
+        )
 
-        # Create subquery with NTILE bucketing
-        subquery = f"""
+        acc_select_sql = f", {', '.join(acc_parts)}" if acc_parts else ""
+        data_expr = self.jsonb.data_column(f"json_object({json_args})")
+        sql = f"""
             SELECT
-                NTILE(?) OVER (ORDER BY {json_extract}(data, '{json_path}')) AS bucket,
-                CAST({json_extract}(data, '{json_path}') AS REAL) AS val
-            FROM {current_table}
+                ROW_NUMBER() OVER () AS id,
+                json_object('min', __bmin, 'max', __bmax) AS _id,
+                {data_expr} AS data
+            FROM (
+                SELECT
+                    __bucket_id,
+                    CASE WHEN MAX(CASE WHEN __gval IS NULL THEN 1 ELSE 0 END) = 1 THEN NULL ELSE MIN(__gval) END AS __bmin,
+                    MAX(__gval) AS __bmax{acc_select_sql}
+                FROM (
+                    SELECT
+                        __dr.*,
+                        ((__dr.__drank - 1) * ?) / NULLIF(MAX(__dr.__drank) OVER (), 0) AS __bucket_id
+                    FROM (
+                        SELECT
+                            __bsrc.*,
+                            DENSE_RANK() OVER (ORDER BY __bsrc.__gval) AS __drank
+                        FROM (
+                            SELECT
+                                *,
+                                ({key_sql}) AS __gval
+                            FROM {current_table}
+                        ) AS __bsrc
+                    ) AS __dr
+                )
+                GROUP BY __bucket_id
+            )
+            ORDER BY __bmin
         """
-
-        # Group by bucket and create the _id object with min/max using json_object
-        # Wrap with json() to ensure text output (not JSONB binary)
-        json_object_func = self.jsonb.function("object")
-        select_clause = f"json({json_object_func}('min', MIN(s.val), 'max', MAX(s.val))) AS _id"
-        if agg_fields:
-            select_clause += ", " + ", ".join(agg_fields)
+        all_params = acc_params + [num_buckets] + key_params
 
         new_table = create_temp(
             {"$bucketAuto": bucket_auto_spec},
-            f"SELECT {select_clause} FROM ({subquery}) s GROUP BY bucket ORDER BY MIN(s.val)",
-            params=[num_buckets],
+            sql,
+            params=all_params or None,
         )
+
+        if not hasattr(self, "_array_fields_map"):
+            self._array_fields_map = {}
+        self._array_fields_map[new_table] = array_fields
 
         return new_table

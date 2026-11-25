@@ -1990,8 +1990,12 @@ def test_group_stage_with_std_dev_edge_cases():
         result = collection.aggregate(pipeline)
 
         assert len(result) == 2
-        # Category A has only one value, so std dev should be 0
-        assert {"_id": "A", "std_dev_pop": 0.0, "std_dev_samp": 0.0} in result
+        # Category A has one value: stdDevPop is 0.0, stdDevSamp is None
+        assert {
+            "_id": "A",
+            "std_dev_pop": 0.0,
+            "std_dev_samp": None,
+        } in result
         # Category B has two identical values, so std dev should be 0
         assert result[1]["_id"] == "B"
         assert result[1]["std_dev_pop"] == 0.0

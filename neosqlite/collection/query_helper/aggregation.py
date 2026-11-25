@@ -239,12 +239,25 @@ class AggregationMixin(SqlAggregationMixin):
 
                 match op:
                     case "$sum":
-                        group[field] = (group.get(field, 0) or 0) + (value or 0)
+                        num_val = (
+                            value
+                            if isinstance(value, (int, float))
+                            and not isinstance(value, bool)
+                            else 0
+                        )
+                        group[field] = (group.get(field, 0) or 0) + num_val
                     case "$avg":
-                        avg_info = group.get(field, {"sum": 0, "count": 0})
-                        avg_info["sum"] += value or 0
-                        avg_info["count"] += 1
-                        group[field] = avg_info
+                        if field not in group:
+                            group[field] = {
+                                "__neosqlite_avg__": True,
+                                "sum": 0,
+                                "count": 0,
+                            }
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
+                            group[field]["sum"] += value
+                            group[field]["count"] += 1
                     case "$min":
                         current = group.get(field, value)
                         if current is not None and value is not None:
@@ -297,7 +310,9 @@ class AggregationMixin(SqlAggregationMixin):
                                 "count": 0,
                                 "type": "stdDevPop",
                             }
-                        if value is not None:
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
                             group[field]["sum"] += value
                             group[field]["sum_squares"] += value * value
                             group[field]["count"] += 1
@@ -310,7 +325,9 @@ class AggregationMixin(SqlAggregationMixin):
                                 "count": 0,
                                 "type": "stdDevSamp",
                             }
-                        if value is not None:
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
                             group[field]["sum"] += value
                             group[field]["sum_squares"] += value * value
                             group[field]["count"] += 1
@@ -366,11 +383,10 @@ class AggregationMixin(SqlAggregationMixin):
                     "stdDevSamp",
                 }:
                     continue
-                # Finalize $avg calculations
+                # Finalize tagged $avg accumulators without touching user dicts
                 if (
                     isinstance(value, dict)
-                    and "sum" in value
-                    and "count" in value
+                    and value.get("__neosqlite_avg__") is True
                 ):
                     if value["count"] > 0:
                         group[field] = value["sum"] / value["count"]
@@ -387,10 +403,12 @@ class AggregationMixin(SqlAggregationMixin):
                     "stdDevSamp",
                 }:
                     n = value["count"]
-                    if n > 0:
+                    if n == 0 or (value["type"] == "stdDevSamp" and n < 2):
+                        group[field] = None
+                    else:
                         mean = value["sum"] / n
                         variance = (value["sum_squares"] / n) - (mean * mean)
-                        if value["type"] == "stdDevSamp" and n > 1:
+                        if value["type"] == "stdDevSamp":
                             # Sample standard deviation uses Bessel's correction
                             variance = (
                                 value["sum_squares"] - (value["sum"] ** 2) / n
@@ -399,8 +417,6 @@ class AggregationMixin(SqlAggregationMixin):
                             # Handle floating point errors
                             variance = 0
                         group[field] = math.sqrt(variance)
-                    else:
-                        group[field] = None
 
         # Finalize N-value operators
         for group in grouped_docs.values():

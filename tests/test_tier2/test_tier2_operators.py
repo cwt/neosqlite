@@ -522,3 +522,173 @@ class TestIssue199DocumentReshaping:
             )
             assert w_sql == w_py
             assert [d["_id"] for d in w_sql] == [1, 2, 3, 4]
+
+
+class TestIssue198BucketAndGroupFixes:
+    """Multi-tier regression tests for #198 ($bucket, $bucketAuto, $group)."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fallback(self):
+        yield
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(False)
+
+    def _run_both_tiers(self, coll, pipeline):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(False)
+        res_sql = list(coll.aggregate(pipeline))
+        set_force_fallback(True)
+        res_py = list(coll.aggregate(pipeline))
+        set_force_fallback(False)
+        return res_sql, res_py
+
+    def test_bucket_and_bucket_auto_expressions_across_tiers(self, monkeypatch):
+        from neosqlite.collection import jsonb_support
+
+        for force_no_jsonb in (False, True):
+            with monkeypatch.context() as mp:
+                if force_no_jsonb:
+                    mp.setattr(
+                        jsonb_support, "supports_jsonb", lambda _db: False
+                    )
+                with neosqlite.Connection(":memory:") as conn:
+                    conn.b.insert_many(
+                        [
+                            {"_id": 1, "tags": ["x"], "price": 10, "qty": 2},
+                            {"_id": 2, "tags": ["x"], "price": 20, "qty": 5},
+                            {"_id": 3, "tags": ["x"], "price": 30, "qty": 3},
+                            {"_id": 4, "tags": ["x"], "price": None, "qty": 4},
+                        ]
+                    )
+
+                    # Expression groupBy + expression accumulator in Tier 1 & Tier 2
+                    for prefix in ([], [{"$unwind": "$tags"}]):
+                        b_pipe = prefix + [
+                            {
+                                "$bucket": {
+                                    "groupBy": {"$add": ["$price", 5]},
+                                    "boundaries": [0, 20, 40],
+                                    "default": "Other",
+                                    "output": {
+                                        "count": {"$sum": 1},
+                                        "rev": {
+                                            "$sum": {
+                                                "$multiply": ["$price", "$qty"]
+                                            }
+                                        },
+                                        "avg_qty": {"$avg": "$qty"},
+                                    },
+                                }
+                            }
+                        ]
+                        b_sql, b_py = self._run_both_tiers(conn.b, b_pipe)
+                        assert b_sql == b_py
+                        assert {d["_id"]: d for d in b_sql}[0] == {
+                            "_id": 0,
+                            "count": 1,
+                            "rev": 20,
+                            "avg_qty": 2.0,
+                        }
+                        assert {d["_id"]: d for d in b_sql}[20]["rev"] == 190
+
+                        ba_pipe = prefix + [
+                            {
+                                "$bucketAuto": {
+                                    "groupBy": {"$add": ["$price", 5]},
+                                    "buckets": 1,
+                                    "output": {
+                                        "total_qty": {"$sum": "$qty"},
+                                        "count": {"$count": {}},
+                                    },
+                                }
+                            }
+                        ]
+                        ba_sql, ba_py = self._run_both_tiers(conn.b, ba_pipe)
+                        assert ba_sql == ba_py
+                        assert isinstance(ba_sql[0]["_id"], dict)
+                        assert ba_sql[0]["total_qty"] == 14
+
+                    # $bucketAuto preceded by $group (prev_stage has id IS NULL)
+                    g_ba_pipe = [
+                        {"$group": {"_id": "$price", "q": {"$sum": "$qty"}}},
+                        {"$match": {"_id": {"$ne": None}}},
+                        {
+                            "$bucketAuto": {
+                                "groupBy": "$_id",
+                                "buckets": 2,
+                                "output": {"sum_q": {"$sum": "$q"}},
+                            }
+                        },
+                    ]
+                    g_sql, g_py = self._run_both_tiers(conn.b, g_ba_pipe)
+                    assert g_sql == g_py
+                    assert len(g_sql) == 2
+                    assert sum(d["sum_q"] for d in g_sql) == 10
+
+                    # Tied values stay together cleanly across all tiers
+                    conn.ties.insert_many([{"v": 10}, {"v": 10}, {"v": 10}])
+                    t_sql, t_py = self._run_both_tiers(
+                        conn.ties,
+                        [{"$bucketAuto": {"groupBy": "$v", "buckets": 2}}],
+                    )
+                    assert t_sql == t_py
+                    assert len(t_sql) == 1
+
+    def test_group_avg_none_user_dict_and_stddev_samp_all_tiers(self):
+        with neosqlite.Connection(":memory:") as conn:
+            conn.g.insert_many(
+                [
+                    {
+                        "_id": 1,
+                        "k": "g1",
+                        "val": 10,
+                        "obj": {"sum": 100, "count": 4},
+                        "tags": ["a"],
+                    },
+                    {
+                        "_id": 2,
+                        "k": "g1",
+                        "val": None,
+                        "obj": {"sum": 200, "count": 5},
+                        "tags": ["a"],
+                    },
+                    {
+                        "_id": 3,
+                        "k": "g2",
+                        "val": None,
+                        "obj": {"sum": 50, "count": 2},
+                        "tags": ["a"],
+                    },
+                ]
+            )
+            for prefix in ([], [{"$unwind": "$tags"}]):
+                pipe = prefix + [
+                    {
+                        "$group": {
+                            "_id": "$k",
+                            "avg_v": {"$avg": "$val"},
+                            "first_obj": {"$first": "$obj"},
+                            "sd_samp": {"$stdDevSamp": "$val"},
+                            "sd_pop": {"$stdDevPop": "$val"},
+                        }
+                    },
+                    {"$sort": {"_id": 1}},
+                ]
+                sql_res, py_res = self._run_both_tiers(conn.g, pipe)
+                assert sql_res == py_res
+                assert sql_res[0] == {
+                    "_id": "g1",
+                    "avg_v": 10.0,
+                    "first_obj": {"sum": 100, "count": 4},
+                    "sd_samp": None,
+                    "sd_pop": 0.0,
+                }
+                assert sql_res[1] == {
+                    "_id": "g2",
+                    "avg_v": None,
+                    "first_obj": {"sum": 50, "count": 2},
+                    "sd_samp": None,
+                    "sd_pop": None,
+                }

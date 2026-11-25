@@ -61,85 +61,160 @@ def _resolve_target_collection(
     return db[coll_name]
 
 
+def _bucket_eval_doc(
+    doc: dict[str, Any], root_doc: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Build evaluation dict with ``$$ROOT`` and ``$$CURRENT`` bindings."""
+    eval_doc = dict(doc)
+    eval_doc["$$CURRENT"] = doc
+    eval_doc["$$ROOT"] = root_doc if root_doc is not None else doc
+    return eval_doc
+
+
 def _compute_bucket_output(
     query_engine: QueryEngine,
     bucket_id: Any,
     bucket_docs: list[dict[str, Any]],
     output_spec: dict[str, Any],
+    evaluator: ExprEvaluator | None = None,
+    doc_contexts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Compute output for a single ``$bucket`` or ``$bucketAuto`` bucket.
 
-    Supports ``$sum``, ``$avg``, ``$count``, ``$min``, ``$max``, ``$push``, and
-    ``$addToSet`` accumulators over ``bucket_docs`` (defaulting any other
-    accumulator specification to the bucket document count).
+    Supports ``$sum``, ``$avg``, ``$count``, ``$min``, ``$max``, ``$first``,
+    ``$last``, ``$push``, ``$addToSet``, ``$stdDevPop``, and ``$stdDevSamp``
+    accumulators via ``ExprEvaluator._evaluate_operand_python`` (supporting
+    both field paths and expression dicts), defaulting unknown specs to count.
 
     Args:
-        query_engine: ``QueryEngine`` providing field-value extraction.
+        query_engine: ``QueryEngine`` providing collection context.
         bucket_id: Identifier value assigned to the output ``_id`` field.
         bucket_docs: Documents grouped into this bucket.
         output_spec: Mapping of output field names to accumulator specs.
+        evaluator: Optional shared ``ExprEvaluator`` instance.
+        doc_contexts: Optional wrapped ``{"__doc__", "__root__"}`` contexts
+            corresponding to ``bucket_docs``.
 
     Returns:
         dict[str, Any]: Output document containing ``_id`` and each computed
         accumulator field.
     """
+    import math
+
+    if evaluator is None:
+        evaluator = ExprEvaluator()
+    eval_docs = (
+        [_bucket_eval_doc(dc["__doc__"], dc["__root__"]) for dc in doc_contexts]
+        if doc_contexts is not None
+        else [_bucket_eval_doc(d) for d in bucket_docs]
+    )
+
     output_doc: dict[str, Any] = {"_id": bucket_id}
     for field_name, accumulator in output_spec.items():
+        if not isinstance(accumulator, dict):
+            output_doc[field_name] = len(bucket_docs)
+            continue
         if "$sum" in accumulator:
-            sum_field = accumulator["$sum"]
-            if sum_field == 1:
+            sum_expr = accumulator["$sum"]
+            if sum_expr == 1 and not isinstance(sum_expr, bool):
                 output_doc[field_name] = len(bucket_docs)
             else:
-                sum_field = sum_field.lstrip("$")
-                output_doc[field_name] = sum(
-                    query_engine.collection._get_val(d, sum_field) or 0
-                    for d in bucket_docs
-                )
+                total: int | float = 0
+                for d in eval_docs:
+                    val = evaluator._evaluate_operand_python(sum_expr, d)
+                    if isinstance(val, (int, float)) and not isinstance(
+                        val, bool
+                    ):
+                        total += val
+                output_doc[field_name] = total
         elif "$avg" in accumulator:
-            avg_field = accumulator["$avg"].lstrip("$")
+            avg_expr = accumulator["$avg"]
             values = [
                 v
-                for d in bucket_docs
-                if (v := query_engine.collection._get_val(d, avg_field))
-                is not None
+                for d in eval_docs
+                if isinstance(
+                    (v := evaluator._evaluate_operand_python(avg_expr, d)),
+                    (int, float),
+                )
+                and not isinstance(v, bool)
             ]
-            output_doc[field_name] = sum(values) / len(values) if values else 0
+            output_doc[field_name] = (
+                sum(values) / len(values) if values else None
+            )
         elif "$count" in accumulator:
             output_doc[field_name] = len(bucket_docs)
         elif "$min" in accumulator:
-            min_field = accumulator["$min"].lstrip("$")
-            values = [
+            min_expr = accumulator["$min"]
+            min_vals = [
                 v
-                for d in bucket_docs
-                if (v := query_engine.collection._get_val(d, min_field))
+                for d in eval_docs
+                if (v := evaluator._evaluate_operand_python(min_expr, d))
                 is not None
             ]
-            output_doc[field_name] = min(values) if values else None
+            output_doc[field_name] = (
+                min(min_vals, key=bson_sort_key) if min_vals else None
+            )
         elif "$max" in accumulator:
-            max_field = accumulator["$max"].lstrip("$")
-            values = [
+            max_expr = accumulator["$max"]
+            max_vals = [
                 v
-                for d in bucket_docs
-                if (v := query_engine.collection._get_val(d, max_field))
+                for d in eval_docs
+                if (v := evaluator._evaluate_operand_python(max_expr, d))
                 is not None
             ]
-            output_doc[field_name] = max(values) if values else None
+            output_doc[field_name] = (
+                max(max_vals, key=bson_sort_key) if max_vals else None
+            )
+        elif "$first" in accumulator:
+            first_expr = accumulator["$first"]
+            output_doc[field_name] = (
+                evaluator._evaluate_operand_python(first_expr, eval_docs[0])
+                if eval_docs
+                else None
+            )
+        elif "$last" in accumulator:
+            last_expr = accumulator["$last"]
+            output_doc[field_name] = (
+                evaluator._evaluate_operand_python(last_expr, eval_docs[-1])
+                if eval_docs
+                else None
+            )
         elif "$push" in accumulator:
-            push_field = accumulator["$push"].lstrip("$")
+            push_expr = accumulator["$push"]
             output_doc[field_name] = [
                 v
-                for d in bucket_docs
-                if (v := query_engine.collection._get_val(d, push_field))
+                for d in eval_docs
+                if (v := evaluator._evaluate_operand_python(push_expr, d))
                 is not None
             ]
         elif "$addToSet" in accumulator:
-            set_field = accumulator["$addToSet"].lstrip("$")
+            set_expr = accumulator["$addToSet"]
             seen: list[Any] = []
-            for d in bucket_docs:
-                v = query_engine.collection._get_val(d, set_field)
+            for d in eval_docs:
+                v = evaluator._evaluate_operand_python(set_expr, d)
                 if v is not None and v not in seen:
                     seen.append(v)
             output_doc[field_name] = seen
+        elif "$stdDevPop" in accumulator or "$stdDevSamp" in accumulator:
+            is_samp = "$stdDevSamp" in accumulator
+            sd_expr = accumulator["$stdDevSamp" if is_samp else "$stdDevPop"]
+            nums = [
+                v
+                for d in eval_docs
+                if isinstance(
+                    (v := evaluator._evaluate_operand_python(sd_expr, d)),
+                    (int, float),
+                )
+                and not isinstance(v, bool)
+            ]
+            n = len(nums)
+            if n == 0 or (is_samp and n < 2):
+                output_doc[field_name] = None
+            else:
+                mean = sum(nums) / n
+                denom = n - 1 if is_samp else n
+                var = sum((x - mean) ** 2 for x in nums) / denom
+                output_doc[field_name] = math.sqrt(max(0.0, var))
         else:
             output_doc[field_name] = len(bucket_docs)
     return output_doc
@@ -772,73 +847,67 @@ def execute_python_aggregation(
                 ]
             case "$bucket":
                 bucket_spec = stage["$bucket"]
-                group_by = bucket_spec.get("groupBy", "").lstrip("$")
+                group_by = bucket_spec.get("groupBy")
                 boundaries = bucket_spec.get("boundaries", [])
                 default_label = bucket_spec.get("default", "Other")
                 output_spec = bucket_spec.get("output", {"count": {"$sum": 1}})
 
-                if not group_by or not boundaries:
+                if group_by is None or group_by == "" or not boundaries:
                     docs_with_context = []
                     break
 
                 sorted_boundaries = sorted(boundaries)
+                bucket_eval = ExprEvaluator()
 
-                # Group documents by bucket
-                # MongoDB uses the lower boundary value as _id, not a string label
+                # Group documents by bucket using lower boundary as _id
                 buckets: dict[Any, list[dict[str, Any]]] = {}
                 for dc in docs_with_context:
-                    doc = dc["__doc__"]
-                    val = query_engine.collection._get_val(doc, group_by)
+                    eval_doc = _bucket_eval_doc(dc["__doc__"], dc["__root__"])
+                    val = bucket_eval._evaluate_operand_python(
+                        group_by, eval_doc
+                    )
 
-                    # Determine bucket - use lower boundary as key (MongoDB behavior)
                     bucket_key: Any = default_label
                     if val is not None:
                         try:
                             for lower, upper in pairwise(sorted_boundaries):
+                                if isinstance(val, bool) != isinstance(
+                                    lower, bool
+                                ):
+                                    continue
                                 if lower <= val < upper:
-                                    bucket_key = (
-                                        lower  # Use lower boundary as _id
-                                    )
+                                    bucket_key = lower
                                     break
                         except TypeError:
-                            # Comparison failed (e.g., mixed types), use default
                             bucket_key = default_label
 
                     if bucket_key not in buckets:
                         buckets[bucket_key] = []
-                    buckets[bucket_key].append(doc)
+                    buckets[bucket_key].append(dc)
 
                 def _bucket_sort_key(item: tuple[Any, Any]) -> tuple[int, Any]:
-                    """Compute a type-tagged sort key for bucket entries.
-
-                    Orders ``None`` first, then numbers, strings, and finally
-                    other values by string form so mixed bucket identifiers
-                    (such as numeric bounds and ``default`` labels) sort
-                    cleanly.
-
-                    Args:
-                        item: ``(bucket_id, bucket_docs)`` tuple from
-                            ``buckets.items()``.
-
-                    Returns:
-                        tuple[int, Any]: ``(type_rank, sortable_value)``
-                        comparison tuple.
-                    """
+                    """Compute a BSON-ordered sort key for bucket entries."""
                     key = item[0]
                     if key is None:
                         return (0, "")
+                    if isinstance(key, bool):
+                        return (3, key)
                     if isinstance(key, (int, float)):
                         return (1, key)
                     if isinstance(key, str):
                         return (2, key)
-                    return (3, str(key))
+                    return (4, str(key))
 
-                # Build output documents
                 new_docs = [
                     _compute_bucket_output(
-                        query_engine, bucket_id, bucket_docs, output_spec
+                        query_engine,
+                        bucket_id,
+                        [dc["__doc__"] for dc in bucket_dcs],
+                        output_spec,
+                        evaluator=bucket_eval,
+                        doc_contexts=bucket_dcs,
                     )
-                    for bucket_id, bucket_docs in sorted(
+                    for bucket_id, bucket_dcs in sorted(
                         buckets.items(), key=_bucket_sort_key
                     )
                 ]
@@ -848,7 +917,7 @@ def execute_python_aggregation(
                 ]
             case "$bucketAuto":
                 bucket_auto_spec = stage["$bucketAuto"]
-                group_by = bucket_auto_spec.get("groupBy", "").lstrip("$")
+                group_by = bucket_auto_spec.get("groupBy")
                 num_buckets = bucket_auto_spec.get("buckets", 10)
                 output_spec = bucket_auto_spec.get(
                     "output", {"count": {"$sum": 1}}
@@ -861,77 +930,59 @@ def execute_python_aggregation(
                         "$bucketAuto buckets must be an integer"
                     )
 
-                if not group_by or num_buckets <= 0:
+                if group_by is None or group_by == "" or num_buckets <= 0:
                     docs_with_context = []
                     break
 
-                # Sort documents by groupBy field
-                def get_group_val(dc):
-                    """Extract the value to group by for a given document.
-
-                    Args:
-                        dc: Document with context from the aggregation stage.
-
-                    Returns:
-                        Any: The value to group by, or ``0`` if not found or
-                        falsy.
-                    """
-                    return (
-                        query_engine.collection._get_val(
-                            dc["__doc__"], group_by
-                        )
-                        or 0
+                bucket_eval = ExprEvaluator()
+                evaluated_items: list[tuple[dict[str, Any], Any, tuple]] = []
+                for dc in docs_with_context:
+                    eval_doc = _bucket_eval_doc(dc["__doc__"], dc["__root__"])
+                    val = bucket_eval._evaluate_operand_python(
+                        group_by, eval_doc
                     )
+                    evaluated_items.append((dc, val, bson_sort_key(val)))
 
-                sorted_docs = sorted(
-                    docs_with_context,
-                    key=get_group_val,
-                )
+                def _bucket_auto_sort_key(
+                    item: tuple[dict[str, Any], Any, tuple],
+                ) -> tuple:
+                    """Sort evaluated $bucketAuto docs using BSON sort key."""
+                    return item[2]
 
-                # Distribute into buckets
-                bucket_size = max(1, len(sorted_docs) // num_buckets)
-                bucket_list: list[list[dict[str, Any]]] = []
-                bucket_bounds: list[tuple[Any, Any]] = []
-                current_bucket = []
-                current_min = None
-                for dc in sorted_docs:
-                    current_bucket.append(dc["__doc__"])
-                    if current_min is None:
-                        current_min = get_group_val(dc)
-                    if (
-                        len(current_bucket) >= bucket_size
-                        and len(bucket_list) < num_buckets - 1
-                    ):
-                        bucket_list.append(current_bucket)
-                        bucket_bounds.append((current_min, get_group_val(dc)))
-                        current_bucket = []
-                        current_min = None
-                if current_bucket:
-                    bucket_list.append(current_bucket)
-                    bucket_bounds.append(
-                        (
-                            current_min,
-                            (
-                                get_group_val(sorted_docs[-1])
-                                if sorted_docs
-                                else current_min
-                            ),
+                evaluated_items.sort(key=_bucket_auto_sort_key)
+
+                # Group tied sort keys so equal groupBy values share a bucket
+                value_groups: list[tuple[Any, tuple, list[dict[str, Any]]]] = []
+                for dc, val, sort_k in evaluated_items:
+                    if not value_groups or value_groups[-1][1] != sort_k:
+                        value_groups.append((val, sort_k, [dc]))
+                    else:
+                        value_groups[-1][2].append(dc)
+
+                num_groups = len(value_groups)
+                auto_buckets: dict[
+                    int, list[tuple[Any, list[dict[str, Any]]]]
+                ] = {}
+                for g_idx, (val, _sort_k, group_dcs) in enumerate(value_groups):
+                    b_idx = (g_idx * num_buckets) // num_groups
+                    auto_buckets.setdefault(b_idx, []).append((val, group_dcs))
+
+                new_docs = []
+                for b_idx in sorted(auto_buckets.keys()):
+                    grouped = auto_buckets[b_idx]
+                    bmin = grouped[0][0]
+                    bmax = grouped[-1][0]
+                    bucket_dcs = [dc for _v, g_dcs in grouped for dc in g_dcs]
+                    new_docs.append(
+                        _compute_bucket_output(
+                            query_engine,
+                            {"min": bmin, "max": bmax},
+                            [dc["__doc__"] for dc in bucket_dcs],
+                            output_spec,
+                            evaluator=bucket_eval,
+                            doc_contexts=bucket_dcs,
                         )
                     )
-
-                # Build output documents
-                new_docs = [
-                    _compute_bucket_output(
-                        query_engine,
-                        {
-                            "min": bucket_bounds[i][0],
-                            "max": bucket_bounds[i][1],
-                        },
-                        bucket_docs,
-                        output_spec,
-                    )
-                    for i, bucket_docs in enumerate(bucket_list)
-                ]
 
                 docs_with_context = [
                     {"__doc__": doc, "__root__": doc} for doc in new_docs
