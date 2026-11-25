@@ -12,6 +12,7 @@ import shutil
 import time
 
 from ._sqlite import sqlite3
+from .options import AutoVacuumMode, JournalMode
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ def checkpoint_and_prepare_for_migration(
 ) -> list[str]:
     """Ensure database is ready for migration by checkpointing WAL.
 
-    Attempts ``PRAGMA wal_checkpoint(TRUNCATE)`` and ``COMMIT``, logging a
-    warning and continuing if either statement fails.
+    Attempts ``PRAGMA wal_checkpoint(TRUNCATE)`` and commits any active
+    transaction on ``db``, logging a warning and continuing if either fails.
 
     Args:
         db: SQLite connection to checkpoint.
@@ -64,35 +65,33 @@ def checkpoint_and_prepare_for_migration(
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     except Exception as e:
         logger.warning(f"WAL checkpoint failed during migration: {e}")
-        pass
 
-    try:
-        db.execute("COMMIT")
-    except Exception as e:
-        logger.warning(f"COMMIT failed during migration: {e}")
-        pass
+    if db.in_transaction:
+        try:
+            db.execute("COMMIT")
+        except Exception as e:
+            logger.warning(f"COMMIT failed during migration: {e}")
 
     return []
 
 
 def migrate_autovacuum(
     db_path: str,
-    target_autovacuum: int,
+    target_autovacuum: int | str,
     target_journal_mode: str = "WAL",
     extra_conn_kwargs: dict | None = None,
 ) -> bool:
     """Migrate a database to a different auto_vacuum mode.
 
-    Performs an on-disk migration by checking ``needs_migration``,
-    checkpointing WAL state, backing up the database (and any ``-wal``/``-shm``
-    files), streaming a consistent on-disk snapshot via SQLite's backup API,
-    rebuilding with ``VACUUM INTO`` (or ``VACUUM`` plus copy on SQLite older
-    than 3.27.0), applying ``target_journal_mode``, and replacing ``db_path``.
-    Restores backups and deletes transient files if any step raises.
+    Validates target modes, checks ``needs_migration``, checkpoints WAL state,
+    captures an unmutated backup via SQLite's online backup API, streams a
+    consistent snapshot, rebuilds with ``VACUUM INTO`` (or ``VACUUM`` plus copy
+    on SQLite older than 3.27.0), applies ``target_journal_mode``, and replaces
+    ``db_path``. Restores the backup and deletes transient files on error.
 
     Args:
         db_path: Path to the SQLite database file.
-        target_autovacuum: Desired ``auto_vacuum`` mode (0, 1, or 2).
+        target_autovacuum: Desired ``auto_vacuum`` mode (0, 1, 2 or mode name).
         target_journal_mode: Desired ``journal_mode`` for output DB.
             Defaults to ``"WAL"``.
         extra_conn_kwargs: Optional extra kwargs accepted for compatibility
@@ -103,15 +102,12 @@ def migrate_autovacuum(
             requested ``auto_vacuum`` mode.
 
     Raises:
+        ValueError: If ``target_autovacuum`` or ``target_journal_mode`` is
+            invalid.
         Exception: Re-raises any error encountered after restoring backups.
     """
-    initial_conn = sqlite3.connect(db_path)
-    try:
-        if not needs_migration(initial_conn, target_autovacuum):
-            return False
-        checkpoint_and_prepare_for_migration(initial_conn)
-    finally:
-        initial_conn.close()
+    validated_autovacuum = AutoVacuumMode.validate(target_autovacuum)
+    validated_journal_mode = JournalMode.validate(target_journal_mode)
 
     timestamp = int(time.time() * 1000)
 
@@ -119,21 +115,32 @@ def migrate_autovacuum(
     shm_path = f"{db_path}-shm"
 
     original_backup_path = f"{db_path}.backup_{timestamp}"
-    backup_files: dict[str, str] = {db_path: original_backup_path}
-    shutil.copy2(db_path, original_backup_path)
-
-    wal_backup_path = f"{original_backup_path}-wal"
-    if os.path.exists(wal_path):
-        shutil.copy2(wal_path, wal_backup_path)
-        backup_files[wal_path] = wal_backup_path
-
-    shm_backup_path = f"{original_backup_path}-shm"
-    if os.path.exists(shm_path):
-        shutil.copy2(shm_path, shm_backup_path)
-        backup_files[shm_path] = shm_backup_path
-
     temp_new_path = f"{db_path}.temp_autovacuum_{timestamp}"
     snapshot_path = f"{db_path}.snapshot_{timestamp}"
+
+    backup_created = False
+    initial_conn = sqlite3.connect(db_path)
+    try:
+        if not needs_migration(initial_conn, validated_autovacuum):
+            return False
+        checkpoint_and_prepare_for_migration(initial_conn)
+        backup_conn = sqlite3.connect(original_backup_path)
+        try:
+            # Capture a consistent snapshot under SQLite's shared lock instead
+            # of copying the main DB and -wal/-shm sidecars separately.
+            initial_conn.backup(backup_conn)
+            backup_created = True
+        finally:
+            backup_conn.close()
+    except Exception:
+        if os.path.exists(original_backup_path):
+            try:
+                os.remove(original_backup_path)
+            except OSError:
+                pass
+        raise
+    finally:
+        initial_conn.close()
 
     # Escape single quotes for the VACUUM INTO literal (#167); paths with
     # quotes are legal on Unix and previously aborted the migration.
@@ -144,32 +151,23 @@ def migrate_autovacuum(
     out_conn: sqlite3.Connection | None = None
     replaced_via_rename = False
     try:
-        conn = sqlite3.connect(original_backup_path)
-        conn.isolation_level = None
-        checkpoint_and_prepare_for_migration(conn)
-
-        old_journal = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        if old_journal != "wal":
-            conn.execute("PRAGMA journal_mode=WAL")
-
-        conn.execute(f"PRAGMA auto_vacuum={target_autovacuum}")
-
         if os.path.exists(temp_new_path):
             os.remove(temp_new_path)
-
-        # Consistent snapshot ON DISK via the sqlite backup API: it
-        # streams pages incrementally (no full-RAM load, safe for
-        # multi-GB databases) and cannot tear even if another connection
-        # commits mid-copy (#167).
         if os.path.exists(snapshot_path):
             os.remove(snapshot_path)
 
+        # Stream a clean snapshot from the unmutated backup so
+        # original_backup_path never has its PRAGMAs altered.
+        conn = sqlite3.connect(original_backup_path)
         snap_conn = sqlite3.connect(snapshot_path)
         try:
             conn.backup(snap_conn)
+            conn.close()
+            conn = None
+
             # auto_vacuum must be set on the snapshot BEFORE VACUUM so the
             # rebuilt output carries the target mode.
-            snap_conn.execute(f"PRAGMA auto_vacuum={target_autovacuum}")
+            snap_conn.execute(f"PRAGMA auto_vacuum={validated_autovacuum}")
             if sqlite3.sqlite_version_info >= (3, 27, 0):
                 snap_conn.execute(f"VACUUM INTO '{escaped_dest}'")
             else:
@@ -183,15 +181,16 @@ def migrate_autovacuum(
             if snap_conn is not None:
                 snap_conn.close()
                 snap_conn = None
-        conn.close()
-        conn = None
+            if conn is not None:
+                conn.close()
+                conn = None
 
         # Honor the requested journal mode on the OUTPUT database —
         # previously this parameter was dead (#167). Applied after the
         # file exists, since journal_mode is persistent per-file.
         out_conn = sqlite3.connect(temp_new_path)
         try:
-            out_conn.execute(f"PRAGMA journal_mode={target_journal_mode}")
+            out_conn.execute(f"PRAGMA journal_mode={validated_journal_mode}")
         finally:
             out_conn.close()
             out_conn = None
@@ -212,11 +211,11 @@ def migrate_autovacuum(
                 src_conn.backup(dest_conn)
                 try:
                     dest_conn.execute(
-                        f"PRAGMA journal_mode={target_journal_mode}"
+                        f"PRAGMA journal_mode={validated_journal_mode}"
                     )
                 except sqlite3.OperationalError as jm_err:
                     logger.debug(
-                        f"Deferred journal_mode={target_journal_mode} while "
+                        f"Deferred journal_mode={validated_journal_mode} while "
                         f"other connections are active: {jm_err}"
                     )
             finally:
@@ -235,9 +234,8 @@ def migrate_autovacuum(
         if os.path.exists(snapshot_path):
             os.remove(snapshot_path)
 
-        for backup_path in backup_files.values():
-            if os.path.exists(backup_path):
-                os.remove(backup_path)
+        if os.path.exists(original_backup_path):
+            os.remove(original_backup_path)
 
         return True
 
@@ -259,16 +257,19 @@ def migrate_autovacuum(
                 pass
         logger.error(f"Migration failed, restoring backup: {e}")
         if replaced_via_rename:
-            for original_path, backup_path in backup_files.items():
-                if os.path.exists(backup_path):
-                    os.replace(backup_path, original_path)
-        else:
-            for backup_path in backup_files.values():
+            if os.path.exists(original_backup_path):
+                os.replace(original_backup_path, db_path)
+            for sidecar in (wal_path, shm_path):
                 try:
-                    if os.path.exists(backup_path):
-                        os.remove(backup_path)
+                    if os.path.exists(sidecar):
+                        os.remove(sidecar)
                 except OSError:
                     pass
+        elif backup_created and os.path.exists(original_backup_path):
+            try:
+                os.remove(original_backup_path)
+            except OSError:
+                pass
         # Remove transient artifacts so a retry starts clean (#167)
         for leftover in (snapshot_path, temp_new_path):
             try:

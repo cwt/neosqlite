@@ -525,3 +525,101 @@ class TestMigrationEdgeCases:
         rows = verify_conn.execute("SELECT count(*) FROM t").fetchone()[0]
         assert rows == 50
         verify_conn.close()
+
+
+class TestMigrationValidationAndSafety:
+    """Regression tests for mode validation, quiet logs, and backup integrity."""
+
+    def test_invalid_modes_raise_value_error(self, tmp_path):
+        """Invalid target_autovacuum or target_journal_mode raises ValueError."""
+        db_path = str(tmp_path / "test_invalid.db")
+        create_database(db_path, "DELETE", AutoVacuumMode.NONE)
+
+        with pytest.raises(ValueError, match="Invalid auto_vacuum mode"):
+            migrate_autovacuum(db_path, 99)
+
+        with pytest.raises(ValueError, match="Invalid journal_mode"):
+            migrate_autovacuum(
+                db_path, AutoVacuumMode.FULL, target_journal_mode="INVALID_MODE"
+            )
+
+        conn = sqlite3.connect(db_path)
+        assert (
+            conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            == AutoVacuumMode.NONE
+        )
+        conn.close()
+
+    def test_string_modes_are_validated_and_normalized(self, tmp_path):
+        """String mode names work cleanly once validated."""
+        db_path = str(tmp_path / "test_str_mode.db")
+        create_database(db_path, "DELETE", AutoVacuumMode.NONE)
+
+        assert (
+            migrate_autovacuum(db_path, "full", target_journal_mode="delete")
+            is True
+        )
+        conn = sqlite3.connect(db_path)
+        assert (
+            conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            == AutoVacuumMode.FULL
+        )
+        assert (
+            conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
+            == "delete"
+        )
+        conn.close()
+
+    def test_normal_migration_emits_no_warning_logs(self, tmp_path, caplog):
+        """Normal migrations do not trigger spurious COMMIT WARNING logs."""
+        import logging
+
+        for journal_mode in ("DELETE", "WAL"):
+            db_path = str(tmp_path / f"quiet_{journal_mode.lower()}.db")
+            create_database(db_path, journal_mode, AutoVacuumMode.NONE)
+
+            with caplog.at_level(logging.WARNING, logger="neosqlite.migration"):
+                caplog.clear()
+                assert migrate_autovacuum(db_path, AutoVacuumMode.FULL) is True
+                warnings = [
+                    rec
+                    for rec in caplog.records
+                    if rec.levelno >= logging.WARNING
+                ]
+                assert warnings == []
+
+    def test_backup_preserves_original_journal_mode_on_post_replace_failure(
+        self, tmp_path, monkeypatch
+    ):
+        """Failure after rename restores unmutated backup with original PRAGMAs."""
+        db_path = str(tmp_path / "test_backup_unmutated.db")
+        create_database(db_path, "DELETE", AutoVacuumMode.NONE)
+
+        real_remove = os.remove
+
+        def fail_on_snapshot(path, *args, **kwargs):
+            if ".snapshot_" in str(path):
+                raise RuntimeError("forced failure after os.replace")
+            return real_remove(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "remove", fail_on_snapshot)
+
+        with pytest.raises(
+            RuntimeError, match="forced failure after os.replace"
+        ):
+            migrate_autovacuum(db_path, AutoVacuumMode.FULL)
+
+        conn = sqlite3.connect(db_path)
+        assert (
+            conn.execute("PRAGMA auto_vacuum").fetchone()[0]
+            == AutoVacuumMode.NONE
+        )
+        assert (
+            conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
+            == "delete"
+        )
+        assert conn.execute("SELECT * FROM test ORDER BY id").fetchall() == [
+            (1, "hello"),
+            (2, "world"),
+        ]
+        conn.close()

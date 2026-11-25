@@ -26,16 +26,26 @@ from ._sqlite import sqlite3
 from .connection import _is_internal_collection_name
 from .sql_utils import quote_identifier
 
-_ID_TYPE_RE = re.compile(r"\b_id\s+(?:TEXT|JSONB)\b", re.IGNORECASE)
+_ID_TYPE_RE = re.compile(
+    r'(?:(?<=[(\s,])|^)(?:(?:"_id"|\[_id\]|`_id`)\s*|_id\s+)(?:TEXT|JSONB)\b',
+    re.IGNORECASE,
+)
 
-# Recover the logical _id from the document JSON. ObjectIds are encoded as
-# {"__neosqlite_objectid__": true, "id": "<hex>"} and must stay as their hex
-# string in the _id column. Other objects/arrays and legacy documents without
-# a JSON _id fall back to the old stored value; their original type is not
-# recoverable from a TEXT column alone.
-_MIGRATE_ID_EXPR = """
+
+def _get_migrate_id_expr() -> str:
+    """Build the SQL expression recovering typed ``_id`` values from ``data``.
+
+    Returns:
+        str: SQL ``CASE`` expression suitable for the active SQLite version.
+    """
+    json_valid_expr = (
+        "json_valid(data, 5)"
+        if sqlite3.sqlite_version_info >= (3, 45, 0)
+        else "json_valid(data)"
+    )
+    return f"""
 CASE
-    WHEN typeof(data) = 'blob' OR json_valid(data) THEN
+    WHEN {json_valid_expr} THEN
         CASE
             WHEN json_type(data, '$._id') IS NULL THEN _id
             WHEN json_type(data, '$._id') = 'object'
@@ -43,11 +53,21 @@ CASE
                 THEN json_extract(data, '$._id.id')
             WHEN json_type(data, '$._id') IN ('array', 'object') THEN _id
             WHEN json_type(data, '$._id') = 'null' THEN _id
+            WHEN json_type(data, '$._id') = 'true' THEN 'True'
+            WHEN json_type(data, '$._id') = 'false' THEN 'False'
             ELSE json_extract(data, '$._id')
         END
     ELSE _id
 END
 """
+
+
+# Recover the logical _id from the document JSON. ObjectIds are encoded as
+# {"__neosqlite_objectid__": true, "id": "<hex>"} and must stay as their hex
+# string in the _id column, and booleans stay as 'True'/'False' text strings so
+# they remain distinct from integer 1/0. Other objects/arrays and legacy
+# documents without a JSON _id fall back to the old stored value.
+_MIGRATE_ID_EXPR = _get_migrate_id_expr()
 
 
 class MigrationError(RuntimeError):
@@ -276,11 +296,12 @@ def _rebuild_table(conn: sqlite3.Connection, table: LegacyTable) -> int:
     temp_name = f"__neosqlite_migrate_{uuid.uuid4().hex}"
     quoted_temp = quote_identifier(temp_name)
 
+    id_expr = _get_migrate_id_expr()
     conn.execute(f"ALTER TABLE {quoted_name} RENAME TO {quoted_temp}")
     conn.execute(table.create_sql)
     conn.execute(
         f"INSERT INTO {quoted_name} (id, _id, data) "
-        f"SELECT id, {_MIGRATE_ID_EXPR}, data FROM {quoted_temp}"
+        f"SELECT id, {id_expr}, data FROM {quoted_temp}"
     )
 
     old_count = conn.execute(f"SELECT COUNT(*) FROM {quoted_temp}").fetchone()[

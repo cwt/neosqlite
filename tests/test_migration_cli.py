@@ -204,3 +204,191 @@ def test_migrate_id_jsonb_table_to_blob(tmp_path):
         ]
     finally:
         dest_conn.close()
+
+
+def test_migrate_preserves_boolean_and_integer_id_distinction(tmp_path):
+    """Booleans True/False stay 'True'/'False' text distinct from int 1/0."""
+    import neosqlite
+    from neosqlite.collection.jsonb_support import supports_jsonb
+    from neosqlite.migration_cli import migrate_database
+
+    source = tmp_path / "bool_legacy.db"
+    destination = tmp_path / "bool_migrated.db"
+    conn = sqlite3.connect(str(source))
+    try:
+        conn.execute(
+            "CREATE TABLE items ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "_id TEXT UNIQUE, "
+            "data TEXT NOT NULL"
+            ")"
+        )
+        conn.executemany(
+            "INSERT INTO items(_id, data) VALUES (?, ?)",
+            [
+                ("1", neosqlite_json_dumps({"_id": 1, "kind": "int_1"})),
+                ("0", neosqlite_json_dumps({"_id": 0, "kind": "int_0"})),
+                (
+                    "True",
+                    neosqlite_json_dumps({"_id": True, "kind": "bool_true"}),
+                ),
+                (
+                    "False",
+                    neosqlite_json_dumps({"_id": False, "kind": "bool_false"}),
+                ),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    migrate_database(str(source), str(destination))
+
+    check_conn = sqlite3.connect(str(destination))
+    try:
+        raw_rows = check_conn.execute(
+            "SELECT _id, typeof(_id), json_extract(data, '$.kind') "
+            "FROM items ORDER BY id"
+        ).fetchall()
+        assert raw_rows == [
+            (1, "integer", "int_1"),
+            (0, "integer", "int_0"),
+            ("True", "text", "bool_true"),
+            ("False", "text", "bool_false"),
+        ]
+    finally:
+        check_conn.close()
+
+    with neosqlite.Connection(str(destination)) as nconn:
+        items = nconn["items"]
+        doc_int_1 = items.find_one({"_id": 1})
+        doc_int_0 = items.find_one({"_id": 0})
+        doc_bool_t = items.find_one({"kind": "bool_true"})
+        doc_bool_f = items.find_one({"kind": "bool_false"})
+        assert doc_int_1 == {"_id": 1, "kind": "int_1"}
+        assert doc_int_0 == {"_id": 0, "kind": "int_0"}
+        assert doc_bool_t is not None and doc_bool_t["_id"] is True
+        assert doc_bool_f is not None and doc_bool_f["_id"] is False
+
+    # When only boolean _id rows are present, find_one({'_id': 1/0}) must not
+    # accidentally return the boolean documents.
+    bool_only_src = tmp_path / "bool_only_src.db"
+    bool_only_dst = tmp_path / "bool_only_dst.db"
+    bconn = sqlite3.connect(str(bool_only_src))
+    try:
+        use_jsonb = supports_jsonb(bconn)
+        data_col = "JSONB" if use_jsonb else "TEXT"
+        insert_expr = "jsonb(?)" if use_jsonb else "?"
+        bconn.execute(
+            "CREATE TABLE items ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            f"_id TEXT UNIQUE, data {data_col} NOT NULL)"
+        )
+        bconn.executemany(
+            f"INSERT INTO items(_id, data) VALUES (?, {insert_expr})",
+            [
+                (
+                    "True",
+                    neosqlite_json_dumps({"_id": True, "kind": "bool_true"}),
+                ),
+                (
+                    "False",
+                    neosqlite_json_dumps({"_id": False, "kind": "bool_false"}),
+                ),
+            ],
+        )
+        bconn.commit()
+    finally:
+        bconn.close()
+
+    migrate_database(str(bool_only_src), str(bool_only_dst))
+    with neosqlite.Connection(str(bool_only_dst)) as nconn:
+        items = nconn["items"]
+        assert items.find_one({"_id": 1}) is None
+        assert items.find_one({"_id": 0}) is None
+        assert items.find_one({"kind": "bool_true"})["_id"] is True
+        assert items.find_one({"kind": "bool_false"})["_id"] is False
+
+
+def test_migrate_ignores_corrupt_non_jsonb_blob_data(tmp_path):
+    """Non-JSONB binary blobs in data do not crash migration."""
+    from neosqlite.migration_cli import migrate_database
+
+    source = tmp_path / "blob_legacy.db"
+    destination = tmp_path / "blob_migrated.db"
+    conn = sqlite3.connect(str(source))
+    try:
+        conn.execute(
+            "CREATE TABLE items ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "_id TEXT, "
+            "data TEXT NOT NULL"
+            ")"
+        )
+        conn.execute(
+            "INSERT INTO items(_id, data) VALUES (?, ?)",
+            ("corrupt", b"\xff\x00\x01not-jsonb"),
+        )
+        conn.execute(
+            "INSERT INTO items(_id, data) VALUES (?, ?)",
+            ("42", neosqlite_json_dumps({"_id": 42, "kind": "ok"})),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    migrate_database(str(source), str(destination))
+
+    dest_conn = sqlite3.connect(str(destination))
+    try:
+        rows = dest_conn.execute(
+            "SELECT _id, typeof(_id), typeof(data) FROM items ORDER BY id"
+        ).fetchall()
+        assert rows == [
+            ("corrupt", "text", "blob"),
+            (42, "integer", "text"),
+        ]
+        kind = dest_conn.execute(
+            "SELECT json_extract(data, '$.kind') FROM items WHERE id = 2"
+        ).fetchone()[0]
+        assert kind == "ok"
+    finally:
+        dest_conn.close()
+
+
+def test_migrate_quoted_id_column_definitions(tmp_path):
+    """Quoted column definitions like \"_id\" or [_id] or `_id` are migrated."""
+    from neosqlite.migration_cli import migrate_database
+
+    for col_def in ('"_id" TEXT', "[_id] TEXT", "`_id` JSONB"):
+        sub = tmp_path / col_def.replace('"', "d").replace(" ", "_")
+        sub.mkdir()
+        source = sub / "legacy.db"
+        destination = sub / "migrated.db"
+        conn = sqlite3.connect(str(source))
+        try:
+            conn.execute(
+                "CREATE TABLE items ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                f"{col_def} UNIQUE, "
+                "data TEXT NOT NULL"
+                ")"
+            )
+            conn.execute(
+                "INSERT INTO items(_id, data) VALUES (?, ?)",
+                ("1", neosqlite_json_dumps({"_id": 1, "kind": "int"})),
+            )
+            conn.execute(
+                "INSERT INTO items(_id, data) VALUES (?, ?)",
+                ("True", neosqlite_json_dumps({"_id": True, "kind": "bool"})),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        migrate_database(str(source), str(destination))
+        assert _table_id_type(str(destination)) == "BLOB"
+        assert _read_rows(str(destination)) == [
+            (1, "integer", "int"),
+            ("True", "text", "bool"),
+        ]
