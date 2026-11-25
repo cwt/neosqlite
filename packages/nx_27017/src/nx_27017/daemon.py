@@ -15,51 +15,119 @@ from nx_27017.server import run_server_threaded
 from nx_27017.wire_protocol import SHUTDOWN_POLL_INTERVAL, SHUTDOWN_RETRY_COUNT
 
 try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore[assignment]
+
+try:
     import uvloop
 except ImportError:
     uvloop = None  # type: ignore[assignment]
 
 logger = logging.getLogger("nx_27017")
 
+# Active advisory-locked PID file descriptors held by this process on POSIX.
+_PID_LOCK_FDS: dict[str, int] = {}
+
+
+def _release_pid_lock(pid_file: str) -> None:
+    """Release and close any held POSIX lock descriptor for ``pid_file``."""
+    fd = _PID_LOCK_FDS.pop(os.path.abspath(pid_file), None)
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
 
 def write_pid_file(pid_file: str) -> bool:
-    """Write the current process PID to ``pid_file``.
+    """Write the current process PID to ``pid_file`` safely.
 
-    Checks whether an existing daemon process is already active first; if so,
-    logs an error and returns ``False`` without overwriting the PID file.
+    Opens ``pid_file`` with ``O_NOFOLLOW`` (refusing symlinks) and mode
+    ``0o600``, acquires a non-blocking exclusive ``fcntl.flock`` lock on POSIX,
+    verifies no existing daemon process is already active, and writes the
+    current PID.
 
     Args:
         pid_file: Filesystem path to the PID file to write.
 
     Returns:
         bool: ``True`` if the PID was written, ``False`` if the daemon is
-            already running or an ``OSError`` occurred.
+            already running, ``pid_file`` is a symlink, or an ``OSError``
+            occurred.
     """
-    if is_running(pid_file):
-        pid = get_pid(pid_file)
-        logger.error(f"NX-27017 is already running (PID: {pid})")
+    abs_path = os.path.abspath(pid_file)
+    if os.path.islink(pid_file):
+        logger.error(f"Refusing to write PID file through symlink: {pid_file}")
         return False
 
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     try:
-        with open(pid_file, "w") as f:
-            f.write(str(os.getpid()))
-        return True
+        fd = os.open(pid_file, flags, 0o600)
     except OSError as e:
         logger.error(f"Cannot write PID file: {e}")
         return False
 
+    keep_fd = False
+    try:
+        if fcntl is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                existing = get_pid(pid_file)
+                logger.error(f"NX-27017 is already running (PID: {existing})")
+                return False
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        raw = os.read(fd, 64).decode("ascii", errors="ignore").strip()
+        if raw:
+            try:
+                existing_pid = int(raw)
+            except ValueError:
+                existing_pid = None
+            if existing_pid is not None and _is_pid_running(existing_pid):
+                logger.error(
+                    f"NX-27017 is already running (PID: {existing_pid})"
+                )
+                return False
+
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, str(os.getpid()).encode("ascii"))
+
+        if fcntl is not None:
+            old_fd = _PID_LOCK_FDS.pop(abs_path, None)
+            if old_fd is not None and old_fd != fd:
+                try:
+                    os.close(old_fd)
+                except OSError:
+                    pass
+            _PID_LOCK_FDS[abs_path] = fd
+            keep_fd = True
+        return True
+    except OSError as e:
+        logger.error(f"Cannot write PID file: {e}")
+        return False
+    finally:
+        if not keep_fd:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
 
 def remove_pid_file(pid_file: str):
-    """Remove the daemon PID file on shutdown if it exists.
+    """Remove the daemon PID file on shutdown if it exists and is not a symlink.
 
-    Suppresses ``OSError`` if the file cannot be deleted or was already
-    removed.
+    Releases any held POSIX advisory lock descriptor and suppresses ``OSError``
+    if the file cannot be deleted or was already removed.
 
     Args:
         pid_file: Filesystem path to the PID file to remove.
     """
+    _release_pid_lock(pid_file)
     try:
-        if os.path.exists(pid_file):
+        if not os.path.islink(pid_file) and os.path.exists(pid_file):
             os.remove(pid_file)
     except OSError:
         pass
@@ -149,43 +217,92 @@ def is_running(pid_file: str) -> bool:
 
 
 def get_pid(pid_file: str) -> int | None:
-    """Read and parse the integer PID from ``pid_file``.
+    """Read and parse the integer PID from ``pid_file`` without following symlinks.
 
     Args:
         pid_file: Filesystem path to the PID file.
 
     Returns:
-        int | None: Parsed process ID, or ``None`` if reading or integer
-            parsing fails.
+        int | None: Parsed process ID, or ``None`` if reading, symlink checks,
+            or integer parsing fails.
     """
-    try:
-        with open(pid_file) as f:
-            return int(f.read().strip())
-    except (OSError, ValueError):
+    if os.path.islink(pid_file):
         return None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(pid_file, flags)
+    except OSError:
+        return None
+    try:
+        raw = os.read(fd, 64).decode("ascii", errors="strict").strip()
+        return int(raw)
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _is_nx_27017_process(pid: int) -> bool:
+    """Verify via ``/proc/<pid>/cmdline`` (on Linux) that ``pid`` is NX-27017.
+
+    Returns ``True`` when process-cmdline inspection is unavailable on the
+    current platform so non-Linux platforms continue to work cleanly.
+    """
+    cmdline_path = f"/proc/{pid}/cmdline"
+    if not os.path.exists("/proc"):
+        return True
+    try:
+        with open(cmdline_path, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        # Process exited or /proc entry inaccessible; let caller handle signal
+        return True
+    if not raw:
+        return False
+    cmdline = (
+        raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
+    )
+    return "nx_27017" in cmdline or "nx-27017" in cmdline
 
 
 def stop_daemon(pid_file: str) -> int:
     """Stop a running NX-27017 daemon referenced by ``pid_file``.
 
-    Sends ``SIGTERM`` and polls up to ``SHUTDOWN_RETRY_COUNT`` intervals of
-    ``SHUTDOWN_POLL_INTERVAL`` seconds; escalates to ``SIGKILL`` and deletes
-    ``pid_file`` if the process does not exit in time.
+    Verifies that the PID refers to a running NX-27017 process before sending
+    ``SIGTERM``, polls up to ``SHUTDOWN_RETRY_COUNT`` intervals of
+    ``SHUTDOWN_POLL_INTERVAL`` seconds, and escalates to ``SIGKILL`` and
+    deletes ``pid_file`` if the process does not exit in time.
 
     Args:
         pid_file: Filesystem path to the daemon's PID file.
 
     Returns:
         int: ``0`` if the daemon stopped (or was forcefully killed), ``1`` if
-            not running, the PID file is invalid, or permission is denied.
+            not running, the PID file is invalid, process identity does not
+            match NX-27017, or permission is denied.
     """
-    if not os.path.exists(pid_file):
+    if not os.path.exists(pid_file) or os.path.islink(pid_file):
         print("NX-27017 is not running (no PID file found)")
         return 1
 
     pid = get_pid(pid_file)
     if pid is None:
         print("Invalid PID file")
+        return 1
+
+    if not _is_pid_running(pid):
+        print("NX-27017 is not running")
+        remove_pid_file(pid_file)
+        return 1
+
+    if not _is_nx_27017_process(pid):
+        logger.error(
+            f"Refusing to stop PID {pid}: process is not an NX-27017 instance"
+        )
+        print(f"PID {pid} is not an NX-27017 process; refusing to signal")
         return 1
 
     try:
@@ -268,6 +385,12 @@ def daemonize():
     sys.stdout.flush()
     sys.stderr.flush()
 
+    try:
+        with open(os.devnull, "rb") as devnull:
+            os.dup2(devnull.fileno(), sys.stdin.fileno())
+    except (OSError, ValueError, AttributeError):
+        pass
+
 
 def _signal_exit_handler(signum: int, frame: Any) -> None:
     """Handle termination signals by exiting cleanly.
@@ -282,16 +405,22 @@ def _signal_exit_handler(signum: int, frame: Any) -> None:
 def run_as_daemon(args: argparse.Namespace):
     """Run the NX-27017 server as a background daemon process.
 
-    Verifies no instance is running, resolves relative database, data, and
-    FTS5 tokenizer paths to absolute paths before daemonizing, redirects
-    ``stdout`` and ``stderr`` to ``args.log_file``, writes ``args.pid_file``,
-    installs ``SIGTERM``/``SIGINT`` handlers, runs :func:`run_server_sync`,
-    and cleans up the PID file on exit.
+    Verifies no instance is running, resolves relative database, data, log,
+    PID, and FTS5 tokenizer paths to absolute paths before daemonizing,
+    redirects ``stdout`` and ``stderr`` to ``args.log_file``, writes
+    ``args.pid_file``, installs ``SIGTERM``/``SIGINT`` handlers, runs
+    :func:`run_server_sync`, and cleans up the PID file on exit.
 
     Args:
         args: Parsed CLI namespace containing ``pid_file``, ``log_file``,
             ``db_path``, ``data_dir``, ``fts5_tokenizers``, and server options.
     """
+    if args.pid_file and not os.path.isabs(args.pid_file):
+        args.pid_file = os.path.abspath(args.pid_file)
+
+    if args.log_file and not os.path.isabs(args.log_file):
+        args.log_file = os.path.abspath(args.log_file)
+
     if is_running(args.pid_file):
         pid = get_pid(args.pid_file)
         logger.error(f"NX-27017 is already running (PID: {pid})")
@@ -393,17 +522,16 @@ def run_server_sync(args: argparse.Namespace):
         args.threaded,
     )
 
-    handler = NeoSQLiteHandler(
+    with NeoSQLiteHandler(
         db_path,
         tokenizers=tokenizers,
         journal_mode=args.journal_mode,
         data_dir=getattr(args, "data_dir", None),
         single_db_compat=getattr(args, "single_db_compat", False),
-    )
-
-    try:
-        run_server_threaded(
-            args.host, args.port, handler, use_threading=args.threaded
-        )
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
+    ) as handler:
+        try:
+            run_server_threaded(
+                args.host, args.port, handler, use_threading=args.threaded
+            )
+        except KeyboardInterrupt:
+            logger.info("Shutting down...")

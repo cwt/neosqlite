@@ -30,38 +30,119 @@ except ImportError:
 
 logger = logging.getLogger("nx_27017")
 
+_READ_CHUNK_SIZE = 65536
+DEFAULT_FRAME_READ_TIMEOUT = 30.0
+
+
+async def _read_exact_async(
+    reader: asyncio.StreamReader,
+    length: int,
+    timeout: float | None = DEFAULT_FRAME_READ_TIMEOUT,
+    chunk_size: int = _READ_CHUNK_SIZE,
+) -> bytes | None:
+    """Read exactly ``length`` bytes incrementally in bounded chunks.
+
+    Allocates memory proportional to received bytes rather than the declared
+    wire header length, and enforces ``timeout`` across the entire read so
+    stalled peers cannot tie up worker resources.
+    """
+    chunks: list[bytes] = []
+    remaining = length
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    while remaining > 0:
+        to_read = min(remaining, chunk_size)
+        if deadline is not None:
+            time_left = deadline - time.monotonic()
+            if time_left <= 0:
+                raise TimeoutError("Timed out reading wire frame")
+            chunk = await asyncio.wait_for(
+                reader.read(to_read), timeout=time_left
+            )
+        else:
+            chunk = await reader.read(to_read)
+        if not chunk:
+            return None
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _read_exact_sync(
+    client_socket: socket.socket,
+    length: int,
+    timeout: float | None = DEFAULT_FRAME_READ_TIMEOUT,
+    chunk_size: int = _READ_CHUNK_SIZE,
+) -> bytes | None:
+    """Synchronously read exactly ``length`` bytes in bounded chunks."""
+    chunks: list[bytes] = []
+    remaining = length
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    try:
+        while remaining > 0:
+            to_read = min(remaining, chunk_size)
+            if deadline is not None:
+                time_left = deadline - time.monotonic()
+                if time_left <= 0:
+                    raise TimeoutError("Timed out reading wire frame")
+                client_socket.settimeout(time_left)
+            chunk = client_socket.recv(to_read)
+            if not chunk:
+                return None
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    finally:
+        if deadline is not None:
+            with contextlib.suppress(OSError):
+                client_socket.settimeout(None)
+    return b"".join(chunks)
+
 
 async def handle_client(
     reader: asyncio.StreamReader,
     writer: asyncio.StreamWriter,
     handler: NeoSQLiteHandler,
+    frame_timeout: float = DEFAULT_FRAME_READ_TIMEOUT,
 ):
     """Handle a single asynchronous MongoDB wire protocol client connection.
 
-    Reads 16-byte wire headers and message payloads from ``reader``, validates
-    message lengths against ``MESSAGE_HEADER_SIZE`` and
+    Enforces ``handler`` connection limits, reads 16-byte wire headers and
+    message payloads incrementally in bounded chunks with per-frame timeouts,
+    validates message lengths against ``MESSAGE_HEADER_SIZE`` and
     ``MAX_MESSAGE_SIZE_BYTES``, dispatches ``OP_MSG`` (inserts and commands)
     and ``OP_QUERY`` requests via ``asyncio.to_thread``, writes replies to
-    ``writer``, and cleans up connection tracking on disconnect.
+    ``writer``, and cleans up connection tracking and streams off the event
+    loop on disconnect.
 
     Args:
         reader: Async stream reader for incoming client wire messages.
         writer: Async stream writer for outgoing server replies.
         handler: ``NeoSQLiteHandler`` instance processing client requests.
+        frame_timeout: Maximum seconds allowed to receive the remainder of an
+            in-progress wire frame once its first bytes arrive.
     """
-    handler.increment_connections()
+    if not handler.try_acquire_connection():
+        logger.warning("Rejecting client connection: max connections reached")
+        writer.close()
+        with contextlib.suppress(Exception):
+            await writer.wait_closed()
+        return
     conn_id = str(uuid.uuid4())
     try:
         while True:
-            header_bytes = bytearray(16)
-            pos = 0
-            while pos < 16:
-                chunk = await reader.read(16 - pos)
-                if not chunk:
+            first_chunk = await reader.read(MESSAGE_HEADER_SIZE)
+            if not first_chunk:
+                return
+            if len(first_chunk) < MESSAGE_HEADER_SIZE:
+                rest_header = await _read_exact_async(
+                    reader,
+                    MESSAGE_HEADER_SIZE - len(first_chunk),
+                    timeout=frame_timeout,
+                )
+                if rest_header is None:
                     return
-                header_bytes[pos : pos + len(chunk)] = chunk
-                pos += len(chunk)
-            header = bytes(header_bytes)
+                header = first_chunk + rest_header
+            else:
+                header = first_chunk
 
             message_length = struct.unpack("<i", header[0:4])[0]
             request_id = struct.unpack("<i", header[4:8])[0]
@@ -75,20 +156,19 @@ async def handle_client(
                 logger.warning(f"Invalid message length: {message_length}")
                 return
 
-            if message_length > 16:
-                body = bytearray(message_length - 16)
-                pos = 0
-                remaining = message_length - 16
-                while pos < remaining:
-                    chunk = await reader.read(remaining - pos)
-                    if not chunk:
-                        logger.warning(
-                            f"Incomplete message: expected {remaining}, got {pos}"
-                        )
-                        return
-                    body[pos : pos + len(chunk)] = chunk
-                    pos += len(chunk)
-                full_message = header + bytes(body)
+            if message_length > MESSAGE_HEADER_SIZE:
+                body = await _read_exact_async(
+                    reader,
+                    message_length - MESSAGE_HEADER_SIZE,
+                    timeout=frame_timeout,
+                )
+                if body is None:
+                    logger.warning(
+                        f"Incomplete message: expected "
+                        f"{message_length - MESSAGE_HEADER_SIZE} body bytes"
+                    )
+                    return
+                full_message = header + body
             else:
                 full_message = header
 
@@ -172,11 +252,12 @@ async def handle_client(
         ConnectionResetError,
         BrokenPipeError,
         asyncio.IncompleteReadError,
+        TimeoutError,
     ):
         pass
     finally:
         handler.decrement_connections()
-        handler.close_streams_for_connection(conn_id)
+        await asyncio.to_thread(handler.close_streams_for_connection, conn_id)
         writer.close()
         with contextlib.suppress(Exception):
             await writer.wait_closed()
@@ -185,10 +266,12 @@ async def handle_client(
 def handle_client_threaded(
     client_socket: socket.socket,
     handler: NeoSQLiteHandler,
+    frame_timeout: float = DEFAULT_FRAME_READ_TIMEOUT,
 ):
     """Handle a single client connection on a dedicated OS thread.
 
-    Reads wire protocol frames synchronously from ``client_socket``, validates
+    Enforces ``handler`` connection limits, reads wire protocol frames
+    incrementally in bounded chunks with per-frame timeouts, validates
     message sizes, dispatches ``OP_MSG`` and ``OP_QUERY`` requests on
     ``handler``, sends replies via ``sendall``, and decrements connection
     tracking and closes open cursors/streams when the client disconnects.
@@ -196,21 +279,32 @@ def handle_client_threaded(
     Args:
         client_socket: Connected client TCP socket.
         handler: ``NeoSQLiteHandler`` instance processing client requests.
+        frame_timeout: Maximum seconds allowed to receive the remainder of an
+            in-progress wire frame once its first bytes arrive.
     """
-    handler.increment_connections()
+    if not handler.try_acquire_connection():
+        logger.warning("Rejecting threaded connection: max connections reached")
+        with contextlib.suppress(OSError):
+            client_socket.close()
+        return
     conn_id = str(uuid.uuid4())
     try:
         with client_socket:
             while True:
-                header_bytes = bytearray(16)
-                pos = 0
-                while pos < 16:
-                    chunk = client_socket.recv(16 - pos)
-                    if not chunk:
+                first_chunk = client_socket.recv(MESSAGE_HEADER_SIZE)
+                if not first_chunk:
+                    return
+                if len(first_chunk) < MESSAGE_HEADER_SIZE:
+                    rest_header = _read_exact_sync(
+                        client_socket,
+                        MESSAGE_HEADER_SIZE - len(first_chunk),
+                        timeout=frame_timeout,
+                    )
+                    if rest_header is None:
                         return
-                    header_bytes[pos : pos + len(chunk)] = chunk
-                    pos += len(chunk)
-                header = bytes(header_bytes)
+                    header = first_chunk + rest_header
+                else:
+                    header = first_chunk
 
                 message_length = struct.unpack("<i", header[0:4])[0]
                 request_id = struct.unpack("<i", header[4:8])[0]
@@ -224,20 +318,19 @@ def handle_client_threaded(
                     logger.warning(f"Invalid message length: {message_length}")
                     return
 
-                if message_length > 16:
-                    body = bytearray(message_length - 16)
-                    pos = 0
-                    remaining = message_length - 16
-                    while pos < remaining:
-                        chunk = client_socket.recv(remaining - pos)
-                        if not chunk:
-                            logger.warning(
-                                f"Incomplete message: expected {remaining}, got {pos}"
-                            )
-                            return
-                        body[pos : pos + len(chunk)] = chunk
-                        pos += len(chunk)
-                    full_message = header + bytes(body)
+                if message_length > MESSAGE_HEADER_SIZE:
+                    body = _read_exact_sync(
+                        client_socket,
+                        message_length - MESSAGE_HEADER_SIZE,
+                        timeout=frame_timeout,
+                    )
+                    if body is None:
+                        logger.warning(
+                            f"Incomplete message: expected "
+                            f"{message_length - MESSAGE_HEADER_SIZE} body bytes"
+                        )
+                        return
+                    full_message = header + body
                 else:
                     full_message = header
 
@@ -305,7 +398,7 @@ def handle_client_threaded(
                     )
                     client_socket.sendall(error_reply)
 
-    except (ConnectionResetError, BrokenPipeError, OSError) as e:
+    except (ConnectionResetError, BrokenPipeError, TimeoutError, OSError) as e:
         logger.debug(f"Client connection error: {e}")
     except Exception as e:
         logger.exception(f"Unexpected error in client thread: {e}")

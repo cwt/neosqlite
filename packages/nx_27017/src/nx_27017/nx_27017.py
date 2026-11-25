@@ -178,9 +178,21 @@ Examples:
     args.journal_mode = JournalMode.validate(args.journal_mode)
 
     if args.fts5_tokenizers:
-        args.fts5_tokenizers = [
-            tuple(t.split("=", 1)) for t in args.fts5_tokenizers
-        ]
+        parsed_tokenizers: list[tuple[str, str]] = []
+        for entry in args.fts5_tokenizers:
+            if "=" not in entry:
+                parser.error(
+                    f"Invalid --fts5-tokenizer value {entry!r}: "
+                    "expected 'name=path'"
+                )
+            tok_name, tok_path = entry.split("=", 1)
+            if not tok_name or not tok_path:
+                parser.error(
+                    f"Invalid --fts5-tokenizer value {entry!r}: "
+                    "expected non-empty 'name=path'"
+                )
+            parsed_tokenizers.append((tok_name, tok_path))
+        args.fts5_tokenizers = parsed_tokenizers
     else:
         args.fts5_tokenizers = None
 
@@ -202,4 +214,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

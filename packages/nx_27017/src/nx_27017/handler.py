@@ -1,17 +1,20 @@
 """NeoSQLite handler for MongoDB commands and SQLite operations."""
 
+import contextlib
 import functools
 import logging
 import os
 import platform
 import re
+import secrets
 import threading
 import time
 import traceback
 import uuid
+import weakref
 from collections import OrderedDict
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from itertools import count
 from typing import Any, Self
 
 from neosqlite import Connection
@@ -44,10 +47,6 @@ logger = logging.getLogger("nx_27017")
 # and returns ok:0 for anything else (see _sanitize_db_name).
 _DB_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
-# Data-cursor ids live far above ChangeStreamCursor ids (which start at
-# 1000) so getMore/killCursors can tell the stores apart by lookup order.
-_data_cursor_id_counter = count(10**12)
-
 # Default first-batch size when the client sends no batchSize (matches the
 # MongoDB server default of up to 101 documents in the first batch).
 _DEFAULT_BATCH_SIZE = 101
@@ -57,6 +56,18 @@ _DEFAULT_BATCH_SIZE = 101
 # disk and are reopened transparently. Memory mode never evicts (closing
 # an in-memory database would destroy its data).
 _MAX_OPEN_DBS = 100
+
+# Upper bounds and idle timeouts for server-side state maps.
+_DEFAULT_CURSOR_TIMEOUT_SECONDS = 600.0
+_MAX_CURSORS = 10_000
+_MAX_SESSIONS = 10_000
+_MAX_SINGLE_MODE_DBS = 1_000
+_DEFAULT_TX_TIMEOUT_SECONDS = 5.0
+
+
+def _generate_cursor_id() -> int:
+    """Return a non-zero unpredictable 63-bit cursor identifier."""
+    return secrets.randbits(63) or 1
 
 
 class CrossDBTransactionError(ValueError):
@@ -124,8 +135,11 @@ def _bulk_write_error(exc: Exception, index: int) -> dict[str, Any]:
     from neosqlite._sqlite import sqlite3
 
     message = str(exc)
-    if "UNIQUE" in message.upper() or isinstance(exc, sqlite3.IntegrityError):
+    upper = message.upper()
+    if "UNIQUE" in upper or isinstance(exc, sqlite3.IntegrityError):
         code = 11000
+    elif "LOCKED" in upper or "BUSY" in upper:
+        code = 112
     else:
         code = 8
     return {"index": index, "code": code, "errmsg": message}
@@ -183,30 +197,59 @@ def _msg_db_name(msg: Any) -> str:
     return "test"
 
 
+def _msg_body_doc(msg: Any) -> dict[str, Any] | None:
+    """Return the first ``body`` command document from a wire message."""
+    if isinstance(msg, dict):
+        sections = msg.get("sections")
+        if sections:
+            for section_type, doc in sections:
+                if section_type == "body" and isinstance(doc, dict):
+                    return doc
+    return None
+
+
+def _msg_session_info(msg: Any) -> tuple[str | None, bool]:
+    """Extract ``(session_id, starts_transaction)`` from an ``OP_MSG``."""
+    doc = _msg_body_doc(msg)
+    if doc is None:
+        return None, False
+    lsid = doc.get("lsid")
+    if not isinstance(lsid, dict):
+        return None, False
+    return _extract_session_id(lsid), bool(doc.get("startTransaction"))
+
+
 def _serialize(func):
     """Serialize access to the SQLite connection(s).
 
-    Single-file (legacy) mode uses one global ``RLock``, as before. Multi-DB
-    mode uses one ``RLock`` per logical database so different files can
-    proceed in parallel. Lock ordering: per-db lock -> ``_dict_lock`` ->
-    ``_sessions_lock``. Never acquire a per-db lock while holding
-    ``_dict_lock``.
+    Single-file (legacy) mode uses one global ``RLock`` for main connection
+    access, while multi-DB mode uses one ``RLock`` per logical database so
+    different files can proceed in parallel. Operations running on a
+    session's dedicated transactional connection serialize on that session's
+    lock instead of competing with non-transactional operations on the main
+    connection, preventing lock-order deadlocks during ``commitTransaction``
+    and ``abortTransaction``.
+
+    Lock ordering: ``admin`` lock -> per-db lock -> per-session lock ->
+    ``_dict_lock`` -> ``_sessions_lock``. Never acquire a per-db or session
+    lock while holding ``_dict_lock`` or ``_sessions_lock``.
 
     Args:
         func: Handler method whose first argument after ``self`` is a wire
             message dictionary.
 
     Returns:
-        Callable: Wrapped method protected by the per-database lock.
+        Callable: Wrapped method protected by the appropriate lock and
+            active-operation reference count.
     """
 
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
-        """Acquire the target database lock and invoke the wrapped handler.
+        """Acquire the target database/session lock and invoke ``func``.
 
         Args:
             *args: Positional arguments forwarded to ``func``; ``args[0]``
-                is inspected for the target database name.
+                is inspected for the target database name and session.
             **kwargs: Keyword arguments forwarded to ``func``.
 
         Returns:
@@ -214,7 +257,19 @@ def _serialize(func):
         """
         msg = args[0] if args else {}
         db_name = _msg_db_name(msg) if isinstance(msg, dict) else "test"
-        with self._lock_for(db_name):
+        session_id, starts_tx = _msg_session_info(msg)
+        use_session_lock = bool(
+            session_id
+            and (
+                starts_tx or self._session_has_dedicated_tx(session_id, db_name)
+            )
+        )
+        lock = (
+            self._lock_for_session(session_id)
+            if use_session_lock and session_id is not None
+            else self._lock_for(db_name)
+        )
+        with lock, self._track_active_op(db_name):
             return func(self, *args, **kwargs)
 
     return wrapper
@@ -272,6 +327,10 @@ class NeoSQLiteHandler:
         journal_mode: str = "WAL",
         data_dir: str | None = None,
         single_db_compat: bool = False,
+        max_connections: int = DEFAULT_MAX_CONNECTIONS,
+        session_timeout_seconds: float = DEFAULT_SESSION_TIMEOUT_MINUTES * 60,
+        cursor_timeout_seconds: float = _DEFAULT_CURSOR_TIMEOUT_SECONDS,
+        tx_timeout_seconds: float = _DEFAULT_TX_TIMEOUT_SECONDS,
     ):
         """Create the handler.
 
@@ -287,31 +346,53 @@ class NeoSQLiteHandler:
                 in-memory databases.
             single_db_compat: Force legacy behavior (all logical databases
                 share one SQLite connection) even for file paths.
+            max_connections: Maximum simultaneous client connections allowed.
+            session_timeout_seconds: Idle timeout before server-side sessions
+                are automatically expired and cleaned up.
+            cursor_timeout_seconds: Idle timeout before abandoned data cursors
+                are automatically expired.
+            tx_timeout_seconds: SQLite lock/transaction wait timeout in seconds.
         """
         self.tokenizers = tokenizers
         self.journal_mode = journal_mode
         self.start_time = time.time()
+        self._max_connections = max(1, int(max_connections))
+        self._session_timeout_seconds = max(0.0, float(session_timeout_seconds))
+        self._cursor_timeout_seconds = max(0.0, float(cursor_timeout_seconds))
+        self._tx_timeout_seconds = max(0.05, float(tx_timeout_seconds))
         self._active_connections = 0
         self._connections_lock = threading.Lock()
         # Sessions are keyed by (session_id, logical db name): SQLite files
         # cannot share a transaction, so there is no cross-db session.
         self._sessions: dict[tuple[str, str], Any] = {}
+        self._session_tx_conns: dict[tuple[str, str], Connection] = {}
+        self._session_last_used: dict[tuple[str, str], float] = {}
         # RLock: _find_session() re-acquires it when callers already hold it.
         self._sessions_lock = threading.RLock()
+        self._tx_cond = threading.Condition(self._sessions_lock)
+        self._session_locks: weakref.WeakValueDictionary[
+            str, threading.RLock
+        ] = weakref.WeakValueDictionary()
 
-        # A single SQLite connection is shared by all request handlers. SQLite
-        # connections are not safe for concurrent use from multiple threads,
-        # so every public handler entry point serializes access through a
-        # reentrant lock. check_same_thread=False allows the connection to be
-        # touched from whichever thread the async/server runtime schedules it
-        # on, while the lock guarantees only one operation uses it at a time.
+        # SQLite connections are not safe for concurrent use from multiple
+        # threads, so every public handler entry point serializes access
+        # through a reentrant lock. check_same_thread=False allows each
+        # connection to be touched from whichever worker thread runs it, while
+        # the lock guarantees only one operation uses a connection at a time.
         self._db_lock = threading.RLock()
         self._dict_lock = threading.Lock()
-        self._locks: dict[str, threading.RLock] = {}
+        self._locks: weakref.WeakValueDictionary[str, threading.RLock] = (
+            weakref.WeakValueDictionary()
+        )
+        self._active_ops: dict[str, int] = {}
         self._applied_wc: dict[str, str] = {}
+        # Unique per-handler namespace for shared-cache memory URIs so separate
+        # handlers in the same process never collide on logical database names.
+        self._mem_namespace = uuid.uuid4().hex[:12]
+        self._mem_generations: dict[str, int] = {}
         # Live data cursors for find/aggregate pagination:
-        # id -> {"ns": str, "db": str, "docs": list, "pos": int,
-        #         "owner": Any}. Guarded by _cursors_lock.
+        # id -> {"ns": str, "db": str, "docs": list, "owner": Any,
+        #         "last_used": float}. Guarded by _cursors_lock.
         self._cursors: dict[int, dict[str, Any]] = {}
         self._cursors_lock = threading.Lock()
 
@@ -352,32 +433,43 @@ class NeoSQLiteHandler:
         self._conns: OrderedDict[str, Connection] = OrderedDict()
         if self._mode == "single":
             if db_path in (":memory:", "memory"):
+                self._single_mem_uri: str | None = (
+                    f"file:nx_{self._mem_namespace}_single"
+                    "?mode=memory&cache=shared"
+                )
                 self.conn = Connection(
-                    "file::memory:?cache=shared",
+                    self._single_mem_uri,
                     check_same_thread=False,
                     uri=True,
+                    timeout=self._tx_timeout_seconds,
                     tokenizers=tokenizers,
                     journal_mode=journal_mode,
                 )
             else:
+                self._single_mem_uri = None
                 self.conn = Connection(
                     db_path,
                     check_same_thread=False,
+                    timeout=self._tx_timeout_seconds,
                     tokenizers=tokenizers,
                     journal_mode=journal_mode,
                 )
             self._conns["admin"] = self.conn
         else:
+            self._single_mem_uri = None
             # Default connection for backward compatibility (tests and
             # sessions use h.conn). Created lazily per logical db below,
             # starting with "admin".
             self.conn = self._open_db_conn("admin")
             self._conns["admin"] = self.conn
-        self.databases: dict[str, Connection] = dict(self._conns)
+        self.databases: OrderedDict[str, Connection] = OrderedDict(self._conns)
         self._change_stream_manager = ChangeStreamManager()
 
     def _lock_for(self, db_name: str) -> threading.RLock:
         """Return the lock guarding a logical database.
+
+        Validates ``db_name`` before allocating any entry in ``self._locks`` so
+        untrusted/invalid database names cannot grow the lock table.
 
         Args:
             db_name: Logical database name.
@@ -385,15 +477,58 @@ class NeoSQLiteHandler:
         Returns:
             threading.RLock: Global ``_db_lock`` in single-file mode or the
                 per-database ``RLock`` otherwise.
+
+        Raises:
+            ValueError: If ``db_name`` fails ``_sanitize_db_name`` in multi-DB
+                mode.
         """
         if self._mode == "single":
             return self._db_lock
+        safe = _sanitize_db_name(db_name)
         with self._dict_lock:
-            lock = self._locks.get(db_name)
+            lock = self._locks.get(safe)
             if lock is None:
                 lock = threading.RLock()
-                self._locks[db_name] = lock
+                self._locks[safe] = lock
             return lock
+
+    def _lock_for_session(self, session_id: str) -> threading.RLock:
+        """Return the reentrant lock guarding a transactional session."""
+        with self._sessions_lock:
+            lock = self._session_locks.get(session_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._session_locks[session_id] = lock
+            return lock
+
+    def _session_has_dedicated_tx(self, session_id: str, db_name: str) -> bool:
+        """Return whether ``session_id`` currently holds a dedicated tx handle."""
+        with self._sessions_lock:
+            if not self._session_tx_conns:
+                return False
+            scope = self._session_scope(db_name)
+            if (session_id, scope) in self._session_tx_conns:
+                return True
+            if db_name == "admin":
+                return any(
+                    sid == session_id for sid, _sc in self._session_tx_conns
+                )
+            return False
+
+    @contextlib.contextmanager
+    def _track_active_op(self, db_name: str) -> Iterator[None]:
+        """Reference-count an in-flight operation so LRU eviction skips it."""
+        with self._dict_lock:
+            self._active_ops[db_name] = self._active_ops.get(db_name, 0) + 1
+        try:
+            yield
+        finally:
+            with self._dict_lock:
+                remaining = self._active_ops.get(db_name, 1) - 1
+                if remaining <= 0:
+                    self._active_ops.pop(db_name, None)
+                else:
+                    self._active_ops[db_name] = remaining
 
     def _db_file(self, db_name: str) -> str:
         """Return the SQLite file path backing a logical database.
@@ -408,6 +543,14 @@ class NeoSQLiteHandler:
         """
         assert self._data_dir is not None
         return os.path.join(self._data_dir, f"{db_name}.db")
+
+    def _memory_uri(self, safe_db_name: str) -> str:
+        """Return the handler-scoped shared-cache memory URI for a database."""
+        gen = self._mem_generations.get(safe_db_name, 0)
+        return (
+            f"file:nx_{self._mem_namespace}_{safe_db_name}_{gen}"
+            "?mode=memory&cache=shared"
+        )
 
     def _open_db_conn(self, db_name: str) -> Connection:
         """Open (but not yet cache) the connection for a logical database.
@@ -424,22 +567,53 @@ class NeoSQLiteHandler:
         safe = _sanitize_db_name(db_name)
         if self._mode == "memory":
             return Connection(
-                ":memory:",
+                self._memory_uri(safe),
                 check_same_thread=False,
+                uri=True,
+                timeout=self._tx_timeout_seconds,
                 tokenizers=self.tokenizers,
                 journal_mode=self.journal_mode,
             )
         return Connection(
             self._db_file(safe),
             check_same_thread=False,
+            timeout=self._tx_timeout_seconds,
             tokenizers=self.tokenizers,
             journal_mode=self.journal_mode,
         )
 
+    def _open_tx_conn(self, db_name: str) -> Connection:
+        """Open a dedicated transactional ``Connection`` for ``db_name``.
+
+        Each active transactional session uses its own SQLite connection handle
+        so uncommitted writes are isolated from non-transactional operations on
+        the main handle and ``abortTransaction`` cannot wipe other clients'
+        acknowledged writes.
+        """
+        if self._mode == "single":
+            if self._single_mem_uri is not None:
+                return Connection(
+                    self._single_mem_uri,
+                    check_same_thread=False,
+                    uri=True,
+                    timeout=self._tx_timeout_seconds,
+                    tokenizers=self.tokenizers,
+                    journal_mode=self.journal_mode,
+                )
+            return Connection(
+                self.db_path,
+                check_same_thread=False,
+                timeout=self._tx_timeout_seconds,
+                tokenizers=self.tokenizers,
+                journal_mode=self.journal_mode,
+            )
+        return self._open_db_conn(db_name)
+
     def get_database(self, db_name: str) -> Connection:
         """Return the ``Connection`` for ``db_name``, opening it if needed.
 
-        In ``single`` mode all logical database names alias ``self.conn``.
+        In ``single`` mode all logical database names alias ``self.conn`` and
+        ``self.databases`` is capped to avoid unbounded growth.
         In ``files`` or ``memory`` mode validates ``db_name``, looks up or
         opens a dedicated connection under ``_dict_lock``, updates LRU order,
         and triggers ``_evict_lru_locked`` when opening a new database.
@@ -451,55 +625,73 @@ class NeoSQLiteHandler:
             Connection: Active connection backing ``db_name``.
 
         Raises:
-            ValueError: If ``db_name`` is invalid in multi-database mode.
+            ValueError: If ``db_name`` is invalid.
         """
+        safe = _sanitize_db_name(db_name)
         if self._mode == "single":
-            if db_name not in self.databases:
-                self.databases[db_name] = self.conn
-            return self.databases[db_name]
-        _sanitize_db_name(db_name)
+            with self._dict_lock:
+                if safe in self.databases:
+                    self.databases.move_to_end(safe)
+                else:
+                    self.databases[safe] = self.conn
+                    while len(self.databases) > _MAX_SINGLE_MODE_DBS:
+                        evict_name = next(
+                            (k for k in self.databases if k != "admin"), None
+                        )
+                        if evict_name is None:
+                            break
+                        self.databases.pop(evict_name, None)
+                return self.databases[safe]
         with self._dict_lock:
-            conn = self._conns.get(db_name)
+            conn = self._conns.get(safe)
             if conn is None:
-                conn = self._open_db_conn(db_name)
-                self._conns[db_name] = conn
-                self.databases[db_name] = conn
+                conn = self._open_db_conn(safe)
+                self._conns[safe] = conn
+                self.databases[safe] = conn
                 self._evict_lru_locked()
             else:
-                self._conns.move_to_end(db_name)
+                self._conns.move_to_end(safe)
             return conn
 
     def _conn_is_busy(self, db_name: str) -> bool:
-        """Return whether a database has an open transaction or watch stream.
+        """Return whether a database has in-flight ops, a tx, or watch streams.
 
-        Busy databases must not be evicted by ``_evict_lru_locked``.
+        Busy databases must not be evicted by ``_evict_lru_locked``. Called
+        with ``_dict_lock`` held.
 
         Args:
             db_name: Logical database name to inspect.
 
         Returns:
-            bool: ``True`` if a session on ``db_name`` has an open
-                transaction or active change stream activity exists.
+            bool: ``True`` if an operation is in flight, a session on
+                ``db_name`` has an open transaction, or active change stream
+                activity exists.
         """
+        if self._active_ops.get(db_name, 0) > 0:
+            return True
         with self._sessions_lock:
             if any(
                 key[1] == db_name and session.in_transaction
                 for key, session in self._sessions.items()
             ):
                 return True
+            if any(key[1] == db_name for key in self._session_tx_conns):
+                return True
         return self._change_stream_manager.has_activity(db_name)
 
     def _evict_db_locked(self, db_name: str) -> None:
         """Close and forget one evicted connection (holds ``_dict_lock``).
 
-        Ends any cached sessions bound to ``db_name`` and closes the
-        connection, ignoring cleanup exceptions.
+        Ends any cached idle sessions bound to ``db_name``, clears its cached
+        write concern state, and closes the connection, ignoring cleanup
+        exceptions.
 
         Args:
             db_name: Logical database name to evict from ``_conns``.
         """
         conn = self._conns.pop(db_name, None)
         self.databases.pop(db_name, None)
+        self._applied_wc.pop(db_name, None)
         with self._sessions_lock:
             for sess_key in [
                 existing
@@ -507,9 +699,16 @@ class NeoSQLiteHandler:
                 if existing[1] == db_name
             ]:
                 idle_session = self._sessions.pop(sess_key, None)
+                self._session_last_used.pop(sess_key, None)
+                tx_conn = self._session_tx_conns.pop(sess_key, None)
                 if idle_session is not None:
                     try:
                         idle_session.end_session()
+                    except Exception:
+                        pass
+                if tx_conn is not None:
+                    try:
+                        tx_conn.close()
                     except Exception:
                         pass
         if conn is not None:
@@ -535,23 +734,44 @@ class NeoSQLiteHandler:
                 victim = db_name
                 break
             if victim is None:
-                # Every logged database is in use (open transaction or
-                # active change stream): stay over the cap until it
-                # drains rather than dropping live state.
+                # Every logged database is in use (active operation, open
+                # transaction, or active change stream): stay over the cap
+                # until it drains rather than dropping live state.
                 return
             self._evict_db_locked(victim)
 
     def close_all(self) -> None:
         """Close every open database connection for shutdown.
 
-        Clears cached connection maps, invalidates all change streams, and
-        closes every connection including ``self.conn`` while ignoring
+        Clears cached connection, session, cursor, and write-concern maps,
+        invalidates all change streams, and closes every connection including
+        dedicated transactional connections and ``self.conn`` while ignoring
         close errors.
         """
+        with self._sessions_lock:
+            sessions = list(self._sessions.values())
+            tx_conns = list(self._session_tx_conns.values())
+            self._sessions.clear()
+            self._session_tx_conns.clear()
+            self._session_last_used.clear()
+            self._tx_cond.notify_all()
+        for sess in sessions:
+            try:
+                sess.end_session()
+            except Exception:
+                pass
+        for tx_conn in tx_conns:
+            try:
+                tx_conn.close()
+            except Exception:
+                pass
+        with self._cursors_lock:
+            self._cursors.clear()
         with self._dict_lock:
             conns = list(self._conns.values())
             self._conns.clear()
             self.databases.clear()
+            self._applied_wc.clear()
         self._change_stream_manager.invalidate()
         for conn in conns:
             try:
@@ -595,34 +815,61 @@ class NeoSQLiteHandler:
     def _drop_file_db(self, db_name: str) -> None:
         """Close, unlink, and forget a file or memory database.
 
-        Invalidates change streams, closes and removes the cached connection,
-        deletes the ``.db`` file in ``files`` mode, and removes matching
-        scoped sessions.
+        Invalidates change streams, aborts and closes any transactional
+        connections bound to ``db_name``, clears cached write concern state,
+        closes and removes the cached connection, bumps the in-memory URI
+        generation (in ``memory`` mode) or deletes the ``.db`` file (in
+        ``files`` mode), and removes matching scoped sessions.
 
         Args:
             db_name: Logical database name to drop.
         """
         self._change_stream_manager.invalidate(db_name)
-        with self._dict_lock:
-            conn = self._conns.pop(db_name, None)
-            self.databases.pop(db_name, None)
-        if conn is not None:
-            try:
-                conn.close()
-            except Exception:
-                pass
-        if self._mode == "files":
-            try:
-                os.unlink(self._db_file(db_name))
-            except OSError:
-                pass
+        dropped_sessions: list[tuple[str, Any, Connection | None]] = []
         with self._sessions_lock:
             for sess_key in [
                 existing
                 for existing in self._sessions
                 if existing[0] and existing[1] == db_name
             ]:
-                self._sessions.pop(sess_key, None)
+                sess = self._sessions.pop(sess_key, None)
+                self._session_last_used.pop(sess_key, None)
+                tx_conn = self._session_tx_conns.pop(sess_key, None)
+                if sess is not None or tx_conn is not None:
+                    dropped_sessions.append((sess_key[0], sess, tx_conn))
+            self._tx_cond.notify_all()
+        for sid, sess, tx_conn in dropped_sessions:
+            with self._lock_for_session(sid):
+                if sess is not None:
+                    try:
+                        sess.end_session()
+                    except Exception:
+                        pass
+                if tx_conn is not None:
+                    try:
+                        tx_conn.close()
+                    except Exception:
+                        pass
+        with self._dict_lock:
+            conn = self._conns.pop(db_name, None)
+            self.databases.pop(db_name, None)
+            self._applied_wc.pop(db_name, None)
+            if self._mode == "memory":
+                self._mem_generations[db_name] = (
+                    self._mem_generations.get(db_name, 0) + 1
+                )
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        if self._mode == "files":
+            db_file = self._db_file(db_name)
+            for path in (db_file, f"{db_file}-wal", f"{db_file}-shm"):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
 
     @staticmethod
     def _first_batch_size(cmd: dict[str, Any]) -> int:
@@ -684,6 +931,36 @@ class NeoSQLiteHandler:
             used += size
         return head, docs[len(head) :]
 
+    def _expire_cursors_locked(self, now: float | None = None) -> None:
+        """Drop idle data cursors past timeout and enforce ``_MAX_CURSORS``.
+
+        Must be called while holding ``self._cursors_lock``.
+        """
+        if not self._cursors:
+            return
+        current = time.monotonic() if now is None else now
+        cutoff = current - self._cursor_timeout_seconds
+        expired = [
+            cid
+            for cid, entry in self._cursors.items()
+            if entry.get("last_used", current) < cutoff
+        ]
+        for cid in expired:
+            del self._cursors[cid]
+        if len(self._cursors) > _MAX_CURSORS:
+            by_age = sorted(
+                self._cursors.items(),
+                key=self._cursor_last_used_key,
+            )
+            excess = len(self._cursors) - _MAX_CURSORS
+            for cid, _entry in by_age[:excess]:
+                self._cursors.pop(cid, None)
+
+    @staticmethod
+    def _cursor_last_used_key(item: tuple[int, dict[str, Any]]) -> float:
+        """Return sort key for cursor eviction by ``last_used`` timestamp."""
+        return float(item[1].get("last_used", 0.0))
+
     def _split_first_batch(
         self,
         docs: list[dict[str, Any]],
@@ -709,58 +986,88 @@ class NeoSQLiteHandler:
         rest = rest + docs[batch_size:]
         if not rest:
             return first, 0
-        cursor_id = next(_data_cursor_id_counter)
+        now = time.monotonic()
         with self._cursors_lock:
+            self._expire_cursors_locked(now)
+            cursor_id = _generate_cursor_id()
+            while (
+                cursor_id in self._cursors
+                or self._change_stream_manager.get_stream(cursor_id) is not None
+            ):
+                cursor_id = _generate_cursor_id()
             self._cursors[cursor_id] = {
                 "ns": ns,
                 "db": db_name,
                 "docs": rest,
                 "owner": owner,
+                "last_used": now,
             }
+            if len(self._cursors) > _MAX_CURSORS:
+                self._expire_cursors_locked(now)
         return first, cursor_id
 
     def _getmore_data(
-        self, cursor_id: int, batch_size: int
+        self,
+        cursor_id: int,
+        batch_size: int,
+        expected_ns: str | None = None,
     ) -> dict[str, Any] | None:
         """Return the next batch for a data cursor, or ``None`` if absent.
 
         Args:
             cursor_id: Numeric cursor identifier from a prior response.
             batch_size: Maximum number of documents to return in this batch.
+            expected_ns: Optional ``"<db>.<collection>"`` namespace that the
+                cursor must match; returns ``{"_ns_mismatch": True}`` when
+                provided and mismatched without consuming cursor state.
 
         Returns:
             dict[str, Any] | None: Cursor payload with ``id`` (``0`` when
-                exhausted), ``ns``, and ``nextBatch``, or ``None`` if unknown.
+                exhausted), ``ns``, and ``nextBatch``, ``{"_ns_mismatch": True}``
+                on namespace mismatch, or ``None`` if unknown.
         """
+        now = time.monotonic()
         with self._cursors_lock:
+            self._expire_cursors_locked(now)
             entry = self._cursors.get(cursor_id)
             if entry is None:
                 return None
+            ns = entry["ns"]
+            if expected_ns is not None and ns != expected_ns:
+                return {"_ns_mismatch": True}
             docs = entry["docs"]
             batch, rest = self._fit_bson_budget(docs[:batch_size])
             rest = rest + docs[batch_size:]
-            ns = entry["ns"]
             if rest:
                 entry["docs"] = rest
+                entry["last_used"] = now
                 live_id = cursor_id
             else:
                 del self._cursors[cursor_id]
                 live_id = 0
         return {"id": live_id, "ns": ns, "nextBatch": batch}
 
-    def _kill_data_cursors(self, cursor_ids: list[int]) -> list[int]:
+    def _kill_data_cursors(
+        self, cursor_ids: list[int], expected_ns: str | None = None
+    ) -> list[int]:
         """Remove data cursors by ID and return the removed identifiers.
 
         Args:
             cursor_ids: List of numeric data cursor IDs to close.
+            expected_ns: Optional namespace filter; when provided, cursors
+                belonging to another namespace are not removed.
 
         Returns:
             list[int]: Subset of ``cursor_ids`` that existed and were removed.
         """
         killed = []
         with self._cursors_lock:
+            self._expire_cursors_locked()
             for cid in cursor_ids:
-                if cid in self._cursors:
+                entry = self._cursors.get(cid)
+                if entry is not None and (
+                    expected_ns is None or entry.get("ns") == expected_ns
+                ):
                     del self._cursors[cid]
                     killed.append(cid)
         return killed
@@ -827,6 +1134,108 @@ class NeoSQLiteHandler:
                 if sid == session_id and sess.in_transaction
             ]
 
+    def _tx_session_entries(
+        self, session_id: str
+    ) -> list[tuple[tuple[str, str], Any, Connection | None]]:
+        """Return ``(key, session, tx_conn)`` for active transactions."""
+        with self._sessions_lock:
+            return [
+                (key, sess, self._session_tx_conns.get(key))
+                for key, sess in self._sessions.items()
+                if key[0] == session_id and sess.in_transaction
+            ]
+
+    @staticmethod
+    def _session_last_used_key(item: tuple[tuple[str, str], float]) -> float:
+        """Return sort key for session eviction by ``last_used`` timestamp."""
+        return item[1]
+
+    def _expire_sessions(self) -> None:
+        """Expire idle sessions past ``_session_timeout_seconds`` and cap count."""
+        now = time.monotonic()
+        cutoff = now - self._session_timeout_seconds
+        expired: list[tuple[tuple[str, str], Any, Connection | None]] = []
+        with self._sessions_lock:
+            expired_keys = [
+                key
+                for key in list(self._sessions)
+                if self._session_last_used.get(key, now) < cutoff
+            ]
+            for key in expired_keys:
+                sess = self._sessions.pop(key, None)
+                self._session_last_used.pop(key, None)
+                tx_conn = self._session_tx_conns.pop(key, None)
+                if sess is not None or tx_conn is not None:
+                    expired.append((key, sess, tx_conn))
+            if len(self._sessions) > _MAX_SESSIONS:
+                idle_ages = sorted(
+                    (
+                        (key, self._session_last_used.get(key, 0.0))
+                        for key, sess in self._sessions.items()
+                        if not sess.in_transaction
+                    ),
+                    key=self._session_last_used_key,
+                )
+                excess = len(self._sessions) - _MAX_SESSIONS
+                for key, _ts in idle_ages[:excess]:
+                    sess = self._sessions.pop(key, None)
+                    self._session_last_used.pop(key, None)
+                    tx_conn = self._session_tx_conns.pop(key, None)
+                    if sess is not None or tx_conn is not None:
+                        expired.append((key, sess, tx_conn))
+            if expired:
+                self._tx_cond.notify_all()
+        for key, sess, tx_conn in expired:
+            sid, scope = key
+            lock = (
+                self._lock_for_session(sid)
+                if tx_conn is not None
+                else self._lock_for(scope or "admin")
+            )
+            with lock:
+                if sess is not None:
+                    try:
+                        sess.end_session()
+                    except Exception:
+                        pass
+                if tx_conn is not None:
+                    try:
+                        tx_conn.close()
+                    except Exception:
+                        pass
+
+    def _uses_shared_memory_tx(self) -> bool:
+        """Return whether transactions share an in-memory SQLite cache."""
+        return self._mode == "memory" or self._single_mem_uri is not None
+
+    def _wait_for_active_memory_tx(
+        self, scope: str, exclude_session_id: str | None = None
+    ) -> None:
+        """Wait briefly for an active shared-memory tx from another client.
+
+        In SQLite shared-cache memory mode, ``SQLITE_LOCKED`` does not honor
+        ``busy_timeout``. Waiting briefly on ``_tx_cond`` lets multi-threaded
+        clients serialize cleanly once the active transaction finishes while
+        still bounding wait time so single-threaded callers never deadlock.
+        """
+        if not self._uses_shared_memory_tx():
+            return
+        deadline = time.monotonic() + min(self._tx_timeout_seconds, 0.25)
+        with self._sessions_lock:
+            while True:
+                has_other_tx = any(
+                    key[1] == scope
+                    and key[0] != exclude_session_id
+                    and (sess.in_transaction or key in self._session_tx_conns)
+                    for key, sess in self._sessions.items()
+                )
+                if not has_other_tx:
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                self._tx_cond.wait(timeout=remaining)
+
     def _apply_write_concern(
         self, db: Connection, db_name: str, write_concern: Any
     ) -> None:
@@ -845,13 +1254,24 @@ class NeoSQLiteHandler:
         if not isinstance(write_concern, dict) or not write_concern:
             return
         key = repr(sorted(write_concern.items()))
+        is_main = False
         with self._dict_lock:
-            if self._applied_wc.get(db_name) == key:
-                return
-            self._applied_wc[db_name] = key
+            main_conn = (
+                self.conn
+                if self._mode == "single"
+                else self._conns.get(db_name)
+            )
+            if db is main_conn:
+                is_main = True
+                if self._applied_wc.get(db_name) == key:
+                    return
+                self._applied_wc[db_name] = key
         try:
             db._apply_write_concern(write_concern)
         except Exception as exc:
+            if is_main:
+                with self._dict_lock:
+                    self._applied_wc.pop(db_name, None)
             logger.debug("writeConcern apply skipped: %s", exc)
 
     def _find_session(self, session_id: str, db_name: str) -> Any | None:
@@ -867,17 +1287,20 @@ class NeoSQLiteHandler:
         Returns:
             Any | None: Matching session object, or ``None`` if absent.
         """
+        self._expire_sessions()
         scope = self._session_scope(db_name)
         with self._sessions_lock:
             session = self._sessions.get((session_id, scope))
             if session is not None:
+                self._session_last_used[(session_id, scope)] = time.monotonic()
                 return session
             if self._mode == "single":
                 # Legacy compat: one connection backs every db, so any
                 # session works anywhere. Isolated modes stay strict so an
                 # lsid can never touch another database's file.
-                for (sid, _db), sess in self._sessions.items():
+                for (sid, sc), sess in self._sessions.items():
                     if sid == session_id:
+                        self._session_last_used[(sid, sc)] = time.monotonic()
                         return sess
             return None
 
@@ -911,6 +1334,110 @@ class NeoSQLiteHandler:
                     f"operation targets {scope!r}"
                 )
 
+    def _resolve_db_and_session(
+        self,
+        command_doc: dict[str, Any],
+        db: Connection | None = None,
+        db_name: str = "test",
+    ) -> tuple[Connection, Any | None]:
+        """Resolve the active ``(Connection, ClientSession | None)`` pair.
+
+        When ``startTransaction`` is set on a command, opens a dedicated
+        ``neosqlite.Connection`` for that session so its transaction is
+        isolated from non-transactional reads and writes on the main
+        connection. Subsequent commands carrying the same ``lsid`` while the
+        transaction is open are routed to that dedicated connection.
+
+        Args:
+            command_doc: Parsed command body dictionary.
+            db: Main ``Connection`` for ``db_name`` (falls back to
+                ``self.conn``).
+            db_name: Logical database name for session scoping.
+
+        Returns:
+            tuple[Connection, Any | None]: Target ``Connection`` to execute on
+                and the bound ``ClientSession`` (or ``None`` if no ``lsid``).
+        """
+        self._expire_sessions()
+        base_db = db if db is not None else self.conn
+        scope = self._session_scope(db_name)
+        lsid = command_doc.get("lsid")
+        session_id = _extract_session_id(lsid) if lsid else None
+        if not session_id:
+            self._wait_for_active_memory_tx(scope)
+            return base_db, None
+
+        now = time.monotonic()
+        key = (session_id, scope)
+        need_new_tx = False
+        old_idle_session: Any | None = None
+
+        with self._sessions_lock:
+            self._reject_cross_db_tx(session_id, scope)
+            existing = self._sessions.get(key)
+            if command_doc.get("startTransaction"):
+                if existing is not None and existing.in_transaction:
+                    self._session_last_used[key] = now
+                    tx_conn = self._session_tx_conns.get(key)
+                    return (
+                        tx_conn if tx_conn is not None else base_db,
+                        existing,
+                    )
+                need_new_tx = True
+            else:
+                if existing is not None and existing.in_transaction:
+                    self._session_last_used[key] = now
+                    tx_conn = self._session_tx_conns.get(key)
+                    return (
+                        tx_conn if tx_conn is not None else base_db,
+                        existing,
+                    )
+                if existing is None or getattr(existing, "has_ended", False):
+                    existing = base_db.start_session()
+                    self._sessions[key] = existing
+                self._session_last_used[key] = now
+
+        if not need_new_tx:
+            self._wait_for_active_memory_tx(
+                scope, exclude_session_id=session_id
+            )
+            return base_db, existing
+
+        # Open a dedicated Connection for this transaction outside _sessions_lock
+        # so opening SQLite files or waiting on BEGIN IMMEDIATE never blocks
+        # unrelated session lookups.
+        self._wait_for_active_memory_tx(scope, exclude_session_id=session_id)
+        tx_conn = self._open_tx_conn(db_name)
+        try:
+            tx_session = tx_conn.start_session()
+            tx_session.start_transaction()
+        except Exception:
+            try:
+                tx_conn.close()
+            except Exception:
+                pass
+            raise
+
+        with self._sessions_lock:
+            old_idle_session = self._sessions.get(key)
+            old_tx_conn = self._session_tx_conns.pop(key, None)
+            self._sessions[key] = tx_session
+            self._session_tx_conns[key] = tx_conn
+            self._session_last_used[key] = time.monotonic()
+
+        if old_idle_session is not None and old_idle_session is not tx_session:
+            try:
+                old_idle_session.end_session()
+            except Exception:
+                pass
+        if old_tx_conn is not None and old_tx_conn is not tx_conn:
+            try:
+                old_tx_conn.close()
+            except Exception:
+                pass
+
+        return tx_conn, tx_session
+
     def _get_or_create_session(
         self,
         command_doc: dict[str, Any],
@@ -918,10 +1445,6 @@ class NeoSQLiteHandler:
         db_name: str = "test",
     ) -> Any | None:
         """Get or create a session from ``command_doc`` if ``lsid`` is set.
-
-        Sessions are scoped to one logical database because SQLite files
-        cannot share a transaction. Starts a transaction on the session when
-        ``startTransaction`` is truthy and none is active yet.
 
         Args:
             command_doc: Parsed command body dictionary.
@@ -933,28 +1456,23 @@ class NeoSQLiteHandler:
             Any | None: Session object for ``lsid``, or ``None`` if ``lsid``
                 is missing or yields no session ID.
         """
-        lsid = command_doc.get("lsid")
-        if not lsid:
-            return None
-        session_id = _extract_session_id(lsid)
-        if not session_id:
-            return None
-        with self._sessions_lock:
-            scope = self._session_scope(db_name)
-            self._reject_cross_db_tx(session_id, scope)
-            key = (session_id, scope)
-            if key not in self._sessions:
-                owner = db if db is not None else self.conn
-                session = owner.start_session()
-                session._in_transaction = False
-                self._sessions[key] = session
-            session_to_use = self._sessions[key]
-            if (
-                command_doc.get("startTransaction")
-                and not session_to_use.in_transaction
-            ):
-                session_to_use.start_transaction()
-            return session_to_use
+        _resolved_db, session = self._resolve_db_and_session(
+            command_doc, db, db_name
+        )
+        return session
+
+    def try_acquire_connection(self) -> bool:
+        """Reserve a client connection slot if under ``_max_connections``.
+
+        Returns:
+            bool: ``True`` if a slot was acquired, ``False`` if the server has
+                reached its connection limit.
+        """
+        with self._connections_lock:
+            if self._active_connections >= self._max_connections:
+                return False
+            self._active_connections += 1
+            return True
 
     def increment_connections(self) -> None:
         """Increment the active connections counter."""
@@ -964,7 +1482,8 @@ class NeoSQLiteHandler:
     def decrement_connections(self) -> None:
         """Decrement the active connections counter."""
         with self._connections_lock:
-            self._active_connections -= 1
+            if self._active_connections > 0:
+                self._active_connections -= 1
 
     def _is_gridfs_collection(self, coll_name: str) -> bool:
         """Check whether ``coll_name`` refers to a GridFS collection.
@@ -1099,8 +1618,11 @@ class NeoSQLiteHandler:
         db = self.get_database(db_name)
 
         # Session/tx resolution happens first so a cross-DB violation
-        # errors before any table gets created as a side effect.
-        session_to_use = self._get_or_create_session(command_doc, db, db_name)
+        # errors before any table gets created as a side effect, and
+        # transactional writes execute on the session's isolated Connection.
+        db, session_to_use = self._resolve_db_and_session(
+            command_doc, db, db_name
+        )
 
         coll_name = command_doc.get("insert")
         if not coll_name:
@@ -1266,12 +1788,13 @@ class NeoSQLiteHandler:
                 }
 
         if "startSession" in command_doc:
+            self._expire_sessions()
             session_id = f"session_{uuid.uuid4().hex}"
             session = db.start_session()
+            session_key = (session_id, self._session_scope(db_name))
             with self._sessions_lock:
-                self._sessions[(session_id, self._session_scope(db_name))] = (
-                    session
-                )
+                self._sessions[session_key] = session
+                self._session_last_used[session_key] = time.monotonic()
             return request_id, {
                 "ok": 1,
                 "session": {"id": {"$oid": session_id}},
@@ -1280,36 +1803,26 @@ class NeoSQLiteHandler:
         if "commitTransaction" in command_doc:
             lsid = command_doc.get("lsid")
             tx_session_id = _extract_session_id(lsid) if lsid else None
-            if tx_session_id:
-                # commitTransaction is routed to admin.$cmd by drivers while
-                # the transaction lives on the data database, so resolve
-                # across scopes and finish every open transaction for the
-                # lsid (single-file transactions only; cross-db atomicity
-                # is unsupported).
-                acted = False
-                for sess in self._tx_sessions(tx_session_id):
-                    sess.commit_transaction()
-                    acted = True
-                if acted:
-                    return request_id, {"ok": 1}
+            if tx_session_id and self._finish_transaction(
+                tx_session_id, commit=True
+            ):
+                return request_id, {"ok": 1}
             return request_id, {"ok": 0, "errmsg": "No session specified"}
 
         if "abortTransaction" in command_doc:
             lsid = command_doc.get("lsid")
             tx_session_id = _extract_session_id(lsid) if lsid else None
-            if tx_session_id:
-                acted = False
-                for sess in self._tx_sessions(tx_session_id):
-                    sess.abort_transaction()
-                    acted = True
-                if acted:
-                    return request_id, {"ok": 1}
+            if tx_session_id and self._finish_transaction(
+                tx_session_id, commit=False
+            ):
+                return request_id, {"ok": 1}
             return request_id, {"ok": 0, "errmsg": "No session specified"}
 
         if "endSessions" in command_doc:
             session_ids = command_doc.get("endSessions", [])
             if isinstance(session_ids, str):
                 session_ids = [session_ids]
+            to_close: list[tuple[tuple[str, str], Any, Connection | None]] = []
             with self._sessions_lock:
                 for sid in session_ids:
                     if isinstance(sid, dict):
@@ -1323,11 +1836,32 @@ class NeoSQLiteHandler:
                             if existing[0] == sid
                         ]:
                             end_session = self._sessions.pop(sess_key, None)
-                            if end_session:
-                                try:
-                                    end_session.end_session()
-                                except Exception:
-                                    pass
+                            self._session_last_used.pop(sess_key, None)
+                            tx_conn = self._session_tx_conns.pop(sess_key, None)
+                            if end_session is not None or tx_conn is not None:
+                                to_close.append(
+                                    (sess_key, end_session, tx_conn)
+                                )
+                if to_close:
+                    self._tx_cond.notify_all()
+            for sess_key, end_session, tx_conn in to_close:
+                sid, scope = sess_key
+                lock = (
+                    self._lock_for_session(sid)
+                    if tx_conn is not None
+                    else self._lock_for(scope or "admin")
+                )
+                with lock:
+                    if end_session is not None:
+                        try:
+                            end_session.end_session()
+                        except Exception:
+                            pass
+                    if tx_conn is not None:
+                        try:
+                            tx_conn.close()
+                        except Exception:
+                            pass
             return request_id, {"ok": 1}
 
         # Explicit cross-DB transaction rejection: a session (lsid) with
@@ -1410,8 +1944,9 @@ class NeoSQLiteHandler:
                 self._change_stream_manager.invalidate(dropped_name)
                 self.conn.drop_database()
                 with self._dict_lock:
-                    self.databases = {"admin": self.conn}
+                    self.databases = OrderedDict([("admin", self.conn)])
                     self._conns = OrderedDict([("admin", self.conn)])
+                    self._applied_wc.clear()
             else:
                 try:
                     _sanitize_db_name(dropped_name)
@@ -1420,7 +1955,14 @@ class NeoSQLiteHandler:
                         "ok": 0,
                         "errmsg": f"Invalid database name: {dropped_name!r}",
                     }
-                self._drop_file_db(dropped_name)
+                if dropped_name != db_name:
+                    with (
+                        self._lock_for(dropped_name),
+                        self._track_active_op(dropped_name),
+                    ):
+                        self._drop_file_db(dropped_name)
+                else:
+                    self._drop_file_db(dropped_name)
             return request_id, {"dropped": dropped_name, "ok": 1}
 
         if "renameCollection" in cmd_copy:
@@ -1680,10 +2222,10 @@ class NeoSQLiteHandler:
             elif isinstance(sort_val, list):
                 sort_tuples = sort_val
 
-            coll = db[coll_name]
-            session_to_use = self._get_or_create_session(
+            db, session_to_use = self._resolve_db_and_session(
                 command_doc, db, db_name
             )
+            coll = db[coll_name]
             self._apply_write_concern(db, db_name, cmd_copy.get("writeConcern"))
 
             if remove:
@@ -1760,10 +2302,10 @@ class NeoSQLiteHandler:
                     "nModified": total_n_modified,
                 }
 
-            coll = db[coll_name]
-            session_to_use = self._get_or_create_session(
+            db, session_to_use = self._resolve_db_and_session(
                 command_doc, db, db_name
             )
+            coll = db[coll_name]
             self._apply_write_concern(db, db_name, cmd_copy.get("writeConcern"))
             ordered = cmd_copy.get("ordered", True)
             matched = 0
@@ -1842,6 +2384,10 @@ class NeoSQLiteHandler:
                     request_id, cmd_copy, db, coll_name, db_name
                 )
 
+            db, session_to_use = self._resolve_db_and_session(
+                command_doc, db, db_name
+            )
+
             try:
                 collection_exists = coll_name in db.list_collection_names()
             except Exception:
@@ -1858,9 +2404,6 @@ class NeoSQLiteHandler:
                 }
 
             coll = db[coll_name]
-            session_to_use = self._get_or_create_session(
-                command_doc, db, db_name
-            )
             cursor = (
                 coll.find(filter_query, projection, session=session_to_use)
                 if projection
@@ -1930,13 +2473,16 @@ class NeoSQLiteHandler:
                     if limit:
                         docs = docs[: int(limit)]
                     return request_id, {"ok": 1, "n": len(docs)}
+                db, session_to_use = self._resolve_db_and_session(
+                    command_doc, db, db_name
+                )
                 coll = db[coll_name]
                 if limit is None and skip is None:
-                    count = coll.count_documents(query)
+                    count = coll.count_documents(query, session=session_to_use)
                 else:
                     # count with limit/skip (legacy count command): apply
                     # pagination over the match set.
-                    cursor = coll.find(query)
+                    cursor = coll.find(query, session=session_to_use)
                     if skip:
                         cursor = cursor.skip(int(skip))
                     if limit:
@@ -1956,8 +2502,11 @@ class NeoSQLiteHandler:
                     return self._handle_gridfs_distinct(
                         request_id, coll_name, key, query, db
                     )
+                db, session_to_use = self._resolve_db_and_session(
+                    command_doc, db, db_name
+                )
                 coll = db[coll_name]
-                values = coll.distinct(key, query)
+                values = coll.distinct(key, query, session=session_to_use)
                 return request_id, {"ok": 1, "values": values}
             except Exception as e:
                 logger.error(f"Error in distinct: {e}")
@@ -1993,8 +2542,11 @@ class NeoSQLiteHandler:
                         owner=msg.get("_conn_id"),
                     )
 
+                db, session_to_use = self._resolve_db_and_session(
+                    command_doc, db, db_name
+                )
                 coll = db[coll_name]
-                cursor = coll.aggregate(pipeline)  # type: ignore[assignment]
+                cursor = coll.aggregate(pipeline, session=session_to_use)  # type: ignore[assignment]
                 docs = cursor.to_list()
                 first, cursor_id = self._split_first_batch(
                     docs,
@@ -2043,13 +2595,15 @@ class NeoSQLiteHandler:
                         size_on_disk = 0
                         is_empty = True
                 total_size = size_on_disk
+                with self._dict_lock:
+                    single_db_names = list(self.databases)
                 databases_info = [
                     {
                         "name": name,
                         "sizeOnDisk": size_on_disk,
                         "empty": is_empty,
                     }
-                    for name in self.databases
+                    for name in single_db_names
                 ]
                 return request_id, {
                     "ok": 1,
@@ -2058,7 +2612,8 @@ class NeoSQLiteHandler:
                 }
             databases_info = []
             total_size = 0
-            names: set[str] = set(self._conns.keys())
+            with self._dict_lock:
+                names: set[str] = set(self._conns.keys())
             if self._mode == "files" and self._data_dir is not None:
                 try:
                     for entry in os.listdir(self._data_dir):
@@ -2072,20 +2627,25 @@ class NeoSQLiteHandler:
                     pass
             for name in sorted(names):
                 try:
-                    db_conn = self.get_database(name)
+                    _sanitize_db_name(name)
                 except ValueError:
                     continue
-                try:
-                    empty = not db_conn.list_collection_names()
-                except Exception:
-                    empty = True
-                if self._mode == "memory":
-                    size_on_disk = 0
-                else:
+                with self._lock_for(name), self._track_active_op(name):
                     try:
-                        size_on_disk = os.path.getsize(self._db_file(name))
-                    except OSError:
+                        db_conn = self.get_database(name)
+                    except ValueError:
+                        continue
+                    try:
+                        empty = not db_conn.list_collection_names()
+                    except Exception:
+                        empty = True
+                    if self._mode == "memory":
                         size_on_disk = 0
+                    else:
+                        try:
+                            size_on_disk = os.path.getsize(self._db_file(name))
+                        except OSError:
+                            size_on_disk = 0
                 total_size += size_on_disk
                 databases_info.append(
                     {
@@ -2193,8 +2753,22 @@ class NeoSQLiteHandler:
             raw_id = cmd_copy.get("getMore")
             cursor_id = int(raw_id) if raw_id is not None else 0
             coll_name = cmd_copy.get("collection")
+            expected_ns = f"{db_name}.{coll_name}"
             stream = self._change_stream_manager.get_stream(cursor_id)
             if stream:
+                if (
+                    stream.db_name != db_name
+                    or stream.collection_name != coll_name
+                ):
+                    return request_id, {
+                        "ok": 0,
+                        "code": 43,
+                        "codeName": "CursorNotFound",
+                        "errmsg": (
+                            f"cursor id {cursor_id} not found for "
+                            f"namespace {expected_ns}"
+                        ),
+                    }
                 next_batch, token = self._change_stream_manager.pull_stream(
                     stream, self._first_batch_size(cmd_copy)
                 )
@@ -2202,27 +2776,45 @@ class NeoSQLiteHandler:
                     "ok": 1,
                     "cursor": {
                         "id": stream._id,
-                        "ns": f"{db_name}.{coll_name}",
+                        "ns": expected_ns,
                         "nextBatch": next_batch,
                         "postBatchResumeToken": token,
                     },
                 }
             data = self._getmore_data(
-                cursor_id, self._first_batch_size(cmd_copy)
+                cursor_id,
+                self._first_batch_size(cmd_copy),
+                expected_ns=expected_ns,
             )
             if data is not None:
+                if data.get("_ns_mismatch"):
+                    return request_id, {
+                        "ok": 0,
+                        "code": 43,
+                        "codeName": "CursorNotFound",
+                        "errmsg": (
+                            f"cursor id {cursor_id} not found for "
+                            f"namespace {expected_ns}"
+                        ),
+                    }
                 return request_id, {"ok": 1, "cursor": data}
             else:
                 return request_id, {
                     "ok": 1,
                     "cursor": {
                         "id": 0,
-                        "ns": f"{db_name}.{coll_name}",
+                        "ns": expected_ns,
                         "nextBatch": [],
                     },
                 }
 
         if "killCursors" in cmd_copy:
+            kill_coll = cmd_copy.get("killCursors")
+            kill_expected_ns = (
+                f"{db_name}.{kill_coll}"
+                if isinstance(kill_coll, str) and kill_coll
+                else None
+            )
             cursor_ids = cmd_copy.get("cursors", [])
             cursors_killed = []
             cursors_not_found = []
@@ -2233,15 +2825,28 @@ class NeoSQLiteHandler:
                 except (TypeError, ValueError):
                     cursors_not_found.append(raw_cid)
                     continue
-                if self._change_stream_manager.get_stream(cid) is not None:
-                    self._change_stream_manager.close_stream(cid)
-                    cursors_killed.append(cid)
+                stream = self._change_stream_manager.get_stream(cid)
+                if stream is not None:
+                    if stream.db_name == db_name and (
+                        not isinstance(kill_coll, str)
+                        or not kill_coll
+                        or stream.collection_name == kill_coll
+                    ):
+                        self._change_stream_manager.close_stream(cid)
+                        cursors_killed.append(cid)
+                    else:
+                        cursors_not_found.append(cid)
                 else:
                     data_ids.append(cid)
             if data_ids:
                 with self._cursors_lock:
+                    self._expire_cursors_locked()
                     for cid in data_ids:
-                        if cid in self._cursors:
+                        cursor_entry = self._cursors.get(cid)
+                        if cursor_entry is not None and (
+                            kill_expected_ns is None
+                            or cursor_entry.get("ns") == kill_expected_ns
+                        ):
                             del self._cursors[cid]
                             cursors_killed.append(cid)
                         else:
@@ -2861,14 +3466,87 @@ class NeoSQLiteHandler:
             logger.error(f"GridFS download error: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
 
+    def _finish_transaction(self, session_id: str, *, commit: bool) -> bool:
+        """Commit or abort all active transactions for ``session_id``.
+
+        Acquires each transaction's session lock (for dedicated transactional
+        connections) or target database lock (for direct fallback sessions),
+        closes dedicated transactional connections, cleans up session entries,
+        and wakes any memory-mode waiters.
+
+        Args:
+            session_id: Extracted logical session ID string.
+            commit: ``True`` to commit, ``False`` to abort.
+
+        Returns:
+            bool: ``True`` if at least one active transaction was finished.
+        """
+        entries = self._tx_session_entries(session_id)
+        if not entries:
+            return False
+        acted = False
+        for key, sess, tx_conn in entries:
+            sid, scope = key
+            lock = (
+                self._lock_for_session(sid)
+                if tx_conn is not None
+                else self._lock_for(scope or "admin")
+            )
+            with lock:
+                try:
+                    if commit:
+                        sess.commit_transaction()
+                    else:
+                        sess.abort_transaction()
+                    acted = True
+                finally:
+                    if tx_conn is not None:
+                        try:
+                            sess.end_session()
+                        except Exception:
+                            pass
+                        try:
+                            tx_conn.close()
+                        except Exception:
+                            pass
+                        with self._sessions_lock:
+                            if self._session_tx_conns.get(key) is tx_conn:
+                                self._session_tx_conns.pop(key, None)
+                            if self._sessions.get(key) is sess:
+                                self._sessions.pop(key, None)
+                                self._session_last_used.pop(key, None)
+                            self._tx_cond.notify_all()
+                    else:
+                        with self._sessions_lock:
+                            self._tx_cond.notify_all()
+        return acted
+
+    @contextlib.contextmanager
+    def _target_op_lock(
+        self, target_db_name: str, command_doc: dict[str, Any]
+    ) -> Iterator[None]:
+        """Acquire the per-db or per-session lock for a cross-DB op."""
+        lsid = command_doc.get("lsid")
+        sid = _extract_session_id(lsid) if isinstance(lsid, dict) else None
+        starts_tx = bool(command_doc.get("startTransaction"))
+        if sid and (
+            starts_tx or self._session_has_dedicated_tx(sid, target_db_name)
+        ):
+            lock = self._lock_for_session(sid)
+        else:
+            lock = self._lock_for(target_db_name)
+        with lock, self._track_active_op(target_db_name):
+            yield
+
     def _handle_bulk_write(
         self, request_id: int, cmd: dict, command_doc: dict
     ) -> tuple[int, dict[str, Any]]:
         """Handle the client-level ``bulkWrite`` command (MongoDB 8.0+).
 
-        Fans each op out to the target namespace's collection. Ops may span
-        databases; each runs under its own database session (cross-file
-        atomicity is unsupported and documented).
+        Fans each op out to the target namespace's collection under that
+        target database's lock. Ops may span databases; each runs under its
+        own database session (cross-file atomicity is unsupported and
+        documented).
 
         Args:
             request_id: Wire-protocol request identifier.
@@ -2906,14 +3584,16 @@ class NeoSQLiteHandler:
                     ns_idx = int(op["insert"])
                     doc = self._convert_objectids(op.get("document", {}))
                     ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
-                    target = self.get_database(ns_db or "test")
-                    sess = self._get_or_create_session(
-                        command_doc, target, ns_db or "test"
-                    )
-                    self._apply_write_concern(
-                        target, ns_db or "test", cmd.get("writeConcern")
-                    )
-                    target[ns_coll].insert_one(doc, session=sess)
+                    target_db_name = ns_db or "test"
+                    with self._target_op_lock(target_db_name, command_doc):
+                        target = self.get_database(target_db_name)
+                        target, sess = self._resolve_db_and_session(
+                            command_doc, target, target_db_name
+                        )
+                        self._apply_write_concern(
+                            target, target_db_name, cmd.get("writeConcern")
+                        )
+                        target[ns_coll].insert_one(doc, session=sess)
                     n_inserted += 1
                     if not errors_only:
                         results.append({"ok": 1, "idx": idx, "n": 1})
@@ -2925,35 +3605,39 @@ class NeoSQLiteHandler:
                     upsert = bool(op.get("upsert", False))
                     array_filters = op.get("arrayFilters")
                     ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
-                    target = self.get_database(ns_db or "test")
-                    sess = self._get_or_create_session(
-                        command_doc, target, ns_db or "test"
-                    )
-                    self._apply_write_concern(
-                        target, ns_db or "test", cmd.get("writeConcern")
-                    )
-                    coll = target[ns_coll]
-                    is_replace = not any(k.startswith("$") for k in mods.keys())
-                    if is_replace:
-                        res = coll.replace_one(
-                            filt, mods, upsert=upsert, session=sess
+                    target_db_name = ns_db or "test"
+                    with self._target_op_lock(target_db_name, command_doc):
+                        target = self.get_database(target_db_name)
+                        target, sess = self._resolve_db_and_session(
+                            command_doc, target, target_db_name
                         )
-                    elif multi:
-                        res = coll.update_many(
-                            filt,
-                            mods,
-                            upsert=upsert,
-                            array_filters=array_filters,
-                            session=sess,
+                        self._apply_write_concern(
+                            target, target_db_name, cmd.get("writeConcern")
                         )
-                    else:
-                        res = coll.update_one(
-                            filt,
-                            mods,
-                            upsert=upsert,
-                            array_filters=array_filters,
-                            session=sess,
+                        coll = target[ns_coll]
+                        is_replace = not any(
+                            k.startswith("$") for k in mods.keys()
                         )
+                        if is_replace:
+                            res = coll.replace_one(
+                                filt, mods, upsert=upsert, session=sess
+                            )
+                        elif multi:
+                            res = coll.update_many(
+                                filt,
+                                mods,
+                                upsert=upsert,
+                                array_filters=array_filters,
+                                session=sess,
+                            )
+                        else:
+                            res = coll.update_one(
+                                filt,
+                                mods,
+                                upsert=upsert,
+                                array_filters=array_filters,
+                                session=sess,
+                            )
                     n_matched += res.matched_count
                     n_modified += res.modified_count
                     if res.upserted_id is not None:
@@ -2974,18 +3658,20 @@ class NeoSQLiteHandler:
                     filt = self._convert_objectids(op.get("filter", {}))
                     multi = bool(op.get("multi", False))
                     ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
-                    target = self.get_database(ns_db or "test")
-                    sess = self._get_or_create_session(
-                        command_doc, target, ns_db or "test"
-                    )
-                    self._apply_write_concern(
-                        target, ns_db or "test", cmd.get("writeConcern")
-                    )
-                    coll = target[ns_coll]
-                    if multi:
-                        del_res = coll.delete_many(filt, session=sess)
-                    else:
-                        del_res = coll.delete_one(filt, session=sess)
+                    target_db_name = ns_db or "test"
+                    with self._target_op_lock(target_db_name, command_doc):
+                        target = self.get_database(target_db_name)
+                        target, sess = self._resolve_db_and_session(
+                            command_doc, target, target_db_name
+                        )
+                        self._apply_write_concern(
+                            target, target_db_name, cmd.get("writeConcern")
+                        )
+                        coll = target[ns_coll]
+                        if multi:
+                            del_res = coll.delete_many(filt, session=sess)
+                        else:
+                            del_res = coll.delete_one(filt, session=sess)
                     n_deleted += del_res.deleted_count
                     if not errors_only:
                         results.append(
@@ -3066,8 +3752,10 @@ class NeoSQLiteHandler:
         if not coll_name:
             return request_id, {"ok": 0, "errmsg": "No collection specified"}
 
+        db, session_to_use = self._resolve_db_and_session(
+            command_doc, db, db_name
+        )
         coll = db[coll_name]
-        session_to_use = self._get_or_create_session(command_doc, db, db_name)
         self._apply_write_concern(db, db_name, command_doc.get("writeConcern"))
         deletes = command_doc.get("deletes", [])
         ordered = command_doc.get("ordered", True)
@@ -3127,6 +3815,10 @@ class NeoSQLiteHandler:
         """
         try:
             options = extract_change_stream_options(pipeline)
+
+            def _get_watched_collection() -> Any:
+                return db[coll_name]
+
             stream = self._change_stream_manager.create_stream(
                 collection_name=coll_name,
                 pipeline=pipeline,
@@ -3136,7 +3828,7 @@ class NeoSQLiteHandler:
                 db_name=db_name,
                 owner=owner,
                 start_after=options.get("start_after"),
-                get_collection=lambda: db[coll_name],
+                get_collection=_get_watched_collection,
             )
 
             # Return empty batch initially - change streams start empty
@@ -3165,7 +3857,9 @@ class NeoSQLiteHandler:
         """
         if conn_id is None:
             return
-        self._change_stream_manager.close_streams_for_owner(conn_id)
+        self._change_stream_manager.close_streams_for_owner(
+            conn_id, lock_for=self._lock_for
+        )
         self.close_cursors_for_owner(conn_id)
 
     def _handle_server_status(
@@ -3243,7 +3937,9 @@ class NeoSQLiteHandler:
             },
             "connections": {
                 "current": current_connections,
-                "available": DEFAULT_MAX_CONNECTIONS,
+                "available": max(
+                    0, self._max_connections - current_connections
+                ),
             },
             "mem": {
                 "bits": 64,

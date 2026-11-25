@@ -16,20 +16,22 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
-from itertools import count
 from typing import Any
 
 logger = logging.getLogger("nx_27017")
 
-# Counter for wire cursor IDs (data cursors live at 10**12+, see handler).
-_cursor_id_counter = count(1000)
-
 # Rows of history retained per collection for resume replay.
 _RESUME_RETENTION_ROWS = 1000
+
+
+def _generate_stream_cursor_id() -> int:
+    """Return a non-zero unpredictable 63-bit cursor identifier."""
+    return secrets.randbits(63) or 1
 
 
 def _wire_token(rowid: int) -> dict[str, str]:
@@ -248,7 +250,7 @@ class ChangeStreamCursor:
         self.full_document = full_document or "default"
         self.db_name = db_name
         self._owner = owner
-        self._id = next(_cursor_id_counter)
+        self._id = _generate_stream_cursor_id()
         self._closed = False
         self._start_time = time.time()
         # Changelog row id already delivered; getMore reads (watermark, +inf).
@@ -462,6 +464,8 @@ class ChangeStreamManager:
             watermark=watermark,
         )
         with self._lock:
+            while stream._id in self._streams:
+                stream._id = _generate_stream_cursor_id()
             self._streams[stream._id] = stream
         return stream
 
@@ -513,12 +517,18 @@ class ChangeStreamManager:
         stream._closed = True
         self._prune(stream.db_name, stream.collection_name)
 
-    def close_streams_for_owner(self, owner: Any) -> None:
+    def close_streams_for_owner(
+        self,
+        owner: Any,
+        lock_for: Callable[[str], Any] | None = None,
+    ) -> None:
         """Close every stream created by the given owner.
 
         Args:
             owner: Owner handle (for example, a client connection) whose
                 streams should be closed and pruned.
+            lock_for: Optional callable returning a context-manager lock for a
+                database name before executing SQLite changelog pruning.
         """
         with self._lock:
             owned = [
@@ -530,7 +540,14 @@ class ChangeStreamManager:
                 del self._streams[stream._id]
         for stream in owned:
             stream._closed = True
-            self._prune(stream.db_name, stream.collection_name)
+            if lock_for is not None:
+                try:
+                    with lock_for(stream.db_name):
+                        self._prune(stream.db_name, stream.collection_name)
+                except ValueError:
+                    pass
+            else:
+                self._prune(stream.db_name, stream.collection_name)
 
     def invalidate(self, db_name: str | None = None) -> None:
         """Drop trigger trackers for a database or for all databases.
