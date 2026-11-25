@@ -234,6 +234,57 @@ def _validate_inc_mul_field_value(
         )
 
 
+def _validate_bit_field_value(field_name: str, field_value: Any) -> None:
+    """Validate that a field value is an integer (or missing) for ``$bit``.
+
+    Args:
+        field_name: Name of the field being validated.
+        field_value: Current field value, or ``None`` if absent.
+
+    Raises:
+        MalformedQueryException: If ``field_value`` is non-None and not a
+            non-boolean ``int``.
+    """
+    if field_value is None:
+        return
+    if isinstance(field_value, bool) or not isinstance(field_value, int):
+        raise MalformedQueryException(
+            f"Cannot apply $bit to a value of non-integral type. "
+            f"Field '{field_name}' has type {type(field_value).__name__} "
+            f"with value {repr(field_value)}"
+        )
+
+
+def _validate_bit_operand(bit_op: Any) -> None:
+    """Validate a ``$bit`` operator payload and integer bitmasks."""
+    if not isinstance(bit_op, dict):
+        raise MalformedQueryException(
+            "$bit operator requires a dict with 'and', 'or', or 'xor'"
+        )
+    for op_name, mask in bit_op.items():
+        if op_name not in ("and", "or", "xor"):
+            raise MalformedQueryException(
+                f"Unsupported $bit sub-operator: '{op_name}'"
+            )
+        if isinstance(mask, bool) or not isinstance(mask, int):
+            raise MalformedQueryException(
+                f"$bit '{op_name}' mask must be an integer, not {type(mask).__name__}"
+            )
+
+
+def _validate_push_spec(push_spec: Any) -> None:
+    """Validate ``$push`` modifiers (``$slice``, ``$position``, ``$sort`` require ``$each``)."""
+    if not isinstance(push_spec, dict):
+        return
+    for field, push_val in push_spec.items():
+        if isinstance(push_val, dict) and "$each" not in push_val:
+            for modifier in ("$slice", "$position", "$sort"):
+                if modifier in push_val:
+                    raise MalformedQueryException(
+                        f"{modifier} modifier in $push for '{field}' requires $each"
+                    )
+
+
 def build_upsert_base_document(filter_doc: dict[str, Any]) -> dict[str, Any]:
     """Extract equality predicates from a query filter for upserts (#101).
 

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..._sqlite import sqlite3
 from ...binary import Binary
+from ...exceptions import MalformedQueryException
 from ...sql_utils import quote_table_name
 from ..json_helpers import (
     neosqlite_json_dumps,
@@ -28,6 +29,8 @@ from .utils import (
     _convert_bytes_to_binary,
     _supports_heap_parser_stack,
     _supports_relative_json_indexing,
+    _validate_bit_operand,
+    _validate_push_spec,
     get_force_fallback,
 )
 
@@ -36,6 +39,34 @@ if TYPE_CHECKING:
     from ..jsonb_support import JSONBContext
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_push_payload(
+    field: str, push_value: Any
+) -> tuple[list[Any], int | None, int | None] | None:
+    """Validate and extract ``$push`` values and ``$position``/``$slice`` modifiers.
+
+    Returns ``None`` when ``$sort`` is present so execution delegates to the
+    Python tier, and raises ``MalformedQueryException`` when ``$slice``,
+    ``$position``, or ``$sort`` appears without ``$each``.
+    """
+    if isinstance(push_value, dict) and "$each" in push_value:
+        if "$sort" in push_value:
+            return None
+        raw_each = push_value["$each"]
+        values_to_push = raw_each if isinstance(raw_each, list) else [raw_each]
+        return (
+            values_to_push,
+            push_value.get("$position"),
+            push_value.get("$slice"),
+        )
+    if isinstance(push_value, dict):
+        for modifier in ("$slice", "$position", "$sort"):
+            if modifier in push_value:
+                raise MalformedQueryException(
+                    f"{modifier} modifier in $push for '{field}' requires $each"
+                )
+    return [push_value], None, None
 
 
 def _contains_binary_value(obj: Any) -> bool:
@@ -636,9 +667,25 @@ class SqlUpdatesMixin:
         if has_positional_operators:
             return False
 
-        # Check for complex $push modifiers
-        # SQL optimization supports $each, $position, and $slice - all handled in SQL tier
-        # No need to check for Python fallback anymore
+        # Check for $push modifiers ($sort falls back to Python; modifiers without $each error)
+        if "$push" in update_spec and isinstance(update_spec["$push"], dict):
+            _validate_push_spec(update_spec["$push"])
+            if any(
+                isinstance(v, dict) and "$sort" in v
+                for v in update_spec["$push"].values()
+            ):
+                return False
+
+        # Validate $bit operands and check existing field types when available
+        if "$bit" in update_spec and isinstance(update_spec["$bit"], dict):
+            for bit_field, bit_op in update_spec["$bit"].items():
+                _validate_bit_operand(bit_op)
+                if original_doc is not None and bit_field in original_doc:
+                    cur_v = original_doc[bit_field]
+                    if cur_v is not None and (
+                        isinstance(cur_v, bool) or not isinstance(cur_v, int)
+                    ):
+                        return False
 
         # Check for $pop operator
         has_pop = "$pop" in update_spec
@@ -976,40 +1023,12 @@ class SqlUpdatesMixin:
                 case "$push":
                     # Tier 2: $push (with $each, optionally with $position and/or $slice) can use SQL
                     for field, push_value in value.items():
-                        # Extract values to push (handle $each)
-                        values_to_push = []
-                        slice_value = None
-                        position_value = None
-                        if (
-                            isinstance(push_value, dict)
-                            and "$each" in push_value
-                        ):
-                            # Check for $slice and $position
-                            if "$slice" in push_value:
-                                slice_value = push_value["$slice"]
-                            if "$position" in push_value:
-                                position_value = push_value["$position"]
-                            values_to_push = push_value["$each"]
-                            if not isinstance(values_to_push, list):
-                                values_to_push = [values_to_push]
-                        else:
-                            values_to_push = [push_value]
-
-                        # Check for $slice without $each
-                        if (
-                            isinstance(push_value, dict)
-                            and "$slice" in push_value
-                            and "$each" not in push_value
-                        ):
-                            slice_value = push_value["$slice"]
-
-                        # Check for $position without $each
-                        if (
-                            isinstance(push_value, dict)
-                            and "$position" in push_value
-                            and "$each" not in push_value
-                        ):
-                            position_value = push_value["$position"]
+                        parsed = _parse_push_payload(field, push_value)
+                        if parsed is None:
+                            raise ValueError(
+                                "$sort in $push requires Python update path"
+                            )
+                        values_to_push, position_value, slice_value = parsed
 
                         json_path = f"'{parse_json_path(field)}'"
 
@@ -1379,41 +1398,10 @@ class SqlUpdatesMixin:
                         return None
                 case "$push":
                     for field, push_value in value.items():
-                        # Handle $each, $position, and $slice
-                        values_to_push = []
-                        slice_value = None
-                        position_value = None
-                        if (
-                            isinstance(push_value, dict)
-                            and "$each" in push_value
-                        ):
-                            # Check for $slice and $position
-                            if "$slice" in push_value:
-                                slice_value = push_value["$slice"]
-                            if "$position" in push_value:
-                                position_value = push_value["$position"]
-                            # SQL optimization supports $each, $position, and $slice
-                            values_to_push = push_value["$each"]
-                            if not isinstance(values_to_push, list):
-                                values_to_push = [values_to_push]
-                        else:
-                            values_to_push = [push_value]
-
-                        # Check for $slice without $each
-                        if (
-                            isinstance(push_value, dict)
-                            and "$slice" in push_value
-                            and "$each" not in push_value
-                        ):
-                            slice_value = push_value["$slice"]
-
-                        # Check for $position without $each
-                        if (
-                            isinstance(push_value, dict)
-                            and "$position" in push_value
-                            and "$each" not in push_value
-                        ):
-                            position_value = push_value["$position"]
+                        parsed = _parse_push_payload(field, push_value)
+                        if parsed is None:
+                            return None
+                        values_to_push, position_value, slice_value = parsed
 
                         json_path = f"'{parse_json_path(field)}'"
 
@@ -1609,38 +1597,10 @@ class SqlUpdatesMixin:
             case "$push":
                 # Optimized $push (with $each, optionally with $position and/or $slice) using [#]
                 for field, push_value in value.items():
-                    # Handle $each, $position, and $slice
-                    values_to_push = []
-                    slice_value = None
-                    position_value = None
-                    if isinstance(push_value, dict) and "$each" in push_value:
-                        # Check for $slice and $position
-                        if "$slice" in push_value:
-                            slice_value = push_value["$slice"]
-                        if "$position" in push_value:
-                            position_value = push_value["$position"]
-                        # SQL optimization supports $each, $position, and $slice
-                        values_to_push = push_value["$each"]
-                        if not isinstance(values_to_push, list):
-                            values_to_push = [values_to_push]
-                    else:
-                        values_to_push = [push_value]
-
-                    # Check for $slice without $each
-                    if (
-                        isinstance(push_value, dict)
-                        and "$slice" in push_value
-                        and "$each" not in push_value
-                    ):
-                        slice_value = push_value["$slice"]
-
-                    # Check for $position without $each
-                    if (
-                        isinstance(push_value, dict)
-                        and "$position" in push_value
-                        and "$each" not in push_value
-                    ):
-                        position_value = push_value["$position"]
+                    parsed = _parse_push_payload(field, push_value)
+                    if parsed is None:
+                        return [], []
+                    values_to_push, position_value, slice_value = parsed
 
                     json_path = f"'{parse_json_path(field)}'"
 
@@ -1843,13 +1803,11 @@ class SqlUpdatesMixin:
         order_by: str = "",
         limit_one: bool = True,
     ) -> bool:
-        """Validate ``$inc``/``$mul`` operands and DB field types via SQL.
+        """Validate ``$inc``/``$mul``/``$bit`` operands and DB field types via SQL.
 
-        Ensures every target field path is non-empty without ``$``, every
-        operand is numeric via ``_is_numeric_value``, and existing database
-        values across the first row (``limit_one=True``) or all matching rows
-        (``limit_one=False``) are missing, ``null``, ``integer``, ``real``,
-        or ``number``.
+        Ensures every target field path is non-empty without ``$``, validates
+        operands, and verifies existing database values are compatible with SQL
+        arithmetic or bitwise operators.
 
         Args:
             where_clause: SQL ``WHERE`` clause string (may be empty).
@@ -1858,13 +1816,14 @@ class SqlUpdatesMixin:
             order_by: Optional SQL ``ORDER BY`` clause used when
                 ``limit_one`` is True.
             limit_one: If True, inspect only the first matching row; if False,
-                verify no matching row has a non-numeric field value.
+                verify no matching row has an incompatible field type.
 
         Returns:
             bool: True if operands and existing DB field types are valid for
-                SQL arithmetic, False otherwise.
+                SQL execution, False otherwise.
         """
-        fields_to_check: list[str] = []
+        num_fields: list[str] = []
+        bit_fields: list[str] = []
         for op in ("$inc", "$mul"):
             op_val = update.get(op)
             if isinstance(op_val, dict):
@@ -1873,21 +1832,27 @@ class SqlUpdatesMixin:
                         return False
                     if not _is_numeric_value(operand):
                         return False
-                    fields_to_check.append(field)
+                    num_fields.append(field)
 
-        if not fields_to_check:
+        bit_val = update.get("$bit")
+        if isinstance(bit_val, dict):
+            for field, bit_op in bit_val.items():
+                if "$" in field or not field:
+                    return False
+                _validate_bit_operand(bit_op)
+                bit_fields.append(field)
+
+        if not num_fields and not bit_fields:
             return True
 
-        bad_preds = [
-            f"(json_type(data, '{parse_json_path(f)}') IS NOT NULL "
-            f"AND json_type(data, '{parse_json_path(f)}') NOT IN ('integer', 'real', 'null'))"
-            for f in fields_to_check
-        ]
         tbl = quote_table_name(self.collection.name)
         if limit_one:
+            all_checks = [
+                (f, ("integer", "real", "null", "number")) for f in num_fields
+            ] + [(f, ("integer", "null")) for f in bit_fields]
             select_exprs = ", ".join(
                 f"json_type(data, '{parse_json_path(f)}')"
-                for f in fields_to_check
+                for f, _ in all_checks
             )
             sql = (
                 f"SELECT {select_exprs} FROM {tbl} "
@@ -1896,15 +1861,24 @@ class SqlUpdatesMixin:
             try:
                 row = self.collection.db.execute(sql, where_params).fetchone()
             except Exception as e:
-                logger.debug(f"SQL $inc/$mul validation failed: {e}")
+                logger.debug(f"SQL $inc/$mul/$bit validation failed: {e}")
                 return False
             if row is None:
                 return True
             return all(
-                ft is None or ft in ("integer", "real", "null", "number")
-                for ft in row
+                ft is None or ft in allowed
+                for ft, (_, allowed) in zip(row, all_checks)
             )
 
+        bad_preds = [
+            f"(json_type(data, '{parse_json_path(f)}') IS NOT NULL "
+            f"AND json_type(data, '{parse_json_path(f)}') NOT IN ('integer', 'real', 'null'))"
+            for f in num_fields
+        ] + [
+            f"(json_type(data, '{parse_json_path(f)}') IS NOT NULL "
+            f"AND json_type(data, '{parse_json_path(f)}') NOT IN ('integer', 'null'))"
+            for f in bit_fields
+        ]
         bad_cond = " OR ".join(bad_preds)
         if where_clause.strip():
             check_where = f"{where_clause} AND ({bad_cond})"
@@ -1917,7 +1891,7 @@ class SqlUpdatesMixin:
             ).fetchone()
             return row is None
         except Exception as e:
-            logger.debug(f"SQL $inc/$mul multi-row validation failed: {e}")
+            logger.debug(f"SQL $inc/$mul/$bit multi-row validation failed: {e}")
             return False
 
     def _build_positional_set_expr(
@@ -2543,8 +2517,7 @@ class SqlUpdatesMixin:
 
                 case "$bit":
                     for field, bit_spec in value.items():
-                        if not isinstance(bit_spec, dict):
-                            return None
+                        _validate_bit_operand(bit_spec)
                         jp = f"'{parse_json_path(field)}'"
 
                         def _bit_body(
@@ -2650,23 +2623,10 @@ class SqlUpdatesMixin:
 
                 case "$push":
                     for field, push_val in value.items():
-                        slice_val = None
-                        pos_val = None
-                        if isinstance(push_val, dict) and "$each" in push_val:
-                            slice_val = push_val.get("$slice")
-                            pos_val = push_val.get("$position")
-                            raw_each = push_val["$each"]
-                            values_to_push = (
-                                raw_each
-                                if isinstance(raw_each, list)
-                                else [raw_each]
-                            )
-                        else:
-                            if isinstance(push_val, dict) and (
-                                "$slice" in push_val or "$position" in push_val
-                            ):
-                                return None
-                            values_to_push = [push_val]
+                        parsed = _parse_push_payload(field, push_val)
+                        if parsed is None:
+                            return None
+                        values_to_push, pos_val, slice_val = parsed
 
                         if pos_val is not None or slice_val is not None:
                             tier = "tier2"

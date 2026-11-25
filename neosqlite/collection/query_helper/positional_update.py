@@ -1,7 +1,247 @@
 """Positional update operations for array elements."""
 
+import operator
 import re
 from typing import Any
+
+from neosqlite.query_operators import (
+    _bson_values_equal,
+    _matches_single_bson_type,
+    _range_element_matches,
+)
+
+from ..type_utils import bson_sort_key
+from .utils import _validate_bit_field_value, _validate_inc_mul_field_value
+
+
+def _is_non_positional_op_supported(op: str) -> bool:
+    return op in {
+        "$set",
+        "$unset",
+        "$inc",
+        "$mul",
+        "$min",
+        "$max",
+        "$currentDate",
+        "$bit",
+    }
+
+
+def _apply_value_op(
+    container: dict[str, Any] | list[Any],
+    key: str | int,
+    exists: bool,
+    current_val: Any,
+    value: Any,
+    op: str,
+    field_path: str,
+) -> None:
+    """Apply an update operator (``$set``, ``$unset``, ``$inc``, etc.) to one slot."""
+    if op in ("$set", "$currentDate"):
+        if isinstance(container, list) and isinstance(key, int):
+            container[key] = value
+        elif isinstance(container, dict) and isinstance(key, str):
+            container[key] = value
+        return
+    if op == "$unset":
+        if isinstance(container, list) and isinstance(key, int):
+            container[key] = None
+        elif isinstance(container, dict) and isinstance(key, str):
+            container.pop(key, None)
+        return
+    if op == "$inc":
+        _validate_inc_mul_field_value(field_path, current_val, "$inc")
+        new_val = (0 if current_val is None else current_val) + value
+    elif op == "$mul":
+        _validate_inc_mul_field_value(field_path, current_val, "$mul")
+        new_val = (0 if current_val is None else current_val) * value
+    elif op == "$min":
+        if (
+            not exists
+            or current_val is None
+            or bson_sort_key(value) < bson_sort_key(current_val)
+        ):
+            new_val = value
+        else:
+            return
+    elif op == "$max":
+        if (
+            not exists
+            or current_val is None
+            or bson_sort_key(value) > bson_sort_key(current_val)
+        ):
+            new_val = value
+        else:
+            return
+    elif op == "$bit":
+        _validate_bit_field_value(field_path, current_val)
+        new_val = 0 if current_val is None else current_val
+        if "and" in value:
+            new_val &= value["and"]
+        if "or" in value:
+            new_val |= value["or"]
+        if "xor" in value:
+            new_val ^= value["xor"]
+    else:
+        return
+
+    if isinstance(container, list) and isinstance(key, int):
+        container[key] = new_val
+    elif isinstance(container, dict) and isinstance(key, str):
+        container[key] = new_val
+
+
+def _apply_nested_field_op(
+    doc: dict[str, Any], field_path: str, value: Any, op: str = "$set"
+) -> None:
+    """Apply an update operator at a nested dot-notation path (dict or list)."""
+    parts = field_path.split(".")
+    current: Any = doc
+    for part in parts[:-1]:
+        if isinstance(current, list):
+            if not (part.isascii() and part.isdigit()):
+                return
+            idx = int(part)
+            if op == "$unset":
+                if 0 <= idx < len(current):
+                    current = current[idx]
+                else:
+                    return
+            else:
+                if idx >= len(current):
+                    current.extend([None] * (idx + 1 - len(current)))
+                if current[idx] is None:
+                    current[idx] = {}
+                current = current[idx]
+        elif isinstance(current, dict):
+            if part not in current:
+                if op == "$unset":
+                    return
+                current[part] = {}
+            current = current[part]
+        else:
+            return
+
+    last = parts[-1]
+    if isinstance(current, list):
+        if last.isascii() and last.isdigit():
+            idx = int(last)
+            if op == "$unset":
+                if 0 <= idx < len(current):
+                    _apply_value_op(
+                        current, idx, True, current[idx], value, op, field_path
+                    )
+            else:
+                if idx >= len(current):
+                    current.extend([None] * (idx + 1 - len(current)))
+                _apply_value_op(
+                    current, idx, True, current[idx], value, op, field_path
+                )
+    elif isinstance(current, dict):
+        exists = last in current
+        cur_val = current.get(last) if exists else None
+        _apply_value_op(current, last, exists, cur_val, value, op, field_path)
+
+
+def _extract_array_constraints(
+    filter_doc: dict[str, Any] | None,
+    base: str,
+    structural_leaf: str | None,
+) -> list[tuple[str | None, Any]]:
+    """Collect element predicates for array ``base`` from ``filter_doc`` (including ``$and``)."""
+    if not filter_doc:
+        return []
+
+    branches: list[dict[str, Any]] = []
+    stack = [filter_doc]
+    while stack:
+        node = stack.pop(0)
+        if not isinstance(node, dict):
+            continue
+        branches.append(node)
+        and_list = node.get("$and")
+        if isinstance(and_list, list):
+            stack.extend(sub for sub in and_list if isinstance(sub, dict))
+
+    constraints: list[tuple[str | None, Any]] = []
+    base_parts = base.split(".")
+    for branch in branches:
+        found_in_branch = False
+        if structural_leaf:
+            full_key = f"{base}.{structural_leaf}"
+            if full_key in branch:
+                constraints.append((structural_leaf, branch[full_key]))
+                found_in_branch = True
+
+        for k, v in branch.items():
+            if k.startswith(base + "."):
+                if structural_leaf and k == f"{base}.{structural_leaf}":
+                    continue
+                constraints.append((k[len(base) + 1 :], v))
+                found_in_branch = True
+
+        if not found_in_branch and base in branch:
+            cond = branch[base]
+            if isinstance(cond, dict) and "$elemMatch" in cond:
+                em = cond["$elemMatch"]
+                constraints.append((structural_leaf, em))
+                extra = {k: v for k, v in cond.items() if k != "$elemMatch"}
+                if extra:
+                    constraints.append((structural_leaf, extra))
+            else:
+                constraints.append((structural_leaf, cond))
+            found_in_branch = True
+
+        if not found_in_branch and len(base_parts) > 1:
+            nested = _resolve_filter_value(branch, base_parts)
+            if nested is not None:
+                if isinstance(nested, dict) and "$elemMatch" in nested:
+                    em = nested["$elemMatch"]
+                    constraints.append((structural_leaf, em))
+                    extra = {
+                        k: v for k, v in nested.items() if k != "$elemMatch"
+                    }
+                    if extra:
+                        constraints.append((structural_leaf, extra))
+                else:
+                    constraints.append((structural_leaf, nested))
+
+    return constraints
+
+
+def _elem_matches_constraints(
+    elem: Any, constraints: list[tuple[str | None, Any]]
+) -> bool:
+    """Evaluate all extracted element constraints against ``elem``."""
+    for leaf, cond in constraints:
+        target = elem
+        if leaf:
+            if not isinstance(elem, dict):
+                return False
+            missing = False
+            for lg in leaf.split("."):
+                if isinstance(target, dict) and lg in target:
+                    target = target[lg]
+                elif isinstance(target, list) and lg.isascii() and lg.isdigit():
+                    idx = int(lg)
+                    if 0 <= idx < len(target):
+                        target = target[idx]
+                    else:
+                        missing = True
+                        break
+                else:
+                    missing = True
+                    break
+            if missing:
+                if isinstance(cond, dict) and cond.get("$exists") is False:
+                    continue
+                return False
+        if isinstance(cond, dict):
+            if not _matches_filter(target, cond):
+                return False
+        elif not _bson_values_equal(target, cond):
+            return False
+    return True
 
 
 def _apply_positional_update(
@@ -10,22 +250,27 @@ def _apply_positional_update(
     value: Any,
     array_filters: list[dict[str, Any]] | None = None,
     filter_doc: dict[str, Any] | None = None,
+    *,
+    op: str = "$set",
 ) -> bool:
     """Apply an update to array elements using positional operators.
 
     Supports ``$`` (first matching element), ``$[]`` (all elements), and
     ``$[identifier]`` (elements matching ``array_filters``), as well as
-    ordinary dot-notation field paths without positional operators.
+    ordinary dot-notation field paths without positional operators, across
+    ``$set``, ``$unset``, ``$inc``, ``$mul``, ``$min``, ``$max``,
+    ``$currentDate``, and ``$bit``.
 
     Args:
         doc: Document dictionary to mutate in place.
         field_path: Dot-separated field path optionally containing
             positional operator segments.
-        value: Value to assign at the resolved target location.
+        value: Value or operand for the update operator.
         array_filters: Optional list of filter dictionaries keyed by
             identifier for ``$[identifier]`` operators.
         filter_doc: Optional query filter document used to identify the
             matching element for the ``$`` positional operator.
+        op: Update operator name (defaults to ``"$set"``).
 
     Returns:
         bool: ``True`` if an update was applied, ``False`` otherwise.
@@ -42,8 +287,8 @@ def _apply_positional_update(
     )
 
     if not has_positional:
-        # No positional operator, simple nested set
-        _set_nested_field(doc, field_path, value)
+        # No positional operator, simple nested update
+        _apply_nested_field_op(doc, field_path, value, op)
         return True
 
     # Canonical "$" form: <path.to.array>.<optional leaf>.<tail...>
@@ -51,14 +296,23 @@ def _apply_positional_update(
     if "$" in parts:
         di = parts.index("$")
         if parts[di] == "$" and di >= 1:
-            applied = _apply_dollar_update(doc, parts, di, value, filter_doc)
+            applied = _apply_dollar_update(
+                doc, parts, di, value, filter_doc, op=op, field_path=field_path
+            )
             if applied is not None:
                 return applied
             # fall through to legacy recursion for exotic shapes
 
     # Find the array field and positional operator
     return _apply_positional_recursive(
-        doc, parts, 0, value, array_filters, filter_doc
+        doc,
+        parts,
+        0,
+        value,
+        array_filters,
+        filter_doc,
+        op=op,
+        field_path=field_path,
     )
 
 
@@ -68,38 +322,20 @@ def _apply_dollar_update(
     dollar_index: int,
     value: Any,
     filter_doc: dict[str, Any] | None,
+    *,
+    op: str = "$set",
+    field_path: str = "",
 ) -> bool | None:
     """Apply a filter-driven ``$`` positional update on a target array.
 
     Locates the target array in ``doc`` along ``parts[:dollar_index]``,
     resolves the matching condition from ``filter_doc``, and updates the
     first matching element (or the first element when no filter is given).
-
-    Args:
-        doc: Document dictionary to mutate in place.
-        parts: Split field-path segments.
-        dollar_index: Index of the ``"$"`` segment within ``parts``.
-        value: Value to assign at the matched element or nested tail path.
-        filter_doc: Optional query filter document constraining the update.
-
-    Returns:
-        bool | None: ``True`` if an element was updated, ``False`` if no
-            matching element could be updated, or ``None`` if the path
-            shape should fall back to ``_apply_positional_recursive``.
     """
     arr_segs = parts[:dollar_index]
     tail = parts[dollar_index + 1 :]
 
     def _get_at(d: Any, segs: list[str]) -> Any:
-        """Walk nested dictionaries along ``segs`` and return the value.
-
-        Args:
-            d: Root value or dictionary to traverse.
-            segs: Sequence of dictionary keys to follow.
-
-        Returns:
-            Any: Nested value if all keys exist in dicts, else ``None``.
-        """
         cur = d
         for sg in segs:
             if not isinstance(cur, dict) or sg not in cur:
@@ -122,80 +358,30 @@ def _apply_dollar_update(
     if arr is None:
         return None  # shape not understood by this fast path
 
-    # Resolve the query condition for this array: exact prefix key first,
-    # then any query key extending the prefix ("students.name": x).
     base = ".".join(arr_segs)
-    field_filter: Any = None
-    leaf: str | None = structural_leaf
-    if filter_doc:
-        if leaf:
-            full_key = f"{base}.{leaf}"
-            if full_key in filter_doc:
-                field_filter = filter_doc[full_key]
-        if field_filter is None:
-            for k, v in filter_doc.items():
-                if k.startswith(base + "."):
-                    field_filter = v
-                    if leaf is None:
-                        leaf = k[len(base) + 1 :]
-                    break
-        if field_filter is None and not leaf and base in filter_doc:
-            # Whole-array condition: {"scores": 90} matches any element == 90
-            field_filter = filter_doc[base]
+    constraints = _extract_array_constraints(filter_doc, base, structural_leaf)
 
-    def _pred(elem: Any) -> bool:
-        """Return whether an array element matches the resolved filter.
-
-        Args:
-            elem: Candidate element from the target array.
-
-        Returns:
-            bool: ``True`` if ``elem`` satisfies ``field_filter`` at
-                ``leaf``, ``False`` otherwise.
-        """
-        if field_filter is None:
+    def _apply_elem(i: int, elem: Any) -> bool:
+        if tail:
+            if isinstance(elem, dict):
+                _apply_nested_field_op(elem, ".".join(tail), value, op)
+                return True
             return False
-        target = elem
-        if leaf:
-            if not isinstance(elem, dict):
-                return False
-            target = elem
-            for lg in leaf.split("."):
-                if not isinstance(target, dict) or lg not in target:
-                    return False
-                target = target[lg]
-        if isinstance(field_filter, dict):
-            return (
-                _matches_query_operators(target, field_filter)
-                if not isinstance(target, dict)
-                else _matches_filter(target, field_filter)
-            )
-        return target == field_filter
+        _apply_value_op(arr, i, True, elem, value, op, field_path)
+        return True
 
-    if field_filter is None:
+    if not constraints:
         if filter_doc:
             # Query exists but constrains nothing on this array (#99)
             return False
         # Legacy: no query at all — update the first element
         if arr:
-            if tail:
-                if isinstance(arr[0], dict):
-                    _set_nested_field(arr[0], ".".join(tail), value)
-                    return True
-                return False
-            arr[0] = value
-            return True
+            return _apply_elem(0, arr[0])
         return False
 
     for i, elem in enumerate(arr):
-        if _pred(elem):
-            if tail:
-                if isinstance(elem, dict):
-                    _set_nested_field(elem, ".".join(tail), value)
-                    return True
-                return False
-            arr[i] = value
-            return True
+        if _elem_matches_constraints(elem, constraints):
+            return _apply_elem(i, elem)
     return False
 
 
@@ -207,26 +393,11 @@ def _apply_positional_recursive(
     array_filters: list[dict[str, Any]] | None = None,
     filter_doc: dict[str, Any] | None = None,
     parent_array: list[Any] | None = None,  # Track parent array for $ operator
+    *,
+    op: str = "$set",
+    field_path: str = "",
 ) -> bool:
-    """Recursively apply positional update through nested structures.
-
-    Traverses ``parts`` starting at ``index`` and handles ``$[]``,
-    ``$[identifier]``, ``$``, and regular dictionary key segments.
-
-    Args:
-        doc: Current document, sub-document, or array being traversed.
-        parts: List of field path segments.
-        index: Current segment index in ``parts``.
-        value: Value to assign at the target location.
-        array_filters: Optional list of filter dictionaries for
-            ``$[identifier]`` operators.
-        filter_doc: Optional query filter dictionary for ``$`` operators.
-        parent_array: Parent list passed when descending into a positional
-            operator segment.
-
-    Returns:
-        bool: ``True`` if the update succeeded, ``False`` otherwise.
-    """
+    """Recursively apply positional update through nested structures."""
     if index >= len(parts):
         return False
 
@@ -235,15 +406,13 @@ def _apply_positional_recursive(
 
     # Handle $[] - all array elements (check BEFORE $[identifier] since $[] also starts with $[)
     if current_part == "$[]":
-        # The array should be in doc (we're already at the array level)
         arr = doc if parent_array is None else parent_array
         if not isinstance(arr, list):
             return False
 
-        # Update all elements
         for i, elem in enumerate(arr):
             if is_last:
-                arr[i] = value
+                _apply_value_op(arr, i, True, elem, value, op, field_path)
             else:
                 if isinstance(elem, dict):
                     _apply_positional_recursive(
@@ -254,6 +423,8 @@ def _apply_positional_recursive(
                         array_filters,
                         filter_doc,
                         None,
+                        op=op,
+                        field_path=field_path,
                     )
 
         return True
@@ -262,7 +433,6 @@ def _apply_positional_recursive(
     elif current_part.startswith("$[") and current_part.endswith("]"):
         identifier = current_part[2:-1]
 
-        # Find the matching filter
         filter_spec = None
         if array_filters:
             for af in array_filters:
@@ -270,20 +440,17 @@ def _apply_positional_recursive(
                     filter_spec = af[identifier]
                     break
 
-        # If no filter found for this identifier, don't update anything
         if filter_spec is None:
             return False
 
-        # The array should be in doc (we're already at the array level)
         arr = doc if parent_array is None else parent_array
         if not isinstance(arr, list):
             return False
 
-        # Apply filter to find matching elements
         for i, elem in enumerate(arr):
             if _matches_filter(elem, filter_spec):
                 if is_last:
-                    arr[i] = value
+                    _apply_value_op(arr, i, True, elem, value, op, field_path)
                 else:
                     if isinstance(elem, dict):
                         _apply_positional_recursive(
@@ -294,38 +461,26 @@ def _apply_positional_recursive(
                             array_filters,
                             filter_doc,
                             None,
+                            op=op,
+                            field_path=field_path,
                         )
 
         return True
 
     # Handle $ - first matching array element
     elif current_part == "$":
-        # Use parent_array if available, otherwise doc should be the array
         arr = parent_array if parent_array is not None else doc
         if not isinstance(arr, list):
             return False
 
-        # Resolve the filter that identified this array. The query may use
-        # a dotted path ("a.scores": 90) whose immediate parent segment has
-        # no top-level entry — search by the full prefix (#99).
-        field_filter = (
-            _resolve_filter_value(filter_doc, parts[:index])
-            if index > 0
-            else None
+        base = ".".join(parts[:index]) if index > 0 else ""
+        constraints = (
+            _extract_array_constraints(filter_doc, base, None) if base else []
         )
 
         def _apply_to(i: int, elem: Any) -> bool:
-            """Assign ``value`` or recurse into ``arr[i]`` for ``$``.
-
-            Args:
-                i: Index of the matched element in ``arr``.
-                elem: Element at ``arr[i]``.
-
-            Returns:
-                bool: ``True`` if the element or nested field was updated.
-            """
             if is_last:
-                arr[i] = value
+                _apply_value_op(arr, i, True, elem, value, op, field_path)
                 return True
             if isinstance(elem, dict):
                 return _apply_positional_recursive(
@@ -336,25 +491,19 @@ def _apply_positional_recursive(
                     array_filters,
                     filter_doc,
                     None,
+                    op=op,
+                    field_path=field_path,
                 )
             return False
 
-        if field_filter is None:
+        if not constraints:
             if filter_doc:
-                # A query exists but constrains nothing on this array:
-                # MongoDB errors here; silently writing element 0 corrupts
-                # unrelated documents.
                 return False
-            # No query at all — legacy behavior: update first element
             return bool(arr) and _apply_to(0, arr[0])
 
         matched = False
         for i, elem in enumerate(arr):
-            if not matched and (
-                _matches_filter(elem, field_filter)
-                if isinstance(field_filter, dict)
-                else elem == field_filter
-            ):
+            if not matched and _elem_matches_constraints(elem, constraints):
                 matched = _apply_to(i, elem)
         return matched
 
@@ -364,18 +513,26 @@ def _apply_positional_recursive(
             return False
 
         if current_part not in doc:
-            # Create the nested structure if it doesn't exist and this is the last part
-            if is_last:
-                doc[current_part] = value
+            if is_last and op != "$unset":
+                _apply_value_op(
+                    doc, current_part, False, None, value, op, field_path
+                )
                 return True
             return False
 
         if is_last:
-            doc[current_part] = value
+            _apply_value_op(
+                doc,
+                current_part,
+                True,
+                doc[current_part],
+                value,
+                op,
+                field_path,
+            )
             return True
         else:
             next_val = doc[current_part]
-            # If next part is positional, pass the array as parent_array
             next_is_positional = (
                 index + 1 < len(parts) and parts[index + 1] in ("$", "$[]")
             ) or (index + 1 < len(parts) and parts[index + 1].startswith("$["))
@@ -388,6 +545,8 @@ def _apply_positional_recursive(
                     array_filters,
                     filter_doc,
                     next_val,
+                    op=op,
+                    field_path=field_path,
                 )
             else:
                 return _apply_positional_recursive(
@@ -398,26 +557,15 @@ def _apply_positional_recursive(
                     array_filters,
                     filter_doc,
                     None,
+                    op=op,
+                    field_path=field_path,
                 )
 
 
 def _resolve_filter_value(
     filter_doc: dict[str, Any] | None, segments: list[str]
 ) -> Any:
-    """Find the query filter that applies to the given path prefix (#99).
-
-    Looks for a flat dotted key first (e.g., ``"a.scores"``), then walks
-    nested dictionary structures along ``segments``. Returns ``None`` when
-    ``filter_doc`` does not constrain the path.
-
-    Args:
-        filter_doc: Query filter dictionary or ``None``.
-        segments: Path segments preceding the positional operator.
-
-    Returns:
-        Any: Matching filter value or operator dictionary, or ``None`` if
-            no constraint applies to the path.
-    """
+    """Find the query filter that applies to the given path prefix (#99)."""
     if not filter_doc:
         return None
     name = ".".join(segments)
@@ -433,27 +581,13 @@ def _resolve_filter_value(
 
 
 def _matches_filter(elem: Any, filter_spec: dict[str, Any] | Any) -> bool:
-    """Check if an array element matches a filter specification.
-
-    Supports scalar equality, operator-only dictionaries (keys starting
-    with ``"$"``), and field-level filter dictionaries on sub-documents.
-
-    Args:
-        elem: Array element to evaluate.
-        filter_spec: Filter dictionary with operators/field criteria or a
-            scalar value for equality matching.
-
-    Returns:
-        bool: ``True`` if ``elem`` matches ``filter_spec``, ``False``
-            otherwise.
-    """
-    # Handle scalar filter (direct equality check)
+    """Check if an array element matches a filter specification."""
+    # Handle scalar filter (direct BSON equality check)
     if not isinstance(filter_spec, dict):
-        return elem == filter_spec
+        return _bson_values_equal(elem, filter_spec)
 
     # Handle scalar element with dict filter (apply query operators)
     if not isinstance(elem, dict):
-        # Apply query operators to scalar value
         return _matches_query_operators(elem, filter_spec)
 
     # Handle dict element with direct query operators (e.g. {$type: "object"})
@@ -474,59 +608,45 @@ def _matches_filter(elem: Any, filter_spec: dict[str, Any] | Any) -> bool:
             return False
         elem_val = _get_nested_field(key, elem)
         if isinstance(expected_value, dict):
-            # Handle query operators in filter
             if not _matches_query_operators(elem_val, expected_value):
                 return False
-        elif elem_val != expected_value:
+        elif not _bson_values_equal(elem_val, expected_value):
             return False
 
     return True
 
 
 def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
-    """Check if a value matches a dictionary of query operators.
-
-    Evaluates ``$eq``, ``$gt``, ``$gte``, ``$lt``, ``$lte``, ``$ne``,
-    ``$in``, ``$nin``, ``$exists``, ``$size``, ``$regex``/``$options``, and
-    ``$type`` against ``value``.
-
-    Args:
-        value: Value to test against the operators.
-        operators: Dictionary mapping MongoDB operator names to expected
-            values.
-
-    Returns:
-        bool: ``True`` if ``value`` satisfies every operator in
-            ``operators``, ``False`` otherwise.
-
-    Raises:
-        ValueError: If an unsupported ``$``-prefixed operator is present.
-    """
+    """Check if a value matches a dictionary of query operators."""
     for op, expected in operators.items():
         match op:
             case "$eq":
-                if value != expected:
+                if not _bson_values_equal(value, expected):
                     return False
             case "$gt":
-                if value is None or expected is None or not (value > expected):
+                if not _range_element_matches(value, expected, operator.gt):
                     return False
             case "$gte":
-                if value is None or expected is None or not (value >= expected):
+                if not _range_element_matches(value, expected, operator.ge):
                     return False
             case "$lt":
-                if value is None or expected is None or not (value < expected):
+                if not _range_element_matches(value, expected, operator.lt):
                     return False
             case "$lte":
-                if value is None or expected is None or not (value <= expected):
+                if not _range_element_matches(value, expected, operator.le):
                     return False
             case "$ne":
-                if value == expected:
+                if _bson_values_equal(value, expected):
                     return False
             case "$in":
-                if value not in expected:
+                if not isinstance(expected, (list, tuple)) or not any(
+                    _bson_values_equal(value, item) for item in expected
+                ):
                     return False
             case "$nin":
-                if value in expected:
+                if isinstance(expected, (list, tuple)) and any(
+                    _bson_values_equal(value, item) for item in expected
+                ):
                     return False
             case "$exists":
                 # Elements always exist when extracted from an array
@@ -559,16 +679,36 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
             case "$options":
                 continue
             case "$type":
-                from ..type_utils import get_bson_type
-
-                names = expected if isinstance(expected, list) else [expected]
-                aliases = {"long": "int", "double": "int"}
-                wanted = {aliases.get(n, n) for n in names}
-                if get_bson_type(value) not in wanted and not (
-                    "number" in names
-                    and isinstance(value, (int, float))
-                    and not isinstance(value, bool)
+                specs = expected if isinstance(expected, list) else [expected]
+                if not any(
+                    _matches_single_bson_type(value, spec) for spec in specs
                 ):
+                    return False
+            case "$elemMatch":
+                if not isinstance(expected, dict):
+                    return False
+                if isinstance(value, list):
+                    if not any(_matches_filter(el, expected) for el in value):
+                        return False
+                elif not _matches_filter(value, expected):
+                    return False
+            case "$and":
+                if not isinstance(expected, list) or not all(
+                    _matches_filter(value, sub) for sub in expected
+                ):
+                    return False
+            case "$or":
+                if not isinstance(expected, list) or not any(
+                    _matches_filter(value, sub) for sub in expected
+                ):
+                    return False
+            case "$nor":
+                if not isinstance(expected, list) or any(
+                    _matches_filter(value, sub) for sub in expected
+                ):
+                    return False
+            case "$not":
+                if _matches_filter(value, expected):
                     return False
             case _ if op.startswith("$"):
                 # Unknown operators must fail loudly: silently matching
@@ -578,22 +718,5 @@ def _matches_query_operators(value: Any, operators: dict[str, Any]) -> bool:
 
 
 def _set_nested_field(doc: dict[str, Any], field_path: str, value: Any) -> None:
-    """Set a nested field value using dot notation.
-
-    Creates intermediate dictionaries for any missing path segments before
-    assigning ``value`` to the final key.
-
-    Args:
-        doc: Document dictionary to update in place.
-        field_path: Dot-notation field path (e.g., ``"a.b.c"``).
-        value: Value to set at the target field.
-    """
-    parts = field_path.split(".")
-    current = doc
-
-    for i, part in enumerate(parts[:-1]):
-        if part not in current:
-            current[part] = {}
-        current = current[part]
-
-    current[parts[-1]] = value
+    """Set a nested field value using dot notation (supporting numeric list indices)."""
+    _apply_nested_field_op(doc, field_path, value, "$set")

@@ -130,28 +130,50 @@ class CRUDOperationsMixin:
             doc_id: ID of the document to replace (ObjectId, int, etc.).
             replacement: Replacement document mapping.
         """
+        from ...exceptions import MalformedDocument
+        from ...query_operators import _bson_values_equal
         from ..json_helpers import neosqlite_json_loads
+        from .utils import _convert_bytes_to_binary
+
+        if not isinstance(replacement, dict):
+            raise MalformedDocument(
+                f"replacement must be a dictionary, not a {type(replacement)}"
+            )
 
         # Convert the doc_id to integer ID for internal operations
         int_doc_id = self._get_integer_id_for_oid(doc_id)
         replacement_copy = dict(replacement)
-        if "_id" not in replacement_copy:
-            cursor = self.collection.db.execute(
-                f"SELECT data, _id FROM {quote_table_name(self.collection.name)} WHERE id = ?",
-                (int_doc_id,),
-            )
-            if row := cursor.fetchone():
-                if row[0]:
-                    try:
-                        orig_doc = neosqlite_json_loads(row[0])
-                        if "_id" in orig_doc:
-                            replacement_copy["_id"] = orig_doc["_id"]
-                    except Exception:
-                        pass
-                if "_id" not in replacement_copy and row[1] is not None:
-                    replacement_copy["_id"] = self.collection._parse_stored_id(
-                        row[1]
-                    )
+
+        existing_id: Any = None
+        has_existing_id = False
+        cursor = self.collection.db.execute(
+            f"SELECT data, _id FROM {quote_table_name(self.collection.name)} WHERE id = ?",
+            (int_doc_id,),
+        )
+        if row := cursor.fetchone():
+            if row[0]:
+                try:
+                    orig_doc = neosqlite_json_loads(row[0])
+                    if "_id" in orig_doc:
+                        existing_id = orig_doc["_id"]
+                        has_existing_id = True
+                except Exception:
+                    pass
+            if not has_existing_id and row[1] is not None:
+                existing_id = self.collection._parse_stored_id(row[1])
+                has_existing_id = True
+
+        if "_id" in replacement_copy:
+            if has_existing_id and not _bson_values_equal(
+                replacement_copy["_id"], existing_id
+            ):
+                raise MalformedDocument(
+                    "Performing an update on the path '_id' would modify the immutable field '_id'"
+                )
+        elif has_existing_id:
+            replacement_copy["_id"] = existing_id
+
+        replacement_copy = _convert_bytes_to_binary(replacement_copy)
 
         self.collection.db.execute(
             f"UPDATE {quote_table_name(self.collection.name)} SET data = ? WHERE id = ?",

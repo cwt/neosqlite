@@ -49,12 +49,15 @@ class UpdateOperation(BulkOperation):
         update: Update specification dictionary applied to matched documents.
         upsert: Whether to insert a new document when no document matches.
         multi: Whether to update all matching documents or only the first.
+        array_filters: Optional list of filter dictionaries for positional
+            filtered array updates.
     """
 
     filter: dict[str, Any]
     update: dict[str, Any]
     upsert: bool = False
     multi: bool = False
+    array_filters: list[dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -63,7 +66,7 @@ class ReplaceOperation(BulkOperation):
 
     Attributes:
         filter: Query filter dictionary matching the document to replace.
-        replacement: Replacement document dictionary without ``_id``.
+        replacement: Replacement document dictionary.
         upsert: Whether to insert the replacement when no document matches.
     """
 
@@ -118,7 +121,11 @@ class BulkOperationContext:
         self._upsert = True
         return self
 
-    def update_one(self, update: dict[str, Any]) -> Self:
+    def update_one(
+        self,
+        update: dict[str, Any],
+        array_filters: list[dict[str, Any]] | None = None,
+    ) -> Self:
         """Add an update-one operation to the bulk operations list.
 
         Appends an ``UpdateOperation`` targeting a single matching document
@@ -127,6 +134,8 @@ class BulkOperationContext:
         Args:
             update: Update specification dictionary containing fields or
                 update operators to apply.
+            array_filters: Optional list of filter dictionaries for positional
+                filtered array updates.
 
         Returns:
             Self: The current context object for chaining further operations.
@@ -137,12 +146,17 @@ class BulkOperationContext:
                 update=update,
                 upsert=self._upsert,
                 multi=False,
+                array_filters=array_filters,
             )
         )
         self._upsert = False  # Reset upsert flag
         return self
 
-    def update_many(self, update: dict[str, Any]) -> Self:
+    def update_many(
+        self,
+        update: dict[str, Any],
+        array_filters: list[dict[str, Any]] | None = None,
+    ) -> Self:
         """Add an update-many operation to the bulk operations list.
 
         Appends an ``UpdateOperation`` targeting all matching documents using
@@ -151,6 +165,8 @@ class BulkOperationContext:
         Args:
             update: Update specification dictionary containing fields or
                 update operators to apply.
+            array_filters: Optional list of filter dictionaries for positional
+                filtered array updates.
 
         Returns:
             Self: The current context object for chaining further operations.
@@ -161,6 +177,7 @@ class BulkOperationContext:
                 update=update,
                 upsert=self._upsert,
                 multi=True,
+                array_filters=array_filters,
             )
         )
         self._upsert = False  # Reset upsert flag
@@ -198,8 +215,7 @@ class BulkOperationContext:
         """Add a replace-one operation to the bulk operations list.
 
         Appends a ``ReplaceOperation`` targeting a single document matching the
-        context filter, stripping ``_id`` from ``replacement`` when it is a
-        dictionary, and resets ``_upsert``.
+        context filter and resets ``_upsert``.
 
         Args:
             replacement: Replacement document dictionary containing the new
@@ -209,9 +225,7 @@ class BulkOperationContext:
             Self: The current context object for chaining further operations.
         """
         replacement_doc = (
-            {k: v for k, v in replacement.items() if k != "_id"}
-            if isinstance(replacement, dict)
-            else replacement
+            dict(replacement) if isinstance(replacement, dict) else replacement
         )
         self._bulk_operations.append(
             ReplaceOperation(
@@ -275,6 +289,7 @@ class BulkOperationExecutor:
                     update=kwargs["update"],
                     upsert=kwargs["upsert"],
                     multi=False,
+                    array_filters=kwargs.get("array_filters"),
                 )
             )
         elif op_type == "update_many":
@@ -284,12 +299,13 @@ class BulkOperationExecutor:
                     update=kwargs["update"],
                     upsert=kwargs["upsert"],
                     multi=True,
+                    array_filters=kwargs.get("array_filters"),
                 )
             )
         elif op_type == "replace_one":
             replacement = kwargs["replacement"]
             replacement_doc = (
-                {k: v for k, v in replacement.items() if k != "_id"}
+                dict(replacement)
                 if isinstance(replacement, dict)
                 else replacement
             )
@@ -379,6 +395,10 @@ class BulkOperationExecutor:
         Raises:
             BulkWriteError: If one or more operations fail during execution.
         """
+        from .collection.type_utils import validate_session
+
+        validate_session(session, self._collection._database)
+
         inserted_count = 0
         matched_count = 0
         modified_count = 0
@@ -394,15 +414,27 @@ class BulkOperationExecutor:
                         self._collection.insert_one(doc, session=session)
                         inserted_count += 1
                     case UpdateOperation(
-                        filter=f, update=u, upsert=up, multi=multi
+                        filter=f,
+                        update=u,
+                        upsert=up,
+                        multi=multi,
+                        array_filters=af,
                     ):
                         if multi:
                             update_res = self._collection.update_many(
-                                f, u, upsert=up, session=session
+                                f,
+                                u,
+                                upsert=up,
+                                array_filters=af,
+                                session=session,
                             )
                         else:
                             update_res = self._collection.update_one(
-                                f, u, upsert=up, session=session
+                                f,
+                                u,
+                                upsert=up,
+                                array_filters=af,
+                                session=session,
                             )
                         matched_count += update_res.matched_count
                         modified_count += update_res.modified_count

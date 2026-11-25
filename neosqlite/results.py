@@ -1,7 +1,16 @@
 from typing import Any
 
 
-class InsertOneResult:
+class _BaseResult:
+    """Base mixin providing PyMongo ``acknowledged`` compatibility."""
+
+    @property
+    def acknowledged(self) -> bool:
+        """Return whether the write operation was acknowledged."""
+        return True
+
+
+class InsertOneResult(_BaseResult):
     """Represents the result of a single-document insert operation.
 
     Exposes the identifier assigned to or supplied for the inserted document
@@ -26,7 +35,7 @@ class InsertOneResult:
         return self._inserted_id
 
 
-class InsertManyResult:
+class InsertManyResult(_BaseResult):
     """Represents the result of a multi-document insert operation.
 
     Exposes the ordered list of identifiers for all inserted documents via the
@@ -52,7 +61,7 @@ class InsertManyResult:
         return self._inserted_ids
 
 
-class UpdateResult:
+class UpdateResult(_BaseResult):
     """Represents the result of an update or replace operation.
 
     Encapsulates matched, modified, and optional upserted identifier details
@@ -106,7 +115,7 @@ class UpdateResult:
         return self._upserted_id
 
 
-class DeleteResult:
+class DeleteResult(_BaseResult):
     """Represents the result of a single or multi-document delete operation.
 
     Exposes the total number of removed documents via ``deleted_count``.
@@ -131,7 +140,7 @@ class DeleteResult:
         return self._deleted_count
 
 
-class BulkWriteResult:
+class BulkWriteResult(_BaseResult):
     """Represents the aggregated result of a bulk write operation.
 
     Stores operation counts across inserts, updates, deletes, and upserts,

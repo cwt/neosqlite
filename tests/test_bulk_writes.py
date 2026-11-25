@@ -9,9 +9,11 @@ from neosqlite import (
     BulkWriteError,
     DeleteOne,
     InsertOne,
+    ReplaceOne,
     UpdateOne,
 )
 from neosqlite.collection import sqlite3
+from neosqlite.exceptions import InvalidOperation
 
 # Handle both standard sqlite3 and pysqlite3 exceptions
 try:
@@ -364,3 +366,81 @@ def test_bulk_operation_executor_add_pymongo_and_duck_typed(collection):
     assert res.matched_count == 2
     assert res.deleted_count == 1
     assert collection.count_documents({}) == 0
+
+
+def test_bulk_update_one_array_filters_and_replace_upsert_and_acknowledged(
+    collection,
+):
+    """Test UpdateOne array_filters, ReplaceOne upsert custom _id, session validation, and acknowledged."""
+    from neosqlite.requests import UpdateMany, UpdateOne
+
+    res_ins = collection.insert_one({"_id": 1, "tags": [1, 10, 20]})
+    assert res_ins.acknowledged is True
+    res_many = collection.insert_many([{"_id": 2, "tags": [5, 15]}])
+    assert res_many.acknowledged is True
+
+    # UpdateOne with array_filters via collection.bulk_write
+    bw_res = collection.bulk_write(
+        [
+            UpdateOne(
+                {"_id": 1},
+                {"$set": {"tags.$[x]": 99}},
+                array_filters=[{"x": {"$gte": 10}}],
+            ),
+            UpdateMany(
+                {"_id": 2},
+                {"$inc": {"tags.$[y]": 5}},
+                array_filters=[{"y": {"$lt": 10}}],
+            ),
+            ReplaceOne(
+                {"_id": "custom_upsert_id"},
+                {"_id": "custom_upsert_id", "kind": "upserted"},
+                upsert=True,
+            ),
+        ]
+    )
+    assert bw_res.acknowledged is True
+    assert bw_res.upserted_ids == {2: "custom_upsert_id"}
+    assert collection.find_one({"_id": 1})["tags"] == [1, 99, 99]
+    assert collection.find_one({"_id": 2})["tags"] == [10, 15]
+    assert collection.find_one({"_id": "custom_upsert_id"}) == {
+        "_id": "custom_upsert_id",
+        "kind": "upserted",
+    }
+
+    # Same via BulkOperationExecutor preserving array_filters and ReplaceOne custom _id
+    exec_bulk = collection.initialize_ordered_bulk_op()
+    exec_bulk.add(
+        UpdateOne(
+            {"_id": 1},
+            {"$set": {"tags.$[z]": 0}},
+            array_filters=[{"z": 1}],
+        )
+    )
+    exec_bulk.add(
+        ReplaceOne(
+            {"_id": "custom_upsert_2"},
+            {"_id": "custom_upsert_2", "val": 42},
+            upsert=True,
+        )
+    )
+    exec_res = exec_bulk.execute()
+    assert exec_res.acknowledged is True
+    assert exec_res.upserted_ids == {1: "custom_upsert_2"}
+    assert collection.find_one({"_id": 1})["tags"] == [0, 99, 99]
+    assert collection.find_one({"_id": "custom_upsert_2"}) == {
+        "_id": "custom_upsert_2",
+        "val": 42,
+    }
+
+    upd_res = collection.update_one({"_id": 1}, {"$set": {"done": True}})
+    assert upd_res.acknowledged is True
+    del_res = collection.delete_one({"_id": "custom_upsert_2"})
+    assert del_res.acknowledged is True
+
+    # Empty BulkOperationExecutor validates session
+    session = collection.database.client.start_session()
+    session.end_session()
+    empty_bulk = collection.initialize_ordered_bulk_op()
+    with raises(InvalidOperation):
+        empty_bulk.execute(session=session)

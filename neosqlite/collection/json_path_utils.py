@@ -99,8 +99,14 @@ def parse_json_path(field: str, *, preserve_id: bool = True) -> str:
     if current_part:
         parts.append(current_part)
 
-    # Convert each part to JSON path format
-    json_parts = [_format_json_segment(part) for part in parts]
+    # Convert each part to JSON path format; dotted numeric segments after
+    # the root key (e.g. "arr.1") denote array indices in MongoDB dot notation.
+    json_parts: list[str] = []
+    for idx, part in enumerate(parts):
+        if idx > 0 and part.isascii() and part.isdigit() and json_parts:
+            json_parts[-1] += f"[{part}]"
+        else:
+            json_parts.append(_format_json_segment(part))
 
     return f"$.{'.'.join(json_parts)}"
 

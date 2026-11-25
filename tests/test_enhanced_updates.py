@@ -752,5 +752,212 @@ def test_bit_with_zero_default():
         assert doc["flags"] == 0b0101
 
 
+class TestIssue194UpdateParityFixes:
+    """Parity and regression tests for GitHub issue #194."""
+
+    def test_push_negative_position_multi_each_parity(self):
+        """$push with negative $position and multi-element $each matches SQL and Python."""
+        with Connection(":memory:") as conn:
+            results = []
+            orig = get_force_fallback()
+            try:
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    coll = conn[f"push_pos_{fb}"]
+                    coll.insert_one({"_id": 1, "arr": [1, 2, 3]})
+                    coll.update_one(
+                        {"_id": 1},
+                        {
+                            "$push": {
+                                "arr": {"$each": [10, 20], "$position": -1}
+                            }
+                        },
+                    )
+                    results.append(coll.find_one({"_id": 1})["arr"])
+            finally:
+                set_force_fallback(orig)
+            assert results[0] == [1, 2, 10, 20, 3]
+            assert results[1] == [1, 2, 10, 20, 3]
+
+    def test_push_sort_and_modifier_validation_parity(self):
+        """$push $sort works and $slice/$position/$sort require $each in both tiers."""
+        from neosqlite.exceptions import MalformedQueryException
+
+        with Connection(":memory:") as conn:
+            orig = get_force_fallback()
+            try:
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    coll = conn[f"push_sort_{fb}"]
+                    coll.insert_one({"_id": 1, "arr": [3, 1]})
+                    coll.update_one(
+                        {"_id": 1},
+                        {"$push": {"arr": {"$each": [2], "$sort": 1}}},
+                    )
+                    assert coll.find_one({"_id": 1})["arr"] == [1, 2, 3]
+
+                    coll.insert_one(
+                        {
+                            "_id": 2,
+                            "items": [
+                                {"score": 5, "k": "b"},
+                                {"score": 10, "k": "a"},
+                            ],
+                        }
+                    )
+                    coll.update_one(
+                        {"_id": 2},
+                        {
+                            "$push": {
+                                "items": {
+                                    "$each": [{"score": 10, "k": "z"}],
+                                    "$sort": {"score": -1, "k": 1},
+                                    "$slice": 2,
+                                }
+                            }
+                        },
+                    )
+                    assert coll.find_one({"_id": 2})["items"] == [
+                        {"score": 10, "k": "a"},
+                        {"score": 10, "k": "z"},
+                    ]
+
+                    for bad in ({"$slice": 1}, {"$position": 0}, {"$sort": 1}):
+                        with pytest.raises(MalformedQueryException):
+                            coll.update_one({"_id": 1}, {"$push": {"arr": bad}})
+            finally:
+                set_force_fallback(orig)
+
+    def test_array_filters_double_type_and_mixed_pull_and_bool_int_parity(self):
+        """$type:'double', mixed-type $gt/$lt, and bool!=int match across SQL and Python."""
+        with Connection(":memory:") as conn:
+            orig = get_force_fallback()
+            try:
+                docs = {}
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    coll = conn[f"parity_{fb}"]
+                    coll.insert_one(
+                        {
+                            "_id": 1,
+                            "tags": [1, 1.5, 2],
+                            "mixed": [10, "hello", None, 2, True],
+                            "bools": [0, 1, True, False],
+                            "set_arr": [1, True],
+                        }
+                    )
+                    coll.update_one(
+                        {"_id": 1},
+                        {"$set": {"tags.$[x]": 99}},
+                        array_filters=[{"x": {"$type": "double"}}],
+                    )
+                    coll.update_one(
+                        {"_id": 1}, {"$pull": {"mixed": {"$gt": 5}}}
+                    )
+                    coll.update_one({"_id": 1}, {"$pullAll": {"bools": [True]}})
+                    coll.update_one(
+                        {"_id": 1}, {"$addToSet": {"set_arr": False}}
+                    )
+                    coll.update_one({"_id": 1}, {"$addToSet": {"set_arr": 0}})
+                    docs[fb] = coll.find_one({"_id": 1})
+            finally:
+                set_force_fallback(orig)
+
+            assert docs[False] == docs[True]
+            assert docs[False]["tags"] == [1, 99, 2]
+            assert docs[False]["mixed"] == ["hello", None, 2, True]
+            assert docs[False]["bools"] == [0, 1, False]
+            assert len(docs[False]["set_arr"]) == 4
+
+    def test_positional_elem_match_and_non_set_operators_parity(self):
+        """Positional $ with $elemMatch/$and and $inc/$mul/$min/$max/$unset match."""
+        with Connection(":memory:") as conn:
+            orig = get_force_fallback()
+            try:
+                docs = {}
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    coll = conn[f"pos_ops_{fb}"]
+                    coll.insert_one(
+                        {
+                            "_id": 1,
+                            "status": "open",
+                            "items": [{"id": 1, "qty": 2}, {"id": 2, "qty": 5}],
+                            "scores": [10, 20, 30],
+                            "caps": [5, 15, 25],
+                        }
+                    )
+                    coll.update_one(
+                        {"items": {"$elemMatch": {"id": 2}}},
+                        {"$set": {"items.$.qty": 50}},
+                    )
+                    coll.update_one(
+                        {"$and": [{"items.id": 1}, {"status": "open"}]},
+                        {"$inc": {"items.$.qty": 3}},
+                    )
+                    coll.update_one({"_id": 1}, {"$inc": {"scores.$[]": 5}})
+                    coll.update_one(
+                        {"_id": 1},
+                        {"$mul": {"scores.$[s]": 2}},
+                        array_filters=[{"s": {"$gte": 25}}],
+                    )
+                    coll.update_one({"_id": 1}, {"$min": {"caps.$[]": 12}})
+                    coll.update_one(
+                        {"_id": 1},
+                        {"$unset": {"caps.$[c]": ""}},
+                        array_filters=[{"c": {"$lt": 10}}],
+                    )
+                    docs[fb] = coll.find_one({"_id": 1})
+            finally:
+                set_force_fallback(orig)
+
+            assert docs[False] == docs[True]
+            assert docs[False]["items"] == [
+                {"id": 1, "qty": 5},
+                {"id": 2, "qty": 50},
+            ]
+            assert docs[False]["scores"] == [15, 50, 70]
+            assert docs[False]["caps"] == [None, 12, 12]
+
+    def test_numeric_array_index_set_and_bit_string_error_and_replace_one(self):
+        """arr.1 $set works, $bit on str errors, replace_one supports bytes and guards _id."""
+        from neosqlite.binary import Binary
+        from neosqlite.exceptions import (
+            MalformedDocument,
+            MalformedQueryException,
+        )
+
+        with Connection(":memory:") as conn:
+            orig = get_force_fallback()
+            try:
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    coll = conn[f"misc_{fb}"]
+                    coll.insert_one(
+                        {"_id": 1, "arr": [10, 20, 30], "text": "hello"}
+                    )
+                    coll.update_one({"_id": 1}, {"$set": {"arr.1": 99}})
+                    assert coll.find_one({"_id": 1})["arr"] == [10, 99, 30]
+
+                    with pytest.raises(MalformedQueryException):
+                        coll.update_one(
+                            {"_id": 1}, {"$bit": {"text": {"and": 1}}}
+                        )
+                    assert coll.find_one({"_id": 1})["text"] == "hello"
+
+                    coll.replace_one({"_id": 1}, {"raw": b"\x00\x01\x02"})
+                    replaced = coll.find_one({"_id": 1})
+                    assert replaced["_id"] == 1
+                    assert isinstance(replaced["raw"], (bytes, Binary))
+                    assert bytes(replaced["raw"]) == b"\x00\x01\x02"
+
+                    with pytest.raises(MalformedDocument):
+                        coll.replace_one({"_id": 1}, {"_id": 999, "a": 1})
+                    assert coll.find_one({"_id": 1}) is not None
+                    assert coll.find_one({"_id": 999}) is None
+            finally:
+                set_force_fallback(orig)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

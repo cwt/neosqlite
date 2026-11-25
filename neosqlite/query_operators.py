@@ -26,12 +26,20 @@ def _get_nested_field(field: str, document: dict[str, Any]) -> Any:
     if "." not in field:
         return document.get(field, None)
 
-    # Handle nested fields
+    # Handle nested fields (supporting numeric dot-segments into lists)
     doc_value: Any = document
     for path in field.split("."):
-        if not isinstance(doc_value, dict) or path not in doc_value:
+        if isinstance(doc_value, dict):
+            if path not in doc_value:
+                return None
+            doc_value = doc_value.get(path, None)
+        elif isinstance(doc_value, list) and path.isascii() and path.isdigit():
+            idx = int(path)
+            if idx < 0 or idx >= len(doc_value):
+                return None
+            doc_value = doc_value[idx]
+        else:
             return None
-        doc_value = doc_value.get(path, None)
     return doc_value
 
 
@@ -52,11 +60,21 @@ def _field_exists(field: str, document: dict[str, Any]) -> bool:
     doc_value: Any = document
     field_parts = field.split(".")
     for i, path in enumerate(field_parts):
-        if not isinstance(doc_value, dict) or path not in doc_value:
+        if isinstance(doc_value, dict):
+            if path not in doc_value:
+                return False
+            if i == len(field_parts) - 1:
+                return True
+            doc_value = doc_value[path]
+        elif isinstance(doc_value, list) and path.isascii() and path.isdigit():
+            idx = int(path)
+            if idx < 0 or idx >= len(doc_value):
+                return False
+            if i == len(field_parts) - 1:
+                return True
+            doc_value = doc_value[idx]
+        else:
             return False
-        if i == len(field_parts) - 1:
-            return True
-        doc_value = doc_value[path]
     return False
 
 

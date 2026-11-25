@@ -339,7 +339,25 @@ class FindOperationsMixin(QueryEngineProtocol):
             data_col = self.jsonb.data_column()
             tbl = quote_table_name(self.collection.name)
             if return_document:
+                from ...exceptions import MalformedDocument
+                from ...query_operators import _bson_values_equal
+
                 replacement_copy = _convert_bytes_to_binary(dict(replacement))
+                if "_id" in replacement_copy:
+                    existing_row = self.collection.db.execute(
+                        f"SELECT id, _id, {data_col} as data FROM {tbl} {where_clause} {order_by} LIMIT 1",
+                        params,
+                    ).fetchone()
+                    if existing_row is not None:
+                        existing_doc = self.collection._load_with_stored_id(
+                            existing_row[0], existing_row[2], existing_row[1]
+                        )
+                        if not _bson_values_equal(
+                            replacement_copy["_id"], existing_doc.get("_id")
+                        ):
+                            raise MalformedDocument(
+                                "Performing an update on the path '_id' would modify the immutable field '_id'"
+                            )
                 repl_json = neosqlite_json_dumps(replacement_copy)
                 json_val_expr = self.jsonb.json_placeholder(wrap_text=True)
                 if "_id" in replacement_copy:

@@ -29,6 +29,7 @@ class UpdateOne:
         filter: dict[str, Any],
         update: dict[str, Any],
         upsert: bool = False,
+        array_filters: list[dict[str, Any]] | None = None,
     ):
         """Initialize an UpdateOne request.
 
@@ -37,10 +38,13 @@ class UpdateOne:
             update: Update operations to apply to the matched document.
             upsert: If True, insert a new document when no document matches
                 ``filter``. Defaults to False.
+            array_filters: Optional list of filter dictionaries for positional
+                filtered array updates. Defaults to None.
         """
         self.filter = filter
         self.update = update
         self.upsert = upsert
+        self.array_filters = array_filters
 
 
 class DeleteOne:
