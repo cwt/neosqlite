@@ -1037,3 +1037,133 @@ def test_del_rolls_back_pending_transaction():
             os.unlink(db_path)
         except OSError:
             pass
+
+
+def test_connection_database_kwarg_and_failed_connect_close(tmp_path):
+    """Connection(database=...) sets db_path and failed connect closes safely."""
+    db_file = str(tmp_path / "kwarg_test.db")
+    with neosqlite.Connection(database=db_file) as conn:
+        assert conn.db_path == db_file
+        assert conn.name == db_file
+
+    bad_path = str(tmp_path / "missing_dir" / "bad.db")
+    with pytest.raises(Exception):
+        neosqlite.Connection(bad_path)
+
+    # Simulate failed connect() during __init__: close() must not recurse.
+    broken = neosqlite.Connection.__new__(neosqlite.Connection)
+    broken._collections = {}
+    broken._closed = False
+    broken._is_clone = False
+    broken._parent_connection = None
+    broken._active_tx_session_state = None
+    broken._ttl_stop = __import__("threading").Event()
+    broken._ttl_thread = None
+    broken.db = None  # type: ignore[assignment]
+    broken.close()
+    assert broken._closed is True
+
+
+def test_getattr_private_attribute_does_not_create_table():
+    """Probing private attributes via hasattr/getattr creates no table."""
+    with neosqlite.Connection(":memory:") as conn:
+        assert hasattr(conn, "_nonexistent") is False
+        with pytest.raises(AttributeError):
+            _ = conn._private_probe
+        assert "_nonexistent" not in conn.list_collection_names()
+        assert "_private_probe" not in conn.list_collection_names()
+
+
+def test_create_collection_checks_sqlite_master(tmp_path):
+    """create_collection validates against sqlite_master, not _collections."""
+    db_file = str(tmp_path / "create_check.db")
+    with neosqlite.Connection(db_file) as conn:
+        conn.create_collection("existing")
+
+    with neosqlite.Connection(db_file) as reopened:
+        with pytest.raises(neosqlite.CollectionInvalid):
+            reopened.create_collection("existing")
+
+        # get_collection caches without DDL; create_collection must still succeed.
+        reopened.get_collection("ghost")
+        created = reopened.create_collection("ghost")
+        assert "ghost" in reopened.list_collection_names()
+        assert created.name == "ghost"
+
+
+def test_command_camelcase_missing_collstats_and_dict_options():
+    """command() supports camelCase keys, zeroed collStats, and dict options."""
+    with neosqlite.Connection(":memory:") as conn:
+        conn["users"].insert_many([{"age": 30}, {"age": 10}])
+
+        stats = conn.command("collStats", "users")
+        assert stats["ok"] == 1
+        assert stats["count"] == 2
+
+        missing = conn.command("collstats", "missing")
+        assert missing["ok"] == 1
+        assert missing["count"] == 0
+
+        reidx = conn.command("reIndex", "users")
+        assert reidx["ok"] == 1
+
+        agg = conn.command(
+            {
+                "aggregate": "users",
+                "pipeline": [{"$match": {"age": {"$gt": 20}}}],
+                "cursor": {},
+            }
+        )
+        assert agg["ok"] == 1
+        assert len(agg["result"]) == 1
+        assert agg["result"][0]["age"] == 30
+
+        dry = conn.command({"compact": "users", "dryRun": True})
+        assert dry["ok"] == 1
+        assert "estimatedBytesFreed" in dry
+
+        wal = conn.command({"wal_checkpoint": 1, "mode": "PASSIVE"})
+        assert wal["ok"] == 1
+        assert wal["mode"] == "PASSIVE"
+
+        cs_set = conn.command({"cache_size": 1, "pages": 1500})
+        assert cs_set["ok"] == 1
+        assert conn.command("cache_size")["cache_size"] == 1500
+
+        bt_set = conn.command({"busy_timeout": 1, "milliseconds": 2500})
+        assert bt_set["ok"] == 1
+        assert conn.command("busy_timeout")["busy_timeout"] == 2500
+
+        fk = conn.command({"foreign_key_check": 1, "table": "users"})
+        assert fk["ok"] == 1
+        assert fk["violations"] == []
+
+
+def test_with_options_preserves_state_and_rebinds_collections(tmp_path):
+    """with_options preserves _db_path, unspecified options, and rebinds colls."""
+    from neosqlite.options import ReadConcern, WriteConcern
+
+    db_file = str(tmp_path / "opts.db")
+    with neosqlite.Connection(db_file) as conn:
+        conn["shared"].insert_one({"x": 1})
+        wc = WriteConcern(w=1)
+        rc = ReadConcern(level="local")
+
+        c1 = conn.with_options(write_concern=wc, read_concern=rc)
+        assert c1.db_path == db_file
+        assert c1.auto_vacuum == conn.auto_vacuum
+        assert c1.journal_mode == conn.journal_mode
+        assert c1._translation_cache_size == conn._translation_cache_size
+
+        # Unspecified options inherit from parent clone
+        c2 = c1.with_options()
+        assert c2.db_path == db_file
+        assert c2.write_concern == wc
+        assert c2.read_concern == rc
+
+        # Collection retrieved from clone binds to clone, not original
+        shared_c1 = c1["shared"]
+        assert shared_c1.database is c1
+        assert shared_c1.write_concern == wc
+        assert conn["shared"].database is conn
+        assert conn["shared"].write_concern is None

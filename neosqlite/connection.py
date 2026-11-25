@@ -111,12 +111,18 @@ class Connection:
         )
 
         self.name: str = kwargs.pop("name", None)
-        self._db_path = args[0] if args else ":memory:"
+        if args:
+            self._db_path = args[0]
+        elif "database" in kwargs:
+            self._db_path = kwargs["database"]
+        else:
+            self._db_path = ":memory:"
         if self.name is None:
             self.name = (
                 self._db_path if self._db_path != ":memory:" else "memory"
             )
 
+        self.db: sqlite3.Connection = None  # type: ignore[assignment]
         self._closed = False
         self._parent_connection: Connection | None = None
         self._active_tx_session_state: ClientSession | None = None
@@ -696,6 +702,10 @@ class Connection:
         """
         if name in self.__dict__:
             return self.__dict__[name]
+        if name.startswith("_"):
+            raise AttributeError(
+                f"'{type(self).__name__}' object has no attribute '{name}'"
+            )
         return self[name]
 
     def start_session(
@@ -784,7 +794,11 @@ class Connection:
             CollectionInvalid: If a collection named ``name`` is already
                 registered on this connection.
         """
-        if name in self._collections:
+        cursor = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,),
+        )
+        if cursor.fetchone() is not None:
             raise CollectionInvalid(f"Collection {name} already exists")
         collection = Collection(
             self.db, name, create=True, database=self, **kwargs
@@ -1089,19 +1103,34 @@ class Connection:
         if isinstance(command, str) and value is not None:
             command = {command: value}
 
-        # Handle string commands
+        merged_kwargs = dict(kwargs)
+        command_norm: dict[str, Any]
+
+        # Handle string and dict commands cleanly, normalizing the primary key
+        # to lowercase and merging remaining dict entries as default kwargs.
         if isinstance(command, str):
             cmd_name = command.lower()
+            command_norm = {}
         elif isinstance(command, dict):
-            # Handle dict commands (PyMongo style)
-            cmd_name = next(iter(command.keys())).lower()
+            if not command:
+                return {
+                    "ok": 0,
+                    "errmsg": "Command dictionary cannot be empty",
+                    "code": 1,
+                }
+            items = list(command.items())
+            raw_cmd_key, target_val = items[0]
+            cmd_name = str(raw_cmd_key).lower()
+            command_norm = {cmd_name: target_val}
+            merged_kwargs = {k: v for k, v in items[1:]}
+            merged_kwargs.update(kwargs)
         else:
             raise TypeError("command must be a string or dict")
 
         try:
             handler = _COMMAND_DISPATCH.get(cmd_name)
             if handler is not None:
-                return handler(self, command, **kwargs)
+                return handler(self, command_norm, **merged_kwargs)
             # Fallback: validate and try as PRAGMA
             return _command_default(self, cmd_name)
         except Exception as e:
@@ -1216,17 +1245,39 @@ class Connection:
         # _collections dict do not affect the other.
         clone = self.__class__(name=self.name, _is_clone=True)
         clone.db = self.db
+        clone._db_path = self._db_path
         clone._parent_connection = self._parent_connection or self
-        clone._tokenizers = self._tokenizers
+        clone._tokenizers = list(self._tokenizers)
         clone.debug = self.debug
-        clone._collections = self._collections.copy()
+        clone.auto_vacuum = self.auto_vacuum
+        clone._translation_cache_size = self._translation_cache_size
         clone.journal_mode = self.journal_mode
+        clone._collections = {
+            coll_name: Collection(
+                self.db,
+                coll_name,
+                create=False,
+                database=clone,
+                **coll._options,
+            )
+            for coll_name, coll in self._collections.items()
+        }
 
-        # Store the new options
-        clone._codec_options = codec_options
-        clone._read_preference = read_preference
-        clone._write_concern = write_concern
-        clone._read_concern = read_concern
+        # Store the new options, inheriting prior values when omitted
+        clone._codec_options = (
+            codec_options if codec_options is not None else self._codec_options
+        )
+        clone._read_preference = (
+            read_preference
+            if read_preference is not None
+            else self._read_preference
+        )
+        clone._write_concern = (
+            write_concern if write_concern is not None else self._write_concern
+        )
+        clone._read_concern = (
+            read_concern if read_concern is not None else self._read_concern
+        )
 
         # NOTE: We intentionally do NOT call _apply_write_concern() here.
         # The clone shares the same sqlite3.Connection with the original, so
@@ -1378,6 +1429,18 @@ def _command_listcollections(
     }
 
 
+def _extract_cmd_str(
+    command: dict, kwargs: dict[str, Any], *keys: str
+) -> str | None:
+    """Return the first non-empty string value for ``keys`` in kwargs/command."""
+    for source in (kwargs, command if isinstance(command, dict) else {}):
+        for key in keys:
+            val = source.get(key)
+            if isinstance(val, str) and val:
+                return val
+    return None
+
+
 def _command_table_info(
     self: Connection, command: dict, **kwargs: Any
 ) -> dict[str, Any]:
@@ -1397,9 +1460,7 @@ def _command_table_info(
         ValueError: If no table name is supplied via ``kwargs["table"]`` or
             ``command["table_info"]``.
     """
-    table_name = kwargs.get("table")
-    if not table_name and isinstance(command, dict):
-        table_name = command.get("table_info")
+    table_name = _extract_cmd_str(command, kwargs, "table", "table_info")
     if not table_name:
         raise ValueError("table_info requires 'table' parameter")
     cursor = self.db.execute(
@@ -1448,16 +1509,16 @@ def _command_validate(
     Args:
         command: Command payload dictionary optionally providing
             ``"validate"``.
-        **kwargs: Keyword arguments; ``validate`` may specify the target
-            collection name.
+        **kwargs: Keyword arguments; ``validate`` or ``collection`` may specify
+            the target collection name.
 
     Returns:
         dict[str, Any]: Dictionary containing ``ok`` (``1`` when valid, ``0``
             otherwise), ``result``, ``errors``, and ``valid``.
     """
-    collection_name = kwargs.get("validate")
-    if not collection_name and isinstance(command, dict):
-        collection_name = command.get("validate")
+    collection_name = _extract_cmd_str(
+        command, kwargs, "validate", "collection"
+    )
     if collection_name:
         cursor = self.db.execute(
             f"PRAGMA integrity_check({quote_table_name(collection_name)})"
@@ -1480,7 +1541,7 @@ def _command_foreign_key_check(
     """Handle ``foreign_key_check`` using ``PRAGMA foreign_key_check``.
 
     Args:
-        command: Command payload dictionary (unused).
+        command: Command payload dictionary optionally providing a table name.
         **kwargs: Optional keyword arguments; ``table`` limits the check to a
             single table.
 
@@ -1488,7 +1549,7 @@ def _command_foreign_key_check(
         dict[str, Any]: Dictionary containing ``ok`` and ``violations`` list
             with ``table``, ``rowid``, ``parent``, and ``fkid`` keys.
     """
-    table_name = kwargs.get("table")
+    table_name = _extract_cmd_str(command, kwargs, "table", "foreign_key_check")
     if table_name:
         cursor = self.db.execute(
             f"PRAGMA foreign_key_check({quote_table_name(table_name)})"
@@ -1524,9 +1585,7 @@ def _command_index_list(
         ValueError: If no table name is supplied via ``kwargs["table"]`` or
             ``command["index_list"]``.
     """
-    table_name = kwargs.get("table")
-    if not table_name and isinstance(command, dict):
-        table_name = command.get("index_list")
+    table_name = _extract_cmd_str(command, kwargs, "table", "index_list")
     if not table_name:
         raise ValueError("index_list requires 'table' parameter")
     cursor = self.db.execute(
@@ -1739,9 +1798,9 @@ def _command_reindex(
         dict[str, Any]: Status dict
             ``{"ok": 1, "message": "REINDEX completed"}``.
     """
-    collection_name = kwargs.get("reIndex")
-    if not collection_name and isinstance(command, dict):
-        collection_name = command.get("reindex")
+    collection_name = _extract_cmd_str(
+        command, kwargs, "reIndex", "reindex", "collection"
+    )
     if collection_name:
         self.db.execute(f"REINDEX {quote_table_name(collection_name)}")
     else:
@@ -1773,9 +1832,9 @@ def _command_collstats(
         ValueError: If no collection name is provided via
             ``kwargs["collection"]`` or ``command["collstats"]``.
     """
-    collection_name = kwargs.get("collection")
-    if not collection_name and isinstance(command, dict):
-        collection_name = command.get("collstats")
+    collection_name = _extract_cmd_str(
+        command, kwargs, "collection", "collstats"
+    )
     if not collection_name:
         raise ValueError("collstats requires 'collection' parameter")
     quoted_table = quote_table_name(collection_name)
@@ -1784,7 +1843,8 @@ def _command_collstats(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
         (collection_name,),
     )
-    if not cursor.fetchone():
+    row = cursor.fetchone()
+    if not row or not row[0]:
         return {
             "ok": 1,
             "ns": collection_name,
@@ -1978,9 +2038,9 @@ def _command_aggregate(
         ValueError: If no collection name is provided via
             ``kwargs["aggregate"]`` or ``command["aggregate"]``.
     """
-    collection_name = kwargs.get("aggregate")
-    if not collection_name and isinstance(command, dict):
-        collection_name = command.get("aggregate")
+    collection_name = _extract_cmd_str(
+        command, kwargs, "aggregate", "collection"
+    )
     if not collection_name:
         raise ValueError("aggregate requires 'aggregate' parameter")
 
