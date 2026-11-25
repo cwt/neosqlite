@@ -5,11 +5,17 @@ Covers: Set operators ($setEquals, $setIntersection, etc.) and
         Other operators ($mergeObjects, $let, $literal, $getField, $rand, $objectToArray)
 """
 
+import pytest
+
 import neosqlite
+from neosqlite._sqlite import sqlite3
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.query_helper import (
     get_force_fallback,
     set_force_fallback,
 )
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 
 
 class TestSetOperators:
@@ -177,6 +183,9 @@ class TestSetOperators:
 class TestOtherOperators:
     """Test other operators."""
 
+    @pytest.mark.skipif(
+        not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+    )
     def test_mergeObjects(self):
         """Test $mergeObjects operator."""
         with neosqlite.Connection(":memory:") as conn:

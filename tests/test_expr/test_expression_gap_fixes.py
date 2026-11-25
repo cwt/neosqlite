@@ -9,8 +9,12 @@
 import pytest
 
 import neosqlite
+from neosqlite._sqlite import sqlite3
 from neosqlite.collection.expr_evaluator import ExprEvaluator
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.query_helper.utils import set_force_fallback
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 
 
 class TestSplitDynamicDelimiter:
@@ -99,6 +103,9 @@ class TestMergeObjectsExpressionValues:
         )
         assert result == 0
 
+    @pytest.mark.skipif(
+        not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+    )
     @pytest.mark.parametrize("force_python", [False, True])
     def test_replace_root_with_nested_sum(self, force_python):
         with neosqlite.Connection(":memory:") as conn:

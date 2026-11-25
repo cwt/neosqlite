@@ -7,9 +7,13 @@ Verifies that SQL (Tier 1) and Python (Tier 3) implementations produce identical
 import pytest
 
 import neosqlite
+from neosqlite._sqlite import sqlite3
 from neosqlite.collection.expr_evaluator import ExprEvaluator
 from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.query_helper import set_force_fallback
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 
 
 class TestSQLPythonConsistency:
@@ -292,6 +296,9 @@ class TestExprIssue201Parity:
                 False,
             ]
 
+    @pytest.mark.skipif(
+        not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+    )
     def test_merge_objects_mod_object_to_array_and_string_nulls(self):
         with neosqlite.Connection(":memory:") as conn:
             coll = conn.c

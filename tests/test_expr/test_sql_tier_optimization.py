@@ -12,11 +12,16 @@ import time
 
 import pytest
 
+import neosqlite
+from neosqlite._sqlite import sqlite3
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.query_helper import set_force_fallback
 from neosqlite.collection.sql_tier_aggregator import (
     PipelineContext,
     SQLTierAggregator,
 )
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 
 
 class TestPipelineContext:
@@ -828,6 +833,9 @@ class TestSQLTierCorrectness:
         assert results[0]["binSize"] in [9, 10, 11, 12]  # Allow small range
         assert results[0]["docSize"] > 0
 
+    @pytest.mark.skipif(
+        not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+    )
     def test_root_preserved_after_stage0_and_in_nested_expressions(
         self, collection
     ):

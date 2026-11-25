@@ -3,6 +3,10 @@
 import pytest
 
 import neosqlite
+from neosqlite._sqlite import sqlite3
+from neosqlite.collection.jsonb_support import supports_jsonb
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 
 
 class TestAddFieldsAfterLookup:
@@ -181,6 +185,9 @@ class TestAddFieldsAfterLookup:
         assert "new_field" in results[0]
         assert results[0]["new_field"] == "value1"
 
+    @pytest.mark.skipif(
+        not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+    )
     def test_addfields_after_lookup_stays_in_sql_tiers(self):
         """Test that $addFields with complex expressions stays in SQL (Tier 1/2).
 

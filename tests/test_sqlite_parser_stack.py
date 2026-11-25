@@ -1,11 +1,16 @@
 """Tests for the SQLite parser-stack fallback in complex updates."""
 
+import pytest
 from types import SimpleNamespace
 
+from neosqlite import Connection
 from neosqlite._sqlite import sqlite3
+from neosqlite.collection.jsonb_support import supports_jsonb
 
 import neosqlite
 from neosqlite.collection.query_helper import _sql_updates
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 from neosqlite.collection.query_helper.utils import (
     _check_sqlite_version,
     _supports_heap_parser_stack,
@@ -63,6 +68,9 @@ def test_rename_fallback_uses_python_without_corruption(monkeypatch):
         assert doc == {"_id": 1, "bits": 7}
 
 
+@pytest.mark.skipif(
+    not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+)
 def test_probe_error_other_than_overflow_does_not_change_selection(monkeypatch):
     """Only 'parser stack overflow' forces the fallback; other errors don't."""
 

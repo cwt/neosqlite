@@ -3,7 +3,11 @@
 import pytest
 
 from neosqlite import ASCENDING, DESCENDING, Connection
+from neosqlite._sqlite import sqlite3
 from neosqlite.collection.json_path_utils import parse_json_path
+from neosqlite.collection.jsonb_support import supports_jsonb
+
+_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
 from neosqlite.collection.query_helper.utils import (
     set_force_fallback,
 )
@@ -119,6 +123,9 @@ def test_reserved_word_collection_end_to_end():
         bucket.drop()
 
 
+@pytest.mark.skipif(
+    not _JSONB_AVAILABLE, reason="Requires SQLite with JSONB support"
+)
 def test_parse_json_path_and_special_keys_in_queries():
     """Field names with ', \", whitespace, \\, or unmatched brackets query safely."""
     assert parse_json_path("it's") == "$.\"it''s\""
