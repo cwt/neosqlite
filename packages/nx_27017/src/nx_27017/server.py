@@ -34,6 +34,25 @@ _READ_CHUNK_SIZE = 65536
 DEFAULT_FRAME_READ_TIMEOUT = 30.0
 
 
+def _is_insert_command(msg: dict[str, object]) -> bool:
+    """Return True when the OP_MSG body command key is ``insert``.
+
+    Checks the first non-``$`` command key in the body section so non-insert
+    commands carrying Kind-2 ``payload_docs`` sections or nested ``insert``
+    subfields are never misrouted to ``handle_insert``.
+    """
+    sections = msg.get("sections", ())
+    if not isinstance(sections, list):
+        return False
+    for section_type, section_data in sections:
+        if section_type == "body" and isinstance(section_data, dict):
+            for key in section_data:
+                if not key.startswith("$"):
+                    return key == "insert"
+            return False
+    return False
+
+
 async def _read_exact_async(
     reader: asyncio.StreamReader,
     length: int,
@@ -174,25 +193,15 @@ async def handle_client(
 
             match opcode:
                 case WireProtocol.OP_MSG:
+                    orig_request_id = request_id
+                    more_to_come = False
                     try:
                         msg = OP_MSG.parse(full_message)
                         msg["_conn_id"] = conn_id
+                        orig_request_id = msg.get("request_id", orig_request_id)
+                        more_to_come = bool(msg.get("more_to_come", False))
 
-                        is_insert = False
-                        for section_type, section_data in msg["sections"]:
-                            if (
-                                section_type == "body"
-                                and isinstance(section_data, dict)
-                                and "insert" in section_data
-                            ):
-                                is_insert = True
-                                break
-
-                        has_payload_docs = any(
-                            s[0] == "payload_docs" for s in msg["sections"]
-                        )
-
-                        if is_insert or has_payload_docs:
+                        if _is_insert_command(msg):
                             request_id, response_doc = await asyncio.to_thread(
                                 handler.handle_insert, msg
                             )
@@ -203,38 +212,45 @@ async def handle_client(
                     except Exception as e:
                         logger.exception("Error handling OP_MSG")
                         response_doc = {"ok": 0, "errmsg": str(e)}
-                        request_id = (
-                            msg.get("request_id", 0)
-                            if "msg" in locals() and isinstance(msg, dict)
-                            else 0
-                        )
+                        request_id = orig_request_id
 
-                    try:
-                        reply = ResponseBuilder.build_op_msg_reply(
-                            request_id=_get_next_request_id(),
-                            response_to=request_id,
-                            document=response_doc,
-                        )
-                        writer.write(reply)
-                        await writer.drain()
-                    except Exception as e:
-                        logger.error(f"Error sending response: {e}")
+                    if not more_to_come:
+                        try:
+                            reply = ResponseBuilder.build_op_msg_reply(
+                                request_id=_get_next_request_id(),
+                                response_to=request_id,
+                                document=response_doc,
+                            )
+                            writer.write(reply)
+                            await writer.drain()
+                        except Exception as e:
+                            logger.error(f"Error sending response: {e}")
 
                 case WireProtocol.OP_QUERY:
-                    msg = OP_QUERY.parse(full_message)
-                    msg["_conn_id"] = conn_id
-                    orig_request_id = msg["request_id"]
+                    orig_request_id = request_id
                     try:
-                        request_id, docs = await asyncio.to_thread(
+                        msg = OP_QUERY.parse(full_message)
+                        msg["_conn_id"] = conn_id
+                        orig_request_id = msg.get("request_id", orig_request_id)
+                        reply_req_id, docs = await asyncio.to_thread(
                             handler.handle_query, msg
                         )
                         reply = ResponseBuilder.build_reply(
-                            request_id, orig_request_id, docs
+                            reply_req_id, orig_request_id, docs
                         )
+                    except Exception as e:
+                        logger.error(f"Error handling OP_QUERY: {e}")
+                        reply = ResponseBuilder.build_reply(
+                            _get_next_request_id(),
+                            orig_request_id,
+                            [{"ok": 0, "$err": str(e), "errmsg": str(e)}],
+                            flags=2,
+                        )
+                    try:
                         writer.write(reply)
                         await writer.drain()
                     except Exception as e:
-                        logger.error(f"Error handling OP_QUERY: {e}")
+                        logger.error(f"Error sending OP_QUERY response: {e}")
 
                 case _:
                     error_reply = ResponseBuilder.build_op_msg_reply(
@@ -339,52 +355,60 @@ def handle_client_threaded(
                 )
 
                 if opcode == WireProtocol.OP_MSG:
+                    orig_request_id = request_id
+                    more_to_come = False
                     try:
                         msg = OP_MSG.parse(full_message)
                         msg["_conn_id"] = conn_id
+                        orig_request_id = msg.get("request_id", orig_request_id)
+                        more_to_come = bool(msg.get("more_to_come", False))
 
-                        is_insert = False
-                        for section_type, section_data in msg["sections"]:
-                            if (
-                                section_type == "body"
-                                and isinstance(section_data, dict)
-                                and "insert" in section_data
-                            ):
-                                is_insert = True
-                                break
-
-                        if is_insert or any(
-                            s[0] == "payload_docs" for s in msg["sections"]
-                        ):
-                            _, response_doc = handler.handle_insert(msg)
+                        if _is_insert_command(msg):
+                            request_id, response_doc = handler.handle_insert(
+                                msg
+                            )
                         else:
-                            _, response_doc = handler.handle_command(msg)
+                            request_id, response_doc = handler.handle_command(
+                                msg
+                            )
                     except Exception as e:
                         logger.exception(
                             f"Error handling OP_MSG in threaded client: {e}"
                         )
                         response_doc = {"ok": 0, "errmsg": str(e)}
+                        request_id = orig_request_id
 
-                    logger.info(
-                        f"Command response: response_keys={list(response_doc.keys()) if isinstance(response_doc, dict) else type(response_doc)}"
-                    )
-                    response_request_id = _get_next_request_id()
-                    reply = ResponseBuilder.build_op_msg_reply(
-                        request_id=response_request_id,
-                        response_to=request_id,
-                        document=response_doc,
-                    )
-                    client_socket.sendall(reply)
+                    if not more_to_come:
+                        logger.info(
+                            f"Command response: response_keys={list(response_doc.keys()) if isinstance(response_doc, dict) else type(response_doc)}"
+                        )
+                        response_request_id = _get_next_request_id()
+                        reply = ResponseBuilder.build_op_msg_reply(
+                            request_id=response_request_id,
+                            response_to=request_id,
+                            document=response_doc,
+                        )
+                        client_socket.sendall(reply)
 
                 elif opcode == WireProtocol.OP_QUERY:
-                    msg = OP_QUERY.parse(full_message)
-                    msg["_conn_id"] = conn_id
-                    orig_request_id = msg["request_id"]
-                    _, docs = handler.handle_query(msg)
-                    response_request_id = _get_next_request_id()
-                    reply = ResponseBuilder.build_reply(
-                        response_request_id, orig_request_id, docs
-                    )
+                    orig_request_id = request_id
+                    try:
+                        msg = OP_QUERY.parse(full_message)
+                        msg["_conn_id"] = conn_id
+                        orig_request_id = msg.get("request_id", orig_request_id)
+                        _, docs = handler.handle_query(msg)
+                        response_request_id = _get_next_request_id()
+                        reply = ResponseBuilder.build_reply(
+                            response_request_id, orig_request_id, docs
+                        )
+                    except Exception as e:
+                        logger.error(f"Error handling OP_QUERY: {e}")
+                        reply = ResponseBuilder.build_reply(
+                            _get_next_request_id(),
+                            orig_request_id,
+                            [{"ok": 0, "$err": str(e), "errmsg": str(e)}],
+                            flags=2,
+                        )
                     client_socket.sendall(reply)
 
                 else:

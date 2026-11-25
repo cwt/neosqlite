@@ -1,9 +1,8 @@
 from decimal import Decimal as PyDecimal
 from typing import Any
 
-from bson import Decimal128
+from bson import Decimal128, Regex
 from bson import ObjectId as BsonObjectId
-from bson.int64 import Int64
 
 from neosqlite.objectid import ObjectId as NeoObjectId
 
@@ -11,9 +10,9 @@ from neosqlite.objectid import ObjectId as NeoObjectId
 def convert_neo_to_bson_objectids(doc: Any) -> Any:
     """Convert NeoSQLite types to BSON-compatible types recursively.
 
-    Converts ``NeoObjectId`` instances to ``bson.ObjectId``, ``Decimal``
-    values to ``bson.Decimal128`` (preserving precision), and dict
-    ``"id": 0`` entries to ``bson.int64.Int64(0)``.
+    Converts ``NeoObjectId`` instances to ``bson.ObjectId`` and ``Decimal``
+    values to ``bson.Decimal128`` (preserving precision) without mutating
+    arbitrary user keys named ``"id"``.
 
     Args:
         doc: Document, list, or scalar value to convert.
@@ -21,36 +20,13 @@ def convert_neo_to_bson_objectids(doc: Any) -> Any:
     Returns:
         Any: Converted structure with BSON-compatible types.
     """
-
-    def _convert_value(value: Any) -> Any:
-        """Recursively convert a nested field value to BSON types.
-
-        Args:
-            value: Field or list element value to convert.
-
-        Returns:
-            Any: BSON-compatible representation of ``value``.
-        """
-        if isinstance(value, NeoObjectId):
-            return BsonObjectId(value.binary)
-        elif isinstance(value, PyDecimal):
-            return Decimal128(value)
-        elif isinstance(value, list):
-            return [_convert_value(item) for item in value]
-        elif isinstance(value, dict):
-            return convert_neo_to_bson_objectids(value)
-        return value
-
     if isinstance(doc, dict):
-        result = {}
-        for key, value in doc.items():
-            if key == "id" and value == 0:
-                result[key] = Int64(0)
-            else:
-                result[key] = _convert_value(value)
-        return result
+        return {
+            key: convert_neo_to_bson_objectids(value)
+            for key, value in doc.items()
+        }
     elif isinstance(doc, list):
-        return [_convert_value(item) for item in doc]
+        return [convert_neo_to_bson_objectids(item) for item in doc]
     elif isinstance(doc, PyDecimal):
         return Decimal128(doc)
     elif isinstance(doc, NeoObjectId):
@@ -59,17 +35,23 @@ def convert_neo_to_bson_objectids(doc: Any) -> Any:
 
 
 def convert_bson_to_neo_objectids(doc: Any) -> Any:
-    """Convert BSON ObjectIds to NeoSQLite ObjectIds recursively.
+    """Convert incoming BSON types to NeoSQLite-compatible types recursively.
+
+    Converts ``bson.ObjectId`` to ``neosqlite.objectid.ObjectId``,
+    ``bson.Decimal128`` to ``float``, and ``bson.Regex`` to ``re.Pattern``.
 
     Args:
         doc: Document, list, or scalar value to convert.
 
     Returns:
-        Any: Copy of ``doc`` with ``bson.ObjectId`` values replaced by
-            ``neosqlite.objectid.ObjectId`` instances.
+        Any: Copy of ``doc`` with BSON types converted for NeoSQLite and SQLite.
     """
     if isinstance(doc, BsonObjectId):
         return NeoObjectId(doc.binary)
+    elif isinstance(doc, Decimal128):
+        return float(doc.to_decimal())
+    elif isinstance(doc, Regex):
+        return doc.try_compile()
     elif isinstance(doc, list):
         return [convert_bson_to_neo_objectids(item) for item in doc]
     elif isinstance(doc, dict):

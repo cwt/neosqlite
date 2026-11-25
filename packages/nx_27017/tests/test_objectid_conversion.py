@@ -18,12 +18,39 @@ class TestConvertObjectIds:
         result = convert_neo_to_bson_objectids(doc)
         assert result["name"] == "test"
 
-    def test_convert_dict_with_zero_id(self):
-        from bson import Int64
+    def test_convert_preserves_user_id_values(self):
+        from decimal import Decimal as PyDecimal
 
-        doc = {"id": 0, "name": "test"}
+        from bson import Decimal128
+
+        doc = {
+            "id": 0,
+            "flag": {"id": False},
+            "flt": {"id": 0.0},
+            "dec": {"id": PyDecimal(0)},
+            "name": "test",
+        }
         result = convert_neo_to_bson_objectids(doc)
-        assert result["id"] == Int64(0)
+        assert result["id"] == 0
+        assert type(result["id"]) is int
+        assert result["flag"]["id"] is False
+        assert type(result["flag"]["id"]) is bool
+        assert result["flt"]["id"] == 0.0
+        assert type(result["flt"]["id"]) is float
+        assert isinstance(result["dec"]["id"], Decimal128)
+
+    def test_convert_bson_regex_and_decimal128(self):
+        import re
+
+        from bson import Decimal128, Regex
+
+        converted = convert_bson_to_neo_objectids(
+            {"price": Decimal128("9.99"), "name": Regex("^alpha$", "i")}
+        )
+        assert converted["price"] == 9.99
+        assert isinstance(converted["price"], float)
+        assert isinstance(converted["name"], re.Pattern)
+        assert converted["name"].match("Alpha") is not None
 
     def test_convert_nested_dict(self):
         doc = {

@@ -17,6 +17,8 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, Self
 
+from bson.int64 import Int64
+
 from neosqlite import Connection
 from nx_27017.changestream import (
     ChangeStreamManager,
@@ -1045,7 +1047,7 @@ class NeoSQLiteHandler:
             else:
                 del self._cursors[cursor_id]
                 live_id = 0
-        return {"id": live_id, "ns": ns, "nextBatch": batch}
+        return {"id": Int64(live_id), "ns": ns, "nextBatch": batch}
 
     def _kill_data_cursors(
         self, cursor_ids: list[int], expected_ns: str | None = None
@@ -1755,16 +1757,16 @@ class NeoSQLiteHandler:
                 command_doc = doc
             elif section_type == "payload":
                 if isinstance(doc, dict):
-                    if "updates" in doc:
-                        payload_updates = doc["updates"]
-                    if "deletes" in doc:
-                        payload_deletes = doc["deletes"]
+                    if "updates" in doc and isinstance(doc["updates"], list):
+                        payload_updates.extend(doc["updates"])
+                    if "deletes" in doc and isinstance(doc["deletes"], list):
+                        payload_deletes.extend(doc["deletes"])
                     # bulkWrite ships ops (and sometimes nsInfo) as a
                     # document sequence rather than inline in the body.
-                    if "ops" in doc:
-                        payload_ops = doc["ops"]
-                    if "nsInfo" in doc:
-                        payload_nsinfo = doc["nsInfo"]
+                    if "ops" in doc and isinstance(doc["ops"], list):
+                        payload_ops.extend(doc["ops"])
+                    if "nsInfo" in doc and isinstance(doc["nsInfo"], list):
+                        payload_nsinfo.extend(doc["nsInfo"])
 
         if not command_doc:
             return request_id, {"ok": 0, "errmsg": "No command document"}
@@ -2397,7 +2399,7 @@ class NeoSQLiteHandler:
                 return request_id, {
                     "ok": 1,
                     "cursor": {
-                        "id": 0,
+                        "id": Int64(0),
                         "ns": f"{db_name}.{coll_name}",
                         "firstBatch": [],
                     },
@@ -2444,7 +2446,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": cursor_id,
+                    "id": Int64(cursor_id),
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": first,
                 },
@@ -2558,7 +2560,7 @@ class NeoSQLiteHandler:
                 return request_id, {
                     "ok": 1,
                     "cursor": {
-                        "id": cursor_id,
+                        "id": Int64(cursor_id),
                         "ns": f"{db_name}.{coll_name}",
                         "firstBatch": first,
                     },
@@ -2775,7 +2777,7 @@ class NeoSQLiteHandler:
                 return request_id, {
                     "ok": 1,
                     "cursor": {
-                        "id": stream._id,
+                        "id": Int64(stream._id),
                         "ns": expected_ns,
                         "nextBatch": next_batch,
                         "postBatchResumeToken": token,
@@ -2802,7 +2804,7 @@ class NeoSQLiteHandler:
                 return request_id, {
                     "ok": 1,
                     "cursor": {
-                        "id": 0,
+                        "id": Int64(0),
                         "ns": expected_ns,
                         "nextBatch": [],
                     },
@@ -3043,7 +3045,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": 0,
+                    "id": Int64(0),
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": docs,
                 },
@@ -3194,7 +3196,7 @@ class NeoSQLiteHandler:
                 return request_id, {
                     "ok": 1,
                     "cursor": {
-                        "id": cursor_id,
+                        "id": Int64(cursor_id),
                         "ns": f"{db_name}.{coll_name}",
                         "firstBatch": first,
                     },
@@ -3210,7 +3212,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": cursor_id,
+                    "id": Int64(cursor_id),
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": first,
                 },
@@ -3267,7 +3269,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": 0,
+                    "id": Int64(0),
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": docs,
                 },
@@ -3697,7 +3699,7 @@ class NeoSQLiteHandler:
         return request_id, {
             "ok": 1,
             "cursor": {
-                "id": 0,
+                "id": Int64(0),
                 "ns": "admin.$cmd.bulkWrite",
                 "firstBatch": results,
             },
@@ -3835,7 +3837,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": stream._id,  # Use stream ID as cursor ID
+                    "id": Int64(stream._id),  # Use stream ID as cursor ID
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": [],
                     "postBatchResumeToken": stream.get_resume_token(),
@@ -3977,7 +3979,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": 0,
+                    "id": Int64(0),
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": [],
                 },
@@ -4013,7 +4015,7 @@ class NeoSQLiteHandler:
         return request_id, {
             "ok": 1,
             "cursor": {
-                "id": 0,
+                "id": Int64(0),
                 "ns": f"{db_name}.{coll_name}",
                 "firstBatch": index_list,
             },
@@ -4047,7 +4049,7 @@ class NeoSQLiteHandler:
             return request_id, {
                 "ok": 1,
                 "cursor": {
-                    "id": 0,
+                    "id": Int64(0),
                     "ns": f"{db_name}.{coll_name}",
                     "firstBatch": [],
                 },
@@ -4062,7 +4064,7 @@ class NeoSQLiteHandler:
         return request_id, {
             "ok": 1,
             "cursor": {
-                "id": 0,
+                "id": Int64(0),
                 "ns": f"{db_name}.{coll_name}",
                 "firstBatch": index_list,
             },
@@ -4099,7 +4101,7 @@ class NeoSQLiteHandler:
         return request_id, {
             "ok": 1,
             "cursor": {
-                "id": 0,
+                "id": Int64(0),
                 "ns": f"{db_name}.$cmd.listCollections",
                 "firstBatch": collections,
             },

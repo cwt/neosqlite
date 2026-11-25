@@ -178,7 +178,8 @@ class OP_MSG:
     """Parser for MongoDB ``OP_MSG`` wire protocol messages.
 
     Decodes the 16-byte header, 4-byte flags (stripping a trailing 4-byte
-    checksum when bit ``0x2`` is set), and section payloads of kind ``0``
+    CRC-32C checksum when bit ``0x1`` ``checksumPresent`` is set, and
+    reporting bit ``0x2`` ``moreToCome``), and section payloads of kind ``0``
     (single body document), ``1`` (named document sequence), or ``2``
     (counted payload documents).
     """
@@ -194,12 +195,16 @@ class OP_MSG:
         Returns:
             dict[str, Any]: Parsed message metadata and decoded sections
             containing ``request_id``, ``response_to``, ``opcode``,
-            ``flags``, and ``sections``.
+            ``flags``, ``more_to_come``, and ``sections``.
 
         Raises:
-            ValueError: If BSON document lengths, section bounds, C-string
-                terminators, or section kind bytes are invalid.
+            ValueError: If message size, BSON document lengths, section
+                bounds, C-string terminators, or section kind bytes are
+                invalid.
         """
+        if len(message_bytes) < 21:
+            raise ValueError("OP_MSG message too short")
+
         message_length = struct.unpack("<i", message_bytes[0:4])[0]
         request_id = struct.unpack("<i", message_bytes[4:8])[0]
         response_to = struct.unpack("<i", message_bytes[8:12])[0]
@@ -208,10 +213,15 @@ class OP_MSG:
         flags = struct.unpack("<I", message_bytes[offset : offset + 4])[0]
         offset += 4
 
-        has_checksum = bool(flags & 0x2)
+        has_checksum = bool(flags & 0x1)
+        more_to_come = bool(flags & 0x2)
         effective_length = (
             message_length - 4 if has_checksum else message_length
         )
+        if effective_length < 21 or effective_length > len(message_bytes):
+            raise ValueError(
+                f"Invalid OP_MSG effective length: {effective_length}"
+            )
 
         sections: list[tuple[str, Any]] = []
         while offset < effective_length:
@@ -219,6 +229,10 @@ class OP_MSG:
             offset += 1
 
             if section_type == 0:
+                if offset + 4 > effective_length:
+                    raise ValueError(
+                        "Section 0 document header extends beyond message"
+                    )
                 doc_len = struct.unpack(
                     "<i", message_bytes[offset : offset + 4]
                 )[0]
@@ -229,7 +243,7 @@ class OP_MSG:
                     )
                     raise ValueError(f"Invalid BSON document length: {doc_len}")
 
-                if offset + doc_len > len(message_bytes):
+                if offset + doc_len > effective_length:
                     logger.error(
                         f"Document extends beyond data: offset={offset}, "
                         f"doc_len={doc_len}, data_len={len(message_bytes)}, "
@@ -250,11 +264,12 @@ class OP_MSG:
                 ]
                 offset += 4
 
-                if size < 4 or section_start + size > effective_length:
+                docs_end = section_start + size
+                if size < 5 or docs_end > effective_length:
                     raise ValueError("Invalid section size in OP_MSG section 1")
 
                 try:
-                    cstring_end = message_bytes.index(b"\x00", offset)
+                    cstring_end = message_bytes.index(b"\x00", offset, docs_end)
                 except ValueError as err:
                     raise ValueError(
                         "Null terminator missing in section 1 identifier"
@@ -263,7 +278,6 @@ class OP_MSG:
                 offset = cstring_end + 1
 
                 docs_start = offset
-                docs_end = section_start + size
                 if docs_start > docs_end:
                     raise ValueError("Malformed section 1 sequence")
                 doc_data = message_bytes[docs_start:docs_end]
@@ -272,12 +286,16 @@ class OP_MSG:
                 doc_offset = 0
                 while doc_offset < len(doc_data):
                     if doc_offset + 4 > len(doc_data):
-                        break
+                        raise ValueError(
+                            "Truncated BSON document header in OP_MSG section 1"
+                        )
                     doc_len = struct.unpack(
                         "<i", doc_data[doc_offset : doc_offset + 4]
                     )[0]
-                    if doc_len <= 0 or doc_len > len(doc_data) - doc_offset:
-                        break
+                    if doc_len <= 0 or doc_offset + doc_len > len(doc_data):
+                        raise ValueError(
+                            f"Invalid BSON document length in section 1: {doc_len}"
+                        )
                     doc = BSON(
                         doc_data[doc_offset : doc_offset + doc_len]
                     ).decode()
@@ -319,6 +337,7 @@ class OP_MSG:
             "response_to": response_to,
             "opcode": opcode,
             "flags": flags,
+            "more_to_come": more_to_come,
             "sections": sections,
         }
 
