@@ -16,6 +16,20 @@ from collections import OrderedDict
 from operator import itemgetter
 from typing import Any
 
+from ...binary import Binary
+
+_ORDER_SENSITIVE_KEYS = frozenset(
+    {
+        "$sort",
+        "sortBy",
+        "$addFields",
+        "$set",
+        "$project",
+        "$setWindowFields",
+        "$fill",
+    }
+)
+
 
 class CacheEntry:
     """Single cache entry with hit statistics.
@@ -144,21 +158,29 @@ class TranslationCache:
         for stage in pipeline:
             stage_name = next(iter(stage.keys()))
             spec = stage[stage_name]
-            key_parts.append(f"{stage_name}:{self._canonicalize(spec)}")
+            preserve_order = stage_name in _ORDER_SENSITIVE_KEYS
+            key_parts.append(
+                f"{stage_name}:{self._canonicalize(spec, preserve_order=preserve_order)}"
+            )
         return "|".join(key_parts)
 
-    def _canonicalize(self, value: Any) -> tuple:
+    def _canonicalize(
+        self, value: Any, *, preserve_order: bool = False
+    ) -> tuple:
         """Recursively convert a value into a hashable, type-tagged tuple.
 
         Type tags distinguish values that Python would otherwise equate
-        (e.g., ``True`` vs ``1``, ``1`` vs ``1.0``) so semantically different
-        pipelines never share a cache entry. Arbitrary objects such as
-        ``ObjectId`` or ``datetime`` are tagged by type name and string
-        representation.
+        (e.g., ``True`` vs ``1``, ``1`` vs ``1.0``, ``Binary`` subtypes).
+        Dictionary key order is preserved inside order-sensitive clauses such
+        as ``$sort``, ``sortBy``, ``$addFields``, ``$set``, ``$project``,
+        ``$setWindowFields``, and ``$fill``, while commutative filter dicts are
+        sorted by key.
 
         Args:
             value: Arbitrary pipeline value or nested structure to
                 canonicalize.
+            preserve_order: Whether to preserve dictionary insertion order
+                rather than sorting keys.
 
         Returns:
             tuple: Hashable, type-tagged representation of ``value``.
@@ -175,15 +197,33 @@ class TranslationCache:
             case None:
                 return ("z",)
             case dict():
+                items = (
+                    value.items() if preserve_order else sorted(value.items())
+                )
                 return (
                     "d",
                     tuple(
-                        (k, self._canonicalize(v))
-                        for k, v in sorted(value.items())
+                        (
+                            k,
+                            self._canonicalize(
+                                v,
+                                preserve_order=preserve_order
+                                or k in _ORDER_SENSITIVE_KEYS,
+                            ),
+                        )
+                        for k, v in items
                     ),
                 )
             case list() | tuple():
-                return ("l", tuple(self._canonicalize(v) for v in value))
+                return (
+                    "l",
+                    tuple(
+                        self._canonicalize(v, preserve_order=preserve_order)
+                        for v in value
+                    ),
+                )
+            case Binary():
+                return ("B", value.subtype, value.hex())
             case bytes():
                 return ("y", value.hex())
             case _:

@@ -2161,6 +2161,111 @@ class TestMakeKeySafety:
         }
         assert len(keys) == 5
 
+    def test_make_key_preserves_order_and_binary_subtype(self):
+        """$sort/sortBy/$project/$addFields key order and Binary subtype must affect keys."""
+        from neosqlite import Binary
+        from neosqlite.collection.query_helper.translation_cache import (
+            TranslationCache,
+        )
+
+        tc = TranslationCache()
+
+        # Reversed $sort key order must produce distinct cache keys
+        assert tc.make_key([{"$sort": {"a": 1, "b": 1}}]) != tc.make_key(
+            [{"$sort": {"b": 1, "a": 1}}]
+        )
+        # Reversed sortBy inside $setWindowFields / $fill and nested $facet
+        assert tc.make_key(
+            [{"$setWindowFields": {"sortBy": {"a": 1, "b": 1}, "output": {}}}]
+        ) != tc.make_key(
+            [{"$setWindowFields": {"sortBy": {"b": 1, "a": 1}, "output": {}}}]
+        )
+        assert tc.make_key(
+            [{"$facet": {"sub": [{"$sort": {"a": 1, "b": 1}}]}}]
+        ) != tc.make_key([{"$facet": {"sub": [{"$sort": {"b": 1, "a": 1}}]}}])
+        assert tc.make_key([{"$project": {"a": 1, "b": 1}}]) != tc.make_key(
+            [{"$project": {"b": 1, "a": 1}}]
+        )
+        assert tc.make_key([{"$addFields": {"a": 1, "b": 2}}]) != tc.make_key(
+            [{"$addFields": {"b": 2, "a": 1}}]
+        )
+
+        # Binary subtypes must produce distinct cache keys
+        k0 = tc.make_key([{"$match": {"v": Binary(b"abc", 0)}}])
+        k4 = tc.make_key([{"$match": {"v": Binary(b"abc", 4)}}])
+        kb = tc.make_key([{"$match": {"v": b"abc"}}])
+        assert len({k0, k4, kb}) == 3
+
+    def test_sort_order_binary_subtype_rename_and_supported_stages_runtime(
+        self,
+    ):
+        """End-to-end regression test for #197 translation cache bugs."""
+        from neosqlite import Binary
+
+        with neosqlite.Connection(":memory:") as conn:
+            # 1) $sort key-order cache collision
+            conn.s.insert_many(
+                [{"_id": 1, "a": 1, "b": 2}, {"_id": 2, "a": 2, "b": 1}]
+            )
+            r1 = [
+                d["_id"]
+                for d in conn.s.aggregate([{"$sort": {"a": 1, "b": 1}}])
+            ]
+            r2 = [
+                d["_id"]
+                for d in conn.s.aggregate([{"$sort": {"b": 1, "a": 1}}])
+            ]
+            assert r1 == [1, 2]
+            assert r2 == [2, 1]
+
+            # 2) Binary subtype cache collision
+            conn.b.insert_many(
+                [
+                    {"_id": 1, "v": Binary(b"abc", 0)},
+                    {"_id": 2, "v": Binary(b"abc", 4)},
+                ]
+            )
+            b1 = [
+                d["_id"]
+                for d in conn.b.aggregate(
+                    [{"$match": {"v": Binary(b"abc", 0)}}]
+                )
+            ]
+            b2 = [
+                d["_id"]
+                for d in conn.b.aggregate(
+                    [{"$match": {"v": Binary(b"abc", 4)}}]
+                )
+            ]
+            assert b1 == [1]
+            assert b2 == [2]
+
+            # 3) Collection.rename clears stale table names from Tier 1 cache
+            conn.old_coll.insert_many(
+                [{"_id": 1, "x": 10}, {"_id": 2, "x": 20}]
+            )
+            pipeline = [{"$match": {"x": {"$gt": 5}}}, {"$sort": {"_id": 1}}]
+            assert [d["_id"] for d in conn.old_coll.aggregate(pipeline)] == [
+                1,
+                2,
+            ]
+            conn.old_coll.rename("new_coll")
+            assert [d["_id"] for d in conn.new_coll.aggregate(pipeline)] == [
+                1,
+                2,
+            ]
+            assert conn.new_coll.query_engine.get_last_tier() == "tier1"
+
+            # 4) $unwind, $fill, $merge are not in SUPPORTED_STAGES and don't churn cache misses
+            agg = conn.s.query_engine.sql_tier_aggregator
+            for stage_name in ("$unwind", "$fill", "$merge"):
+                assert stage_name not in agg.SUPPORTED_STAGES
+            agg.clear_cache()
+            misses_before = agg.get_cache_stats()["misses"]
+            conn.s.insert_one({"_id": 3, "tags": ["x"]})
+            list(conn.s.aggregate([{"$unwind": "$tags"}]))
+            assert agg.get_cache_stats()["misses"] == misses_before
+
 
 @pytest.fixture
 def connection():

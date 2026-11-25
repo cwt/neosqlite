@@ -687,6 +687,18 @@ class Collection:
         except Exception:
             pass
         self._invalidate_ttl_cache()
+        # Clear query translation caches so cached SQL cannot reference old_name
+        query_engine = self.__dict__.get("query_engine")
+        if query_engine is not None:
+            sql_tier_aggregator = getattr(
+                query_engine, "sql_tier_aggregator", None
+            )
+            if sql_tier_aggregator is not None:
+                sql_tier_aggregator.clear_cache()
+            helpers = getattr(query_engine, "helpers", None)
+            tier2 = getattr(helpers, "tier2_evaluator", None)
+            if tier2 is not None:
+                tier2.clear_cache()
 
     def options(self) -> dict[str, Any]:
         """Retrieve schema metadata and PyMongo-compatible collection options.

@@ -40,10 +40,8 @@ class SQLTierAggregator(StageBuildersMixin):
         "$sort",
         "$skip",
         "$limit",
-        "$unwind",
         "$count",
         "$setWindowFields",
-        "$fill",
         "$unset",
         "$replaceRoot",
         "$replaceWith",
@@ -53,7 +51,6 @@ class SQLTierAggregator(StageBuildersMixin):
         "$redact",
         "$unionWith",
         "$lookup",
-        "$merge",
         "$densify",
         "$graphLookup",
         "$facet",
@@ -258,9 +255,9 @@ class SQLTierAggregator(StageBuildersMixin):
         if not pipeline or not self.can_optimize_pipeline(pipeline):
             return None, []
 
-        # Try to get from cache. Keys canonicalize literal values, so a hit
-        # implies an identical pipeline and the stored parameters are exact.
-        cache_key = self._translation_cache.make_key(pipeline)
+        # Try to get from cache. Keys include collection name and canonicalized
+        # literal values, so a hit implies an identical table and pipeline.
+        cache_key = self._make_cache_key(pipeline)
         cached = self._translation_cache.get(cache_key)
 
         if cached is not None:
@@ -345,6 +342,10 @@ class SQLTierAggregator(StageBuildersMixin):
         """
         return self._translation_cache.dump()
 
+    def _make_cache_key(self, pipeline: list[dict]) -> str:
+        """Build a collection-scoped cache key for ``pipeline``."""
+        return f"{self.collection.name}|{self._translation_cache.make_key(pipeline)}"
+
     def cache_contains(self, pipeline: list[dict]) -> bool:
         """Check whether a compiled SQL template for ``pipeline`` is cached.
 
@@ -354,7 +355,7 @@ class SQLTierAggregator(StageBuildersMixin):
         Returns:
             bool: ``True`` if an entry exists in the translation cache.
         """
-        key = self._translation_cache.make_key(pipeline)
+        key = self._make_cache_key(pipeline)
         return self._translation_cache.contains(key)
 
     def evict_from_cache(self, pipeline: list[dict]) -> bool:
@@ -366,7 +367,7 @@ class SQLTierAggregator(StageBuildersMixin):
         Returns:
             bool: ``True`` if an entry was removed, else ``False``.
         """
-        key = self._translation_cache.make_key(pipeline)
+        key = self._make_cache_key(pipeline)
         return self._translation_cache.evict(key)
 
     def cache_size(self) -> int:

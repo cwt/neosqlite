@@ -615,8 +615,6 @@ class StageBuildersMixin:
                 return self._build_lookup_sql(
                     stage_spec, prev_stage, context, preserve_root
                 )
-            case "$merge":
-                return self._build_merge_sql(stage_spec, prev_stage, context)
             case "$densify":
                 return self._build_densify_sql(
                     stage_spec, prev_stage, context, preserve_root
@@ -1474,20 +1472,6 @@ class StageBuildersMixin:
             FROM {prev_stage} AS t1
         """
         return sql, []
-
-    def _build_merge_sql(self, spec, prev_stage, context):
-        """Return fallback sentinel for ``$merge`` (not executed as read SQL).
-
-        Args:
-            spec: The ``$merge`` stage specification.
-            prev_stage: SQL table or CTE name supplying input rows.
-            context: Active ``PipelineContext``.
-
-        Returns:
-            tuple[None, list[Any]]: Always ``(None, [])`` so ``$merge`` runs
-                in the Python tier.
-        """
-        return None, []
 
     def _build_densify_sql(
         self, spec, prev_stage, context, preserve_root: bool = False
