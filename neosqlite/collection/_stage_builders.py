@@ -165,6 +165,8 @@ def build_graph_lookup_parts(
     """
     if not isinstance(spec, dict):
         return None
+    _json_prefix = jsonb.json_function_prefix
+    _json_each = jsonb.json_each_function
 
     from_collection = spec.get("from")
     start_with = spec.get("startWith")
@@ -211,7 +213,7 @@ def build_graph_lookup_parts(
         and not start_with.startswith("$$")
     ):
         sw_path = parse_json_path(start_with[1:])
-        start_sql = f"json_extract(p.data, '{sw_path}')"
+        start_sql = f"{_json_prefix}_extract(p.data, '{sw_path}')"
         is_arr_expr = f"(CASE WHEN json_type(p.data, '{sw_path}') = 'array' THEN 1 ELSE 0 END)"
     elif isinstance(start_with, list):
         start_sql = "?"
@@ -274,11 +276,11 @@ def build_graph_lookup_parts(
             return f"t._id = {norm_val}"
         to_path = parse_json_path(connect_to_field)
         scalar_to = _graph_lookup_scalar_or_oid(
-            f"json_extract(t.data, '{to_path}')"
+            f"{_json_prefix}_extract(t.data, '{to_path}')"
         )
         return (
             f"(CASE WHEN json_type(t.data, '{to_path}') = 'array' "
-            f"THEN EXISTS (SELECT 1 FROM json_each(t.data, '{to_path}') _te "
+            f"THEN EXISTS (SELECT 1 FROM {_json_each}(t.data, '{to_path}') _te "
             f"WHERE {_graph_lookup_scalar_or_oid('_te.value')} = {norm_val}) "
             f"ELSE {scalar_to} = {norm_val} END)"
         )
@@ -309,7 +311,7 @@ def build_graph_lookup_parts(
         JOIN {quoted_target} t ON (
             CASE WHEN _p._sw_arr = 1
             THEN EXISTS (
-                SELECT 1 FROM json_each(_p._sw) _se
+                SELECT 1 FROM {_json_each}(_p._sw) _se
                 WHERE _se.value IS NOT NULL AND {target_match('_se.value')}
             )
             ELSE _p._sw IS NOT NULL AND {target_match('_p._sw')}
@@ -324,10 +326,10 @@ def build_graph_lookup_parts(
         )
     else:
         from_path = parse_json_path(connect_from_field)
-        scalar_from = f"json_extract(r.found_data, '{from_path}')"
+        scalar_from = f"{_json_prefix}_extract(r.found_data, '{from_path}')"
         rec_join_cond = (
             f"CASE WHEN json_type(r.found_data, '{from_path}') = 'array' "
-            f"THEN EXISTS (SELECT 1 FROM json_each(r.found_data, '{from_path}') _re "
+            f"THEN EXISTS (SELECT 1 FROM {_json_each}(r.found_data, '{from_path}') _re "
             f"WHERE _re.value IS NOT NULL AND {target_match('_re.value')}) "
             f"ELSE {scalar_from} IS NOT NULL AND {target_match(scalar_from)} END"
         )
@@ -962,7 +964,7 @@ class StageBuildersMixin:
             _append_root_column(inner_parts, context, preserve_root)
             outer_parts = [
                 "id",
-                "json_extract(_pdata, '$._id') AS _id",
+                f"{self.jsonb.json_function_prefix}_extract(_pdata, '$._id') AS _id",
                 "_pdata AS data",
             ]
             if preserve_root or context.has_root:
@@ -1074,7 +1076,7 @@ class StageBuildersMixin:
         )
         id_expr = (
             "CASE WHEN json_type(_new_data, '$._id') IS NOT NULL "
-            "THEN json_extract(_new_data, '$._id') ELSE _id END AS _id"
+            f"THEN {self.jsonb.json_function_prefix}_extract(_new_data, '$._id') ELSE _id END AS _id"
         )
         outer_parts = ["id", id_expr, f"{data_expr} AS data"]
         if preserve_root or context.has_root:
