@@ -91,7 +91,7 @@ class SqlAggregationMixin:
         # Additional optimization: Check if we can push match filters down into SQL operations
         effective_pipeline = self._optimize_match_pushdown(effective_pipeline)
 
-        where_clause = ""
+        where_clauses: list[str] = []
         params: list[Any] = []
         order_by = ""
         limit = ""
@@ -99,17 +99,37 @@ class SqlAggregationMixin:
         group_by = ""
         select_clause = "SELECT id, data"
         output_fields: list[str] | None = None
+        seen_group = False
+        seen_sort = False
+        seen_skip = False
+        seen_limit = False
+        seen_unwind = False
 
         for i, stage in enumerate(effective_pipeline):
             stage_name = next(iter(stage.keys()))
             match stage_name:
                 case "$match":
+                    if (
+                        seen_group
+                        or seen_sort
+                        or seen_skip
+                        or seen_limit
+                        or seen_unwind
+                    ):
+                        return None
                     query = stage["$match"]
                     where_result = self._build_simple_where_clause(query)
                     if where_result is None:
                         return None  # Fallback for complex queries
-                    where_clause, params, tables = where_result
+                    stage_where, stage_params, _ = where_result
+                    stage_where = stage_where.removeprefix("WHERE ")
+                    if stage_where and stage_where.strip():
+                        where_clauses.append(f"({stage_where})")
+                        params.extend(stage_params)
                 case "$sort":
+                    if seen_limit or seen_skip or seen_sort:
+                        return None
+                    seen_sort = True
                     sort_spec = stage["$sort"]
                     sort_clauses = []
                     for key, direction in sort_spec.items():
@@ -128,12 +148,18 @@ class SqlAggregationMixin:
                             )
                     order_by = "ORDER BY " + ", ".join(sort_clauses)
                 case "$skip":
+                    if seen_limit or seen_skip:
+                        return None
+                    seen_skip = True
                     count = stage["$skip"]
                     # SQLite requires LIMIT when OFFSET is present (#166)
                     if not limit:
                         limit = "LIMIT -1"
                     offset = f"OFFSET {count}"
                 case "$limit":
+                    if seen_limit:
+                        return None
+                    seen_limit = True
                     count = stage["$limit"]
                     if (
                         not isinstance(count, int)
@@ -147,37 +173,52 @@ class SqlAggregationMixin:
                 case "$group":
                     # Check if this is a $unwind + $group pattern we can optimize
                     optimization_result = self._optimize_unwind_group_pattern(
-                        i, pipeline
+                        i, effective_pipeline
                     )
                     if optimization_result is not None:
                         return optimization_result
 
-                    # A group stage must be the first stage or after a match stage
-                    if i > 1 or (i == 1 and "$match" not in pipeline[0]):
+                    # A group stage must be first or preceded only by $match stages
+                    if (
+                        seen_group
+                        or seen_sort
+                        or seen_skip
+                        or seen_limit
+                        or seen_unwind
+                        or any(
+                            "$match" not in prev_stage
+                            for prev_stage in effective_pipeline[:i]
+                        )
+                    ):
                         return None
+                    seen_group = True
                     group_spec = stage["$group"]
                     group_result = self._build_group_query(group_spec)
                     if group_result is None:
                         return None
                     select_clause, group_by, output_fields = group_result
                 case "$unwind":
+                    seen_unwind = True
                     # Check if this is followed by $match with $text - fall back to temp tables
                     # The text search on unwound elements requires special handling that
                     # the single-SQL optimization cannot provide
                     # Also check for multiple consecutive $unwind stages
-                    if len(pipeline) > i + 1:
+                    if len(effective_pipeline) > i + 1:
                         # Count consecutive $unwind stages starting from position i
                         unwind_count = 0
                         match_with_text_idx = -1
                         j = i
-                        while j < len(pipeline) and "$unwind" in pipeline[j]:
+                        while (
+                            j < len(effective_pipeline)
+                            and "$unwind" in effective_pipeline[j]
+                        ):
                             unwind_count += 1
                             j += 1
                         # Check if next stage after unwinds is $match with $text
                         if (
-                            j < len(pipeline)
-                            and "$match" in pipeline[j]
-                            and "$text" in pipeline[j]["$match"]
+                            j < len(effective_pipeline)
+                            and "$match" in effective_pipeline[j]
+                            and "$text" in effective_pipeline[j]["$match"]
                         ):
                             match_with_text_idx = j
 
@@ -187,9 +228,13 @@ class SqlAggregationMixin:
 
                     # Check if this is part of an $unwind + $group pattern we can optimize
                     # Case 1: $unwind is first stage followed by $group
-                    if i == 0 and len(pipeline) > 1 and "$group" in pipeline[1]:
+                    if (
+                        i == 0
+                        and len(effective_pipeline) > 1
+                        and "$group" in effective_pipeline[1]
+                    ):
                         # $unwind followed by $group - try to optimize with SQL
-                        group_stage = pipeline[1]["$group"]
+                        group_stage = effective_pipeline[1]["$group"]
                         unwind_field = stage["$unwind"]
 
                         if (
@@ -286,6 +331,9 @@ class SqlAggregationMixin:
                 case _:
                     return None  # Fallback for unsupported stages
 
+        where_clause = (
+            f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        )
         cmd = f"{select_clause} FROM {quote_table_name(self.collection.name)} {where_clause} {group_by} {order_by} {limit} {offset}"
         return cmd, params, output_fields
 

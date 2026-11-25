@@ -3872,3 +3872,81 @@ def test_regex_with_options_in_find():
         assert len(results) == 3
         names = {r["name"] for r in results}
         assert names == {"Alice", "Bob", "Charlie"}
+
+
+def test_pipeline_match_barriers_and_51_stage_parity():
+    """Verify end-to-end parity across post-$group/$limit/$lookup/$unwind/$match and >50 stages (#196)."""
+    from neosqlite.collection.query_helper import set_force_fallback
+
+    with neosqlite.Connection(":memory:") as conn:
+        sales = conn.sales
+        extra = conn.extra
+        sales.insert_many(
+            [
+                {
+                    "_id": 1,
+                    "cat": "A",
+                    "amt": 8,
+                    "b": 1,
+                    "tags": ["x", "y"],
+                },
+                {"_id": 2, "cat": "A", "amt": 9, "b": 1, "tags": ["y"]},
+                {"_id": 3, "cat": "B", "amt": 2, "b": 1, "tags": ["x"]},
+            ]
+        )
+        extra.insert_many(
+            [
+                {"_id": 10, "cat": "A", "label": "alpha"},
+                {"_id": 11, "cat": "B", "label": "beta"},
+            ]
+        )
+        sales.create_index("cat")
+
+        pipelines = [
+            [
+                {"$group": {"_id": "$cat", "total": {"$sum": "$amt"}}},
+                {"$match": {"total": {"$gt": 10}}},
+            ],
+            [
+                {"$sort": {"amt": -1}},
+                {"$limit": 1},
+                {"$match": {"_id": 3}},
+            ],
+            [
+                {"$sort": {"_id": 1}},
+                {"$skip": 1},
+                {"$match": {"cat": "A"}},
+            ],
+            [
+                {"$unwind": "$tags"},
+                {"$match": {"tags": "x"}},
+                {"$sort": {"_id": 1}},
+            ],
+            [
+                {"$unwind": "$tags"},
+                {"$match": {"cat": "B"}},
+            ],
+            [
+                {
+                    "$lookup": {
+                        "from": "extra",
+                        "localField": "cat",
+                        "foreignField": "cat",
+                        "as": "info",
+                    }
+                },
+                {"$match": {"info.label": "beta"}},
+            ],
+            [{"$match": {"_id": 1}}]
+            + [{"$match": {"b": 1}} for _ in range(50)],
+        ]
+
+        try:
+            for pipeline in pipelines:
+                set_force_fallback(False)
+                sql_res = list(sales.aggregate(pipeline))
+                set_force_fallback(True)
+                py_res = list(sales.aggregate(pipeline))
+                assert sql_res == py_res, f"Parity mismatch for {pipeline}"
+        finally:
+            set_force_fallback(False)

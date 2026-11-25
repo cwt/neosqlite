@@ -13,6 +13,114 @@ if TYPE_CHECKING:
     from .. import Collection
 
 
+def _extract_match_fields(match_spec: dict[str, Any]) -> set[str] | None:
+    """Collect field paths referenced in a ``$match`` specification.
+
+    Returns ``None`` if the specification contains query-level operators whose
+    dependencies cannot be statically determined or safely reordered (such as
+    ``$expr``, ``$where``, ``$text``, or ``$jsonSchema``), or non-dict inputs.
+
+    Args:
+        match_spec: A ``$match`` filter dictionary.
+
+    Returns:
+        set[str] | None: Referenced document field paths, or ``None`` if the
+        filter must stay in place.
+    """
+    if not isinstance(match_spec, dict):
+        return None
+    fields: set[str] = set()
+    for key, value in match_spec.items():
+        if key in ("$and", "$or", "$nor"):
+            if not isinstance(value, list):
+                return None
+            for sub in value:
+                sub_fields = _extract_match_fields(sub)
+                if sub_fields is None:
+                    return None
+                fields.update(sub_fields)
+        elif key.startswith("$"):
+            return None
+        else:
+            fields.add(key)
+    return fields
+
+
+def _fields_overlap(field_a: str, field_b: str) -> bool:
+    """Return True if two dotted field paths equal or one nests inside another."""
+    return (
+        field_a == field_b
+        or field_a.startswith(f"{field_b}.")
+        or field_b.startswith(f"{field_a}.")
+    )
+
+
+def _can_match_cross_stage(
+    match_fields: set[str] | None, prev_stage: dict[str, Any]
+) -> bool:
+    """Return whether a ``$match`` stage may safely bubble left of ``prev_stage``."""
+    if (
+        match_fields is None
+        or not isinstance(prev_stage, dict)
+        or not prev_stage
+    ):
+        return False
+    stage_name = next(iter(prev_stage.keys()))
+    if stage_name == "$sort":
+        return True
+    if stage_name == "$unwind":
+        unwind_spec = prev_stage["$unwind"]
+        unwound_path: str | None = None
+        index_field: str | None = None
+        if isinstance(unwind_spec, str) and unwind_spec.startswith("$"):
+            unwound_path = unwind_spec[1:]
+        elif isinstance(unwind_spec, dict):
+            raw_path = unwind_spec.get("path")
+            if isinstance(raw_path, str) and raw_path.startswith("$"):
+                unwound_path = raw_path[1:]
+            idx_val = unwind_spec.get("includeArrayIndex")
+            if isinstance(idx_val, str):
+                index_field = idx_val
+        if not unwound_path:
+            return False
+        if any(_fields_overlap(f, unwound_path) for f in match_fields):
+            return False
+        if index_field and any(
+            _fields_overlap(f, index_field) for f in match_fields
+        ):
+            return False
+        return True
+    if stage_name == "$lookup":
+        lookup_spec = prev_stage["$lookup"]
+        if not isinstance(lookup_spec, dict):
+            return False
+        as_field = lookup_spec.get("as")
+        if not isinstance(as_field, str) or not as_field:
+            return False
+        return not any(_fields_overlap(f, as_field) for f in match_fields)
+    if stage_name in ("$addFields", "$set"):
+        add_spec = prev_stage[stage_name]
+        if not isinstance(add_spec, dict):
+            return False
+        return not any(
+            _fields_overlap(f, added)
+            for f in match_fields
+            for added in add_spec.keys()
+        )
+    if stage_name == "$unset":
+        unset_spec = prev_stage["$unset"]
+        if isinstance(unset_spec, str):
+            unset_fields = [unset_spec]
+        elif isinstance(unset_spec, list):
+            unset_fields = [u for u in unset_spec if isinstance(u, str)]
+        else:
+            return False
+        return not any(
+            _fields_overlap(f, u) for f in match_fields for u in unset_fields
+        )
+    return False
+
+
 class QueryOptimizerMixin:
     """Mixin class providing query optimization and cost-estimation methods.
 
@@ -252,15 +360,54 @@ class QueryOptimizerMixin:
 
         return total_cost
 
+    def _bubble_matches_left(
+        self,
+        pipeline: list[dict[str, Any]],
+        *,
+        only_indexed: bool,
+        indexed_fields: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Bubble eligible ``$match`` stages leftward one barrier-safe step at a time."""
+        optimized = list(pipeline)
+        for i in range(len(optimized)):
+            stage = optimized[i]
+            if (
+                not isinstance(stage, dict)
+                or next(iter(stage.keys()), None) != "$match"
+            ):
+                continue
+            match_fields = _extract_match_fields(stage["$match"])
+            if match_fields is None:
+                continue
+            if only_indexed:
+                assert indexed_fields is not None
+                if not any(
+                    f == "_id" or f in indexed_fields for f in match_fields
+                ):
+                    continue
+            pos = i
+            while pos > 0 and _can_match_cross_stage(
+                match_fields, optimized[pos - 1]
+            ):
+                optimized[pos - 1], optimized[pos] = (
+                    optimized[pos],
+                    optimized[pos - 1],
+                )
+                pos -= 1
+        return optimized
+
     def _optimize_match_pushdown(
         self, pipeline: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Optimize a pipeline by moving eligible ``$match`` stages earlier.
+        """Optimize a pipeline by bubbling eligible ``$match`` stages earlier.
 
-        Moves ``$match`` stages ahead of other stages when the pipeline has
-        at least two stages and contains expensive stages (``$unwind``,
-        ``$group``, or ``$lookup``). Stages containing ``$text`` or
-        ``$jsonSchema`` are kept in place so their semantics stay intact.
+        Moves ``$match`` stages leftward across one adjacent stage at a time
+        only when semantically safe: never across ``$limit``, ``$skip``,
+        ``$sample``, ``$group``, ``$bucket``, ``$bucketAuto``, ``$facet``,
+        ``$count``, ``$project``, window/densify/fill/redact/replace stages,
+        ``$out``, ``$merge``, ``$unionWith``, or ``$graphLookup``, and only
+        across ``$unwind``/``$lookup``/``$addFields``/``$set``/``$unset`` when
+        no referenced match field overlaps modified or generated paths.
 
         Args:
             pipeline: Aggregation pipeline stages to optimize.
@@ -271,40 +418,7 @@ class QueryOptimizerMixin:
         if len(pipeline) < 2:
             return pipeline
 
-        # Look for patterns where we can push matches down
-        optimized = pipeline.copy()
-
-        # Find all $match stages
-        match_stages = []
-        other_stages = []
-
-        for i, stage in enumerate(optimized):
-            stage_name = next(iter(stage.keys()))
-            if stage_name == "$match":
-                # Don't push down $match with $text search or $jsonSchema - they need to operate
-                # on the data as transformed by previous stages or required specific handling
-                match_spec = stage["$match"]
-                if "$text" in match_spec or "$jsonSchema" in match_spec:
-                    other_stages.append((i, stage))
-                else:
-                    match_stages.append((i, stage))
-            else:
-                other_stages.append((i, stage))
-
-        # If we have matches and expensive operations, consider reordering
-        expensive_ops = {"$unwind", "$group", "$lookup"}
-        has_expensive_ops = any(
-            next(iter(stage.keys())) in expensive_ops
-            for _, stage in other_stages
-        )
-
-        if match_stages and has_expensive_ops:
-            # Move matches to the front to filter early
-            match_stage_items = [stage for _, stage in match_stages]
-            other_stage_items = [stage for _, stage in other_stages]
-            return match_stage_items + other_stage_items
-
-        return optimized
+        return self._bubble_matches_left(pipeline, only_indexed=False)
 
     def _is_datetime_indexed_field(self, field: str) -> bool:
         """Check if a field has a UTC datetime index in ``sqlite_master``.
@@ -336,11 +450,10 @@ class QueryOptimizerMixin:
     def _reorder_pipeline_for_indexes(
         self, pipeline: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
-        """Reorder pipeline stages to place index-backed matches first.
+        """Reorder pipeline stages to place index-backed matches earlier.
 
         Moves ``$match`` stages that reference ``_id`` or an indexed field
-        (either directly or nested inside ``$and``/``$or`` lists) to the start
-        of the pipeline ahead of all other stages.
+        leftward only across stages that preserve filter semantics.
 
         Args:
             pipeline: Original list of aggregation pipeline stages.
@@ -351,50 +464,7 @@ class QueryOptimizerMixin:
         if not pipeline:
             return pipeline
 
-        # Get indexed fields
         indexed_fields = set(self._get_indexed_fields())
-
-        # Separate match stages with indexed fields from others
-        indexed_matches = []
-        other_stages = []
-
-        for stage in pipeline:
-            stage_name = next(iter(stage.keys()))
-            if stage_name == "$match":
-                # Check if this match uses indexed fields
-                match_query = stage["$match"]
-                has_indexed_field = False
-
-                # Simple check for direct field references
-                for field in match_query.keys():
-                    if field in indexed_fields or field == "_id":
-                        has_indexed_field = True
-                        break
-
-                # For logical operators, check nested fields
-                if not has_indexed_field:
-                    for field, value in match_query.items():
-                        if field in ("$and", "$or") and isinstance(value, list):
-                            for condition in value:
-                                if isinstance(condition, dict):
-                                    for subfield in condition.keys():
-                                        if (
-                                            subfield in indexed_fields
-                                            or subfield == "_id"
-                                        ):
-                                            has_indexed_field = True
-                                            break
-                                    if has_indexed_field:
-                                        break
-                        elif field == "_id":
-                            has_indexed_field = True
-
-                if has_indexed_field:
-                    indexed_matches.append(stage)
-                else:
-                    other_stages.append(stage)
-            else:
-                other_stages.append(stage)
-
-        # Return reordered pipeline: indexed matches first, then other stages
-        return indexed_matches + other_stages
+        return self._bubble_matches_left(
+            pipeline, only_indexed=True, indexed_fields=indexed_fields
+        )
