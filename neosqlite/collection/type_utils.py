@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ..exceptions import InvalidOperation
-from .jsonb_support import json_constructor
+from .jsonb_support import json_constructor, json_function
 
 # =============================================================================
 # Type Conversion Functions
@@ -989,11 +989,15 @@ def build_json_containment_parts(
     arr_params: list[Any] = []
     for k in range(1, len(segs) + 1):
         arr_path = f"'{parse_json_path('.'.join(segs[:k]), preserve_id=False)}'"
-        arr_expr = "json_extract(" + data_expr + ", " + arr_path + ")"
+        arr_extract_func = json_function("extract", bool(jsonb_supported))
+        arr_expr = f"{arr_extract_func}(" + data_expr + ", " + arr_path + ")"
         rest = segs[k:]
         if rest:
             leaf_path = parse_json_path(".".join(rest), preserve_id=False)
-            elem_cmp = f"json_extract(value, '{leaf_path}') = ?"
+            elem_extract_func = json_function(
+                "extract", json_each_function == "jsonb_each"
+            )
+            elem_cmp = f"{elem_extract_func}(value, '{leaf_path}') = ?"
             if isinstance(value, (bool, int, float)):
                 elem_cmp = f"(json_type(value, '{leaf_path}') IN {json_type_list_sql(value)} AND {elem_cmp})"
             elem_pred = f"CASE WHEN type = 'object' THEN {elem_cmp} ELSE 0 END"
