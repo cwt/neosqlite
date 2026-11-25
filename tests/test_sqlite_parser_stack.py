@@ -10,7 +10,9 @@ from neosqlite.collection.jsonb_support import supports_jsonb
 import neosqlite
 from neosqlite.collection.query_helper import _sql_updates
 
-_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
+_JSONB_PROBE_CONN = sqlite3.connect(":memory:")
+_JSONB_AVAILABLE = supports_jsonb(_JSONB_PROBE_CONN)
+_JSONB_PROBE_CONN.close()
 from neosqlite.collection.query_helper.utils import (
     _check_sqlite_version,
     _supports_heap_parser_stack,

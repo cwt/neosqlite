@@ -7,7 +7,9 @@ from neosqlite._sqlite import sqlite3
 from neosqlite.collection.json_path_utils import parse_json_path
 from neosqlite.collection.jsonb_support import supports_jsonb
 
-_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
+_JSONB_PROBE_CONN = sqlite3.connect(":memory:")
+_JSONB_AVAILABLE = supports_jsonb(_JSONB_PROBE_CONN)
+_JSONB_PROBE_CONN.close()
 from neosqlite.collection.query_helper.utils import (
     set_force_fallback,
 )

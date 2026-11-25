@@ -21,7 +21,9 @@ from neosqlite.collection.sql_tier_aggregator import (
     SQLTierAggregator,
 )
 
-_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
+_JSONB_PROBE_CONN = sqlite3.connect(":memory:")
+_JSONB_AVAILABLE = supports_jsonb(_JSONB_PROBE_CONN)
+_JSONB_PROBE_CONN.close()
 
 
 class TestPipelineContext:

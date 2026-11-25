@@ -13,7 +13,9 @@ from neosqlite.collection.expr_temp_table import TempTableExprEvaluator
 from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.query_helper import set_force_fallback
 
-_JSONB_AVAILABLE = supports_jsonb(sqlite3.connect(":memory:"))
+_JSONB_PROBE_CONN = sqlite3.connect(":memory:")
+_JSONB_AVAILABLE = supports_jsonb(_JSONB_PROBE_CONN)
+_JSONB_PROBE_CONN.close()
 
 
 class TestSQLPythonConsistency:
