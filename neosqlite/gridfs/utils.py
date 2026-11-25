@@ -9,18 +9,32 @@ from __future__ import annotations
 import ast
 import json
 import logging
+import re
 from typing import Any
 
-from ..collection.schema_utils import get_table_columns
+from ..collection.json_helpers import neosqlite_json_dumps, neosqlite_json_loads
+from ..collection.schema_utils import (
+    get_table_columns_cached,
+    invalidate_table_columns_cache,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def sql_regexp(pattern: Any, text: Any) -> bool:
+    """SQLite ``REGEXP`` user function matching ``pattern`` against ``text``."""
+    if text is None or pattern is None:
+        return False
+    return bool(re.search(str(pattern), str(text)))
 
 
 def serialize_metadata(metadata: dict[str, Any] | None) -> str | None:
     """Serialize metadata dictionary to a JSON string for storage.
 
-    Falls back to ``str(metadata)`` if JSON serialization raises ``TypeError``
-    or ``ValueError``.
+    Uses ``neosqlite_json_dumps`` so BSON/NeoSQLite types (``ObjectId``,
+    ``datetime``, ``Binary``, ``date``) serialize cleanly as JSON markers, and
+    falls back to ``str(metadata)`` if serialization raises ``TypeError`` or
+    ``ValueError``.
 
     Args:
         metadata: Metadata dictionary to serialize, or ``None``.
@@ -32,7 +46,7 @@ def serialize_metadata(metadata: dict[str, Any] | None) -> str | None:
     if metadata is None:
         return None
     try:
-        return json.dumps(metadata)
+        return neosqlite_json_dumps(metadata)
     except (TypeError, ValueError) as e:
         logger.debug(
             f"Failed to serialize GridFS metadata to JSON: {e}. Falling back to str()."
@@ -45,7 +59,8 @@ def deserialize_metadata(
 ) -> dict[str, Any] | None:
     """Deserialize a metadata JSON string back to a dictionary.
 
-    Tries ``json.loads`` first, then ``ast.literal_eval`` (when it yields a
+    Tries ``neosqlite_json_loads`` first (restoring ``ObjectId``, ``datetime``,
+    and ``Binary`` markers), then ``ast.literal_eval`` (when it yields a
     ``dict``), and finally wraps the raw string in ``{"_metadata": ...}``.
 
     Args:
@@ -58,7 +73,7 @@ def deserialize_metadata(
     if metadata_str is None:
         return None
     try:
-        return json.loads(metadata_str)
+        return neosqlite_json_loads(metadata_str)
     except (TypeError, ValueError, json.JSONDecodeError) as e:
         logger.debug(
             f"Failed to deserialize GridFS metadata JSON: {e}. Trying ast.literal_eval."
@@ -78,8 +93,8 @@ def deserialize_metadata(
 def serialize_aliases(aliases: list[str] | None) -> str | None:
     """Serialize an aliases list to a JSON string.
 
-    Falls back to ``str(aliases)`` if JSON serialization raises ``TypeError``
-    or ``ValueError``.
+    Uses ``neosqlite_json_dumps`` and falls back to ``str(aliases)`` if JSON
+    serialization raises ``TypeError`` or ``ValueError``.
 
     Args:
         aliases: List of alias strings to serialize, or ``None``.
@@ -91,7 +106,7 @@ def serialize_aliases(aliases: list[str] | None) -> str | None:
     if aliases is None:
         return None
     try:
-        return json.dumps(aliases)
+        return neosqlite_json_dumps(aliases)
     except (TypeError, ValueError) as e:
         logger.debug(
             f"Failed to serialize GridFS aliases to JSON: {e}. Falling back to str()."
@@ -102,10 +117,10 @@ def serialize_aliases(aliases: list[str] | None) -> str | None:
 def deserialize_aliases(aliases_str: str | None) -> list[str] | None:
     """Deserialize an aliases JSON string back to a list of strings.
 
-    Tries ``json.loads`` first; if the decoded value is not a ``list``, wraps
-    its string form in a single-element list. If JSON parsing fails, wraps
-    non-empty strings in a single-element list or returns ``None`` for empty
-    strings.
+    Tries ``neosqlite_json_loads`` first; if the decoded value is not a ``list``,
+    wraps its string form in a single-element list. If JSON parsing fails,
+    wraps non-empty strings in a single-element list or returns ``None`` for
+    empty strings.
 
     Args:
         aliases_str: Serialized aliases string, or ``None``.
@@ -117,7 +132,7 @@ def deserialize_aliases(aliases_str: str | None) -> list[str] | None:
     if aliases_str is None:
         return None
     try:
-        result = json.loads(aliases_str)
+        result = neosqlite_json_loads(aliases_str)
         if isinstance(result, list):
             return result
         # If it's not a list, wrap it in a list
@@ -158,32 +173,7 @@ __all__ = [
     "serialize_aliases",
     "deserialize_aliases",
     "force_sync_if_needed",
+    "get_table_columns_cached",
+    "invalidate_table_columns_cache",
+    "sql_regexp",
 ]
-
-
-_table_columns_cache: dict[tuple[int, str], frozenset[str]] = {}
-
-
-def get_table_columns_cached(db_connection: Any, table_name: str) -> set:
-    """Return column names for a table with a per-connection cache (#152).
-
-    GridFS constructs many ``GridOut`` objects; ``PRAGMA table_info`` per
-    object dominated read paths. Results are cached by ``(id(db_connection),
-    table_name)`` and cleared whenever the cache reaches 128 entries (schema
-    changes are rare, and the connection itself pins its ``id``).
-
-    Args:
-        db_connection: SQLite database connection to inspect.
-        table_name: Name of the table whose column names are returned.
-
-    Returns:
-        set: Copy of the cached set of column names for ``table_name``.
-    """
-    key = (id(db_connection), table_name)
-    cols = _table_columns_cache.get(key)
-    if cols is None:
-        cols = frozenset(get_table_columns(db_connection, table_name))
-        if len(_table_columns_cache) >= 128:
-            _table_columns_cache.clear()
-        _table_columns_cache[key] = cols
-    return set(cols)

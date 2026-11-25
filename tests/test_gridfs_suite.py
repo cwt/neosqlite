@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import time
+from datetime import UTC
 
 import pytest
 
@@ -2752,3 +2753,322 @@ def test_gridin_commit_on_non_autocommit_connection(tmp_path):
     grid_out = bucket2.open_download_stream(file_id)
     assert grid_out.read() == data
     conn2.close()
+
+
+def test_gridfs_collection_delegation_before_bucket_init():
+    """Verify fs.files/fs.chunks access before GridFSBucket init and limit/skip/sort + chunk deletes."""
+    import neosqlite
+
+    with neosqlite.Connection(":memory:") as conn:
+        assert conn.fs.files.count_documents({}) == 0
+        bucket = GridFSBucket(conn)
+        id_a = bucket.upload_from_stream("a.txt", b"aaa")
+        id_b = bucket.upload_from_stream("b.txt", b"bbb")
+        bucket.upload_from_stream("c.txt", b"ccc")
+
+        paged = list(
+            conn.fs.files.find(
+                {},
+                limit=1,
+                skip=1,
+                sort=[("filename", 1)],
+            )
+        )
+        assert [doc.filename for doc in paged] == ["b.txt"]
+
+        desc_top = list(conn.fs.files.find(sort=[("filename", -1)], limit=2))
+        assert [doc.filename for doc in desc_top] == ["c.txt", "b.txt"]
+
+        # Delete chunks for b.txt only via fs.chunks
+        del_res = conn.fs.chunks.delete_many({"files_id": id_b})
+        assert del_res.deleted_count == 1
+        assert bucket.open_download_stream(id_a).read() == b"aaa"
+        with pytest.raises(CorruptGridFile):
+            bucket.open_download_stream(id_b).read()
+
+
+def test_gridfs_client_session_transaction_rollback_and_commit():
+    """Verify GridFS uploads participate in ClientSession transactions and roll back cleanly."""
+    import neosqlite
+
+    with neosqlite.Connection(":memory:") as conn:
+        bucket = GridFSBucket(conn)
+
+        with conn.start_session() as session:
+            with session.start_transaction():
+                bucket.upload_from_stream("tx1.txt", b"hello1", session=session)
+                with bucket.open_upload_stream("tx2.txt", session=session) as s:
+                    s.write(b"hello2")
+                session.abort_transaction()
+
+        assert conn.fs.files.count_documents({}) == 0
+        assert (
+            conn.db.execute("SELECT COUNT(*) FROM fs_chunks").fetchone()[0] == 0
+        )
+
+        with conn.start_session() as session:
+            with session.start_transaction():
+                kept_id = bucket.upload_from_stream(
+                    "kept.txt", b"keep-me", session=session
+                )
+                aborted_stream = bucket.open_upload_stream(
+                    "aborted.txt", chunk_size_bytes=4, session=session
+                )
+                aborted_stream.write(b"12345678")
+                aborted_stream.abort()
+                session.commit_transaction()
+
+        assert conn.fs.files.count_documents({}) == 1
+        assert bucket.open_download_stream(kept_id).read() == b"keep-me"
+
+
+def test_gridfs_bson_metadata_round_trip():
+    """Verify ObjectId, datetime, and Binary metadata round-trip without JSON corruption."""
+    from datetime import datetime
+
+    import neosqlite
+    from neosqlite.binary import Binary
+    from neosqlite.objectid import ObjectId
+
+    with neosqlite.Connection(":memory:") as conn:
+        bucket = GridFSBucket(conn)
+        owner_id = ObjectId()
+        created_dt = datetime(2025, 1, 15, 12, 30, 0, tzinfo=UTC)
+        sig = Binary(b"\x01\x02\x03\xff")
+        file_id = bucket.upload_from_stream(
+            "meta.bin",
+            b"payload",
+            metadata={"owner": owner_id, "created": created_dt, "sig": sig},
+        )
+
+        out = bucket.open_download_stream(file_id)
+        assert out.metadata["owner"] == owner_id
+        assert isinstance(out.metadata["owner"], ObjectId)
+        assert out.metadata["sig"] == sig
+        assert out.metadata["created"] == created_dt
+
+        found = next(bucket.find({"filename": "meta.bin"}))
+        assert found.metadata["owner"] == owner_id
+        assert found.metadata["sig"] == sig
+
+
+def test_gridfs_corruption_guards_and_post_close_abort():
+    """Verify CorruptGridFile on truncated chunks, unfinalized length=None, and post-close abort."""
+    import neosqlite
+
+    with neosqlite.Connection(":memory:") as conn:
+        bucket = GridFSBucket(conn, chunk_size_bytes=8)
+        fid = bucket.upload_from_stream("multi.bin", b"0123456789abcdef")
+
+        # Calling abort() after close() must be a safe no-op leaving data intact
+        stream = bucket.open_upload_stream(
+            "closed_then_abort.bin", chunk_size_bytes=4
+        )
+        stream.write(b"abcd1234")
+        stream.close()
+        stream.abort()
+        assert (
+            bucket.open_download_stream(stream._file_id).read() == b"abcd1234"
+        )
+
+        # Truncated chunk must raise CorruptGridFile cleanly (no infinite loop)
+        row = conn.db.execute(
+            "SELECT id FROM fs_files WHERE _id = ?", (str(fid),)
+        ).fetchone()
+        conn.db.execute(
+            "UPDATE fs_chunks SET data = ? WHERE files_id = ? AND n = 0",
+            (b"short", row[0]),
+        )
+        with pytest.raises(CorruptGridFile, match="invalid length"):
+            bucket.open_download_stream(fid).read()
+        with pytest.raises(CorruptGridFile):
+            bucket.download_to_stream(fid, io.BytesIO())
+
+        # Unfinalized file (length IS NULL) must raise CorruptGridFile on read(n) & download_to_stream
+        conn.db.execute(
+            "INSERT INTO fs_files (_id, filename, length, chunkSize) VALUES (?, ?, NULL, 8)",
+            ("unfinalized-id", "unfinalized.bin"),
+        )
+        unfinalized_out = bucket.open_download_stream("unfinalized-id")
+        with pytest.raises(CorruptGridFile, match="abandoned upload"):
+            unfinalized_out.read(4)
+        with pytest.raises(CorruptGridFile, match="abandoned upload"):
+            bucket.download_to_stream("unfinalized-id", io.BytesIO())
+
+
+def test_gridfs_custom_ids_do_not_collide_with_sqlite_pk():
+    """Verify int/str custom _id values work independently of auto-increment integer PK id."""
+    import neosqlite
+    from neosqlite.objectid import ObjectId
+
+    with neosqlite.Connection(":memory:") as conn:
+        bucket = GridFSBucket(conn)
+        oid = bucket.upload_from_stream("auto.txt", b"auto-oid")
+        assert isinstance(oid, ObjectId)
+
+        # Auto-generated file has SQLite PK id=1, so _id=1 must not match it!
+        with pytest.raises(NoFile):
+            bucket.open_download_stream(1)
+
+        bucket.upload_from_stream_with_id(1, "int_id.txt", b"custom-int-1")
+        with bucket.open_upload_stream_with_id(
+            "custom-str-id", "str_id.txt"
+        ) as s:
+            s.write(b"custom-str")
+
+        assert bucket.open_download_stream(1).read() == b"custom-int-1"
+        buf = io.BytesIO()
+        bucket.download_to_stream(1, buf)
+        assert buf.getvalue() == b"custom-int-1"
+        assert (
+            bucket.open_download_stream("custom-str-id").read() == b"custom-str"
+        )
+
+        with pytest.raises(FileExists):
+            bucket.upload_from_stream_with_id(1, "dup_int.txt", b"dup")
+        with pytest.raises(FileExists):
+            bucket.upload_from_stream_with_id(
+                "custom-str-id", "dup_str.txt", b"dup"
+            )
+
+
+def test_gridfs_schema_migration_invalidates_column_cache():
+    """Verify _migrate_table_schema invalidates stale column cache so GridOut sees aliases/content_type."""
+    import neosqlite
+    from neosqlite.collection.schema_utils import get_table_columns_cached
+
+    with neosqlite.Connection(":memory:") as conn:
+        # Legacy fs_files table without content_type or aliases
+        conn.db.execute("""
+            CREATE TABLE fs_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                _id TEXT UNIQUE NOT NULL,
+                filename TEXT,
+                length INTEGER,
+                chunkSize INTEGER,
+                uploadDate TEXT,
+                md5 TEXT,
+                metadata TEXT
+            )
+            """)
+        conn.db.execute("""
+            CREATE TABLE fs_chunks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                files_id INTEGER NOT NULL,
+                n INTEGER NOT NULL,
+                data BLOB NOT NULL
+            )
+            """)
+        cols_before = get_table_columns_cached(conn.db, "fs_files")
+        assert "aliases" not in cols_before
+        assert "content_type" not in cols_before
+
+        # GridFSBucket initialization migrates schema and must invalidate the cache
+        bucket = GridFSBucket(conn)
+        cols_after = get_table_columns_cached(conn.db, "fs_files")
+        assert "aliases" in cols_after
+        assert "content_type" in cols_after
+
+        fid = bucket.upload_from_stream("migrated.txt", b"hello")
+        conn.db.execute(
+            "UPDATE fs_files SET content_type = ?, aliases = ? WHERE _id = ?",
+            ("text/plain", json.dumps(["m.txt"]), str(fid)),
+        )
+        out = bucket.open_download_stream(fid)
+        assert out.content_type == "text/plain"
+        assert out.aliases == ["m.txt"]
+
+    # Verify schema column cache verifies db_connection identity, not just id(db_connection)
+    import sqlite3 as std_sqlite3
+
+    db1 = std_sqlite3.connect(":memory:")
+    db1.execute("CREATE TABLE cache_reuse_test (col_old TEXT)")
+    assert "col_old" in get_table_columns_cached(db1, "cache_reuse_test")
+    db1.close()
+    del db1
+
+    db2 = std_sqlite3.connect(":memory:")
+    try:
+        db2.execute("CREATE TABLE cache_reuse_test (col_new TEXT)")
+        cols_db2 = get_table_columns_cached(db2, "cache_reuse_test")
+        assert cols_db2 == frozenset({"col_new"})
+    finally:
+        db2.close()
+
+
+def test_gridoutcursor_to_list_metadata_none_regex_and_id_filters():
+    """Verify GridOutCursor.to_list resumes from index and filter queries handle None/$regex/_id ops."""
+    import sqlite3 as std_sqlite3
+
+    import neosqlite
+
+    for use_raw in (False, True):
+        if not use_raw:
+            conn_or_db = neosqlite.Connection(":memory:")
+        else:
+            conn_or_db = std_sqlite3.connect(":memory:")
+
+        try:
+            bucket = GridFSBucket(conn_or_db)
+            id1 = bucket.upload_from_stream(
+                "report_1.txt", b"1", metadata={"tag": "v1.0"}
+            )
+            id2 = bucket.upload_from_stream("notes_2.txt", b"2")
+            id3 = bucket.upload_from_stream(
+                "report_3.txt", b"3", metadata={"tag": "v2.0"}
+            )
+
+            cursor = bucket.find({}).sort("filename", 1)
+            first = next(cursor)
+            assert first.filename == "notes_2.txt"
+            middle = cursor.to_list(1)
+            assert [f.filename for f in middle] == ["report_1.txt"]
+            tail = cursor.to_list()
+            assert [f.filename for f in tail] == ["report_3.txt"]
+            assert cursor.to_list() == []
+
+            no_meta = [f.filename for f in bucket.find({"metadata": None})]
+            assert no_meta == ["notes_2.txt"]
+
+            anchored = [
+                f.filename
+                for f in bucket.find(
+                    {"filename": {"$regex": r"^report_\d\.txt$"}}
+                ).sort("filename", 1)
+            ]
+            assert anchored == ["report_1.txt", "report_3.txt"]
+
+            meta_rx = [
+                f.filename
+                for f in bucket.find({"metadata.tag": {"$regex": r"^v1\."}})
+            ]
+            assert meta_rx == ["report_1.txt"]
+
+            in_files = {
+                f._id for f in bucket.find({"_id": {"$in": [id1, id3]}})
+            }
+            assert in_files == {id1, id3}
+            ne_files = {f._id for f in bucket.find({"_id": {"$ne": id2}})}
+            assert ne_files == {id1, id3}
+            nin_files = {f._id for f in bucket.find({"_id": {"$nin": [id2]}})}
+            assert nin_files == {id1, id3}
+        finally:
+            conn_or_db.close()
+
+
+def test_gridfs_write_concern_none_preserves_caller_pragma():
+    """Verify GridFSBucket(conn) does not overwrite user PRAGMA synchronous when write_concern=None."""
+    import sqlite3 as std_sqlite3
+
+    raw = std_sqlite3.connect(":memory:")
+    try:
+        raw.execute("PRAGMA synchronous = FULL")
+        assert raw.execute("PRAGMA synchronous").fetchone()[0] == 2
+
+        GridFSBucket(raw)
+        assert raw.execute("PRAGMA synchronous").fetchone()[0] == 2
+
+        GridFSBucket(raw, write_concern={"w": 0})
+        assert raw.execute("PRAGMA synchronous").fetchone()[0] == 0
+    finally:
+        raw.close()

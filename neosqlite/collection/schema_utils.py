@@ -31,16 +31,17 @@ def get_table_columns(db_connection: Any, table_name: str) -> set[str]:
     return {row[1] for row in cursor.fetchall()}
 
 
-_table_columns_cache: dict[tuple[int, str], frozenset[str]] = {}
+_table_columns_cache: dict[tuple[int, str], tuple[Any, frozenset[str]]] = {}
 
 
 def get_table_columns_cached(db_connection: Any, table_name: str) -> set[str]:
-    """Return cached ``get_table_columns`` results per connection (#152).
+    """Return cached ``get_table_columns`` results per connection (#152, #191).
 
     GridFS constructs many ``GridOut`` objects, where repeated ``PRAGMA
-    table_info`` calls dominated read paths. Results are cached as
-    ``frozenset`` objects keyed by ``(id(db_connection), table_name)`` and the
-    cache clears once it reaches 128 entries.
+    table_info`` calls dominated read paths. Results are stored as
+    ``(db_connection, frozenset_cols)`` keyed by ``(id(db_connection),
+    table_name)`` so memory-address reuse across closed connections never leaks
+    stale column metadata, and cleared once the cache reaches 128 entries.
 
     Args:
         db_connection: SQLite database connection.
@@ -50,13 +51,14 @@ def get_table_columns_cached(db_connection: Any, table_name: str) -> set[str]:
         set[str]: Copy of the cached set of column names for ``table_name``.
     """
     key = (id(db_connection), table_name)
-    cols = _table_columns_cache.get(key)
-    if cols is None:
+    entry = _table_columns_cache.get(key)
+    if entry is None or entry[0] is not db_connection:
         cols = frozenset(get_table_columns(db_connection, table_name))
         if len(_table_columns_cache) >= 128:
             _table_columns_cache.clear()
-        _table_columns_cache[key] = cols
-    return set(cols)
+        _table_columns_cache[key] = (db_connection, cols)
+        return set(cols)
+    return set(entry[1])
 
 
 def invalidate_table_columns_cache(

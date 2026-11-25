@@ -31,6 +31,7 @@ from .schema_utils import (
     get_table_info,
     invalidate_table_columns_cache,
 )
+from .type_correction import get_integer_id_for_doc_id
 from .type_utils import validate_session
 
 if TYPE_CHECKING:
@@ -484,8 +485,54 @@ class Collection:
             AttributeError: If ``name`` is not ``"files"`` or ``"chunks"``.
         """
         if name in ("files", "chunks"):
-            full_name = f"{validate_identifier(self.name)}_{name}"
-            return Collection(self.db, full_name, database=self._database)
+            from ..gridfs import GridFSBucket
+
+            bucket_name = validate_identifier(self.name)
+            files_coll = f"{bucket_name}_files"
+            chunks_coll = f"{bucket_name}_chunks"
+            # Drop empty placeholder document table auto-created by `db.fs`
+            # before initializing the real GridFS schema (#191).
+            try:
+                placeholder_cols = {
+                    r[1]
+                    for r in self.db.execute(
+                        f"PRAGMA table_info({quote_table_name(bucket_name)})"
+                    ).fetchall()
+                }
+                if placeholder_cols == {"id", "_id", "data"}:
+                    row = self.db.execute(
+                        f"SELECT COUNT(*) FROM {quote_table_name(bucket_name)}"
+                    ).fetchone()
+                    idx_rows = self.db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
+                        (bucket_name,),
+                    ).fetchall()
+                    non_default_idx = [
+                        r[0]
+                        for r in idx_rows
+                        if r[0] != f"idx_{bucket_name}_id"
+                        and not r[0].startswith("sqlite_autoindex_")
+                    ]
+                    if row is not None and row[0] == 0 and not non_default_idx:
+                        self.db.execute(
+                            f"DROP TABLE IF EXISTS {quote_table_name(bucket_name)}"
+                        )
+                        database = self.__dict__.get("_database")
+                        if database is not None:
+                            database._collections.pop(self.name, None)
+            except Exception:
+                pass
+
+            if not (
+                self._object_exists("table", files_coll)
+                and self._object_exists("table", chunks_coll)
+            ):
+                GridFSBucket(self.db, bucket_name=bucket_name)
+
+            full_name = f"{bucket_name}_{name}"
+            return Collection(
+                self.db, full_name, create=False, database=self._database
+            )
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
         )
@@ -853,15 +900,30 @@ class Collection:
         return GridFSBucket(self.db, bucket_name=bucket_name)
 
     def _delete_one_as_gridfs(self, filter: dict[str, Any]):
-        """Delete the first matching file from a GridFS system collection.
+        """Delete the first matching file (or chunk row) from a GridFS collection.
 
         Args:
-            filter: Query filter matched against the bucket's files.
+            filter: Query filter matched against the bucket's files or chunks.
 
         Returns:
             DeleteResult: Result with ``deleted_count`` of ``0`` or ``1``.
         """
         from ..results import DeleteResult
+
+        if self.name.endswith("_chunks"):
+            where_clause, params = self._build_chunks_where(filter)
+            table = quote_table_name(self.name)
+            row = self.db.execute(
+                f"SELECT _id FROM {table} {where_clause} LIMIT 1",
+                params,
+            ).fetchone()
+            if row is None:
+                return DeleteResult(0)
+            cursor = self.db.execute(
+                f"DELETE FROM {table} WHERE _id = ?",
+                (row[0],),
+            )
+            return DeleteResult(cursor.rowcount)
 
         bucket = self._get_gridfs_bucket()
         cursor = bucket.find(filter)
@@ -884,8 +946,8 @@ class Collection:
         """Delete all documents matching the filter.
 
         For GridFS system collections (e.g., ``fs_files``, ``fs_chunks``),
-        delegates to ``GridFSBucket.delete()`` so both file metadata and
-        chunks are removed together.
+        delegates to ``GridFSBucket.delete()`` for ``_files`` or deletes
+        directly from ``_chunks``.
 
         Args:
             filter: Query filter selecting the documents to delete.
@@ -901,15 +963,24 @@ class Collection:
         return self.query_engine.delete_many(filter, session=session)
 
     def _delete_many_as_gridfs(self, filter: dict[str, Any]):
-        """Delete all matching files from a GridFS system collection.
+        """Delete all matching files (or chunk rows) from a GridFS collection.
 
         Args:
-            filter: Query filter matched against the bucket's files.
+            filter: Query filter matched against the bucket's files or chunks.
 
         Returns:
-            DeleteResult: Result with the total count of deleted files.
+            DeleteResult: Result with the total count of deleted rows/files.
         """
         from ..results import DeleteResult
+
+        if self.name.endswith("_chunks"):
+            where_clause, params = self._build_chunks_where(filter)
+            table = quote_table_name(self.name)
+            cursor = self.db.execute(
+                f"DELETE FROM {table} {where_clause}",
+                params,
+            )
+            return DeleteResult(cursor.rowcount)
 
         bucket = self._get_gridfs_bucket()
         cursor = bucket.find(filter)
@@ -982,7 +1053,13 @@ class Collection:
 
         # Check if this is a GridFS system collection
         if self._is_gridfs_collection():
-            return self._find_as_gridfs(filter, session=session)
+            return self._find_as_gridfs(
+                filter,
+                session=session,
+                limit=limit,
+                skip=skip,
+                sort=sort,
+            )
 
         self._auto_purge_ttl()
         cursor = self.query_engine.find(
@@ -1072,41 +1149,71 @@ class Collection:
         self,
         filter: dict[str, Any] | None = None,
         session: ClientSession | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+        sort: (
+            list[tuple[str, int]]
+            | dict[str, int]
+            | str
+            | tuple[str, int]
+            | None
+        ) = None,
     ):
         """Execute ``find`` on a GridFS ``_files`` or ``_chunks`` collection.
 
         Args:
             filter: Optional query filter dictionary.
             session: Optional ``ClientSession`` passed to ``GridFSBucket``.
+            limit: Optional maximum number of files/chunks to return.
+            skip: Optional number of leading files/chunks to skip.
+            sort: Optional sort specification.
 
         Returns:
             Any: List of chunk dicts for ``_chunks`` collections, or a
             ``GridOutCursor`` for ``_files`` collections.
         """
         if self.name.endswith("_chunks"):
-            return self._find_chunks_direct(filter)
+            norm_sort = (
+                self._normalize_sort_spec(sort) if sort is not None else None
+            )
+            return self._find_chunks_direct(
+                filter, limit=limit, skip=skip, sort=norm_sort
+            )
         bucket = self._get_gridfs_bucket()
-        return bucket.find(filter, session=session)
+        cursor = bucket.find(filter, session=session)
+        if skip:
+            cursor = cursor.skip(int(skip))
+        if limit:
+            cursor = cursor.limit(int(limit))
+        if sort is not None:
+            cursor = cursor.sort(self._normalize_sort_spec(sort))
+        return cursor
 
-    def _find_chunks_direct(
-        self, filter: dict[str, Any] | None = None
-    ) -> list[dict[str, Any]]:
-        """Query chunk documents directly from a GridFS ``_chunks`` table.
+    def _coerce_chunk_param(self, column: str, val: Any) -> Any:
+        """Resolve ``files_id`` ObjectId/str references to ``_files`` row id."""
+        if column == "files_id" and isinstance(val, (ObjectId, str)):
+            files_table = f"{self.name.removesuffix('_chunks')}_files"
+            try:
+                int_id = get_integer_id_for_doc_id(self.db, files_table, val)
+            except Exception:
+                int_id = None
+            return int_id if int_id is not None else -1
+        return val
 
-        ``GridFSBucket.find`` queries the ``_files`` table and returns
-        ``GridOut`` objects, so ``fs.chunks.find`` queries the chunks table
-        directly using supported filters on ``files_id``, ``n``, and
-        ``_id`` (``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``,
-        ``$in``).
+    _CHUNK_CMP_OPS: dict[str, str] = {
+        "$eq": "=",
+        "$ne": "!=",
+        "$gt": ">",
+        "$gte": ">=",
+        "$lt": "<",
+        "$lte": "<=",
+    }
 
-        Args:
-            filter: Optional query filter dictionary.
-
-        Returns:
-            list[dict[str, Any]]: Matching chunk dicts with ``_id``,
-            ``files_id``, ``n``, and ``data`` keys.
-        """
-        table = quote_table_name(self.name)
+    def _build_chunks_where(
+        self,
+        filter: dict[str, Any] | None,
+    ) -> tuple[str, list[Any]]:
+        """Build a SQL WHERE clause and params for a GridFS ``_chunks`` table."""
         where_parts: list[str] = []
         params: list[Any] = []
         for key, value in (filter or {}).items():
@@ -1114,46 +1221,75 @@ class Collection:
                 column = key
                 if isinstance(value, dict):
                     for op, op_val in value.items():
-                        match op:
-                            case "$eq":
-                                where_parts.append(f"{column} = ?")
-                                params.append(op_val)
-                            case "$ne":
-                                where_parts.append(f"{column} != ?")
-                                params.append(op_val)
-                            case "$gt":
-                                where_parts.append(f"{column} > ?")
-                                params.append(op_val)
-                            case "$gte":
-                                where_parts.append(f"{column} >= ?")
-                                params.append(op_val)
-                            case "$lt":
-                                where_parts.append(f"{column} < ?")
-                                params.append(op_val)
-                            case "$lte":
-                                where_parts.append(f"{column} <= ?")
-                                params.append(op_val)
-                            case "$in" if isinstance(op_val, (list, tuple)):
-                                if not op_val:
-                                    where_parts.append("1=0")
-                                else:
-                                    placeholders = ", ".join("?" * len(op_val))
-                                    where_parts.append(
-                                        f"{column} IN ({placeholders})"
-                                    )
-                                    params.extend(op_val)
-                            case _:
+                        if op in self._CHUNK_CMP_OPS:
+                            where_parts.append(
+                                f"{column} {self._CHUNK_CMP_OPS[op]} ?"
+                            )
+                            params.append(
+                                self._coerce_chunk_param(column, op_val)
+                            )
+                        elif op == "$in" and isinstance(op_val, (list, tuple)):
+                            if not op_val:
                                 where_parts.append("1=0")
+                            else:
+                                placeholders = ", ".join("?" * len(op_val))
+                                where_parts.append(
+                                    f"{column} IN ({placeholders})"
+                                )
+                                params.extend(
+                                    self._coerce_chunk_param(column, elem)
+                                    for elem in op_val
+                                )
+                        else:
+                            where_parts.append("1=0")
                 else:
                     where_parts.append(f"{column} = ?")
-                    params.append(value)
+                    params.append(self._coerce_chunk_param(column, value))
             else:
                 # Unknown chunk field — match nothing, never everything.
                 where_parts.append("1=0")
         where_clause = (
             "WHERE " + " AND ".join(where_parts) if where_parts else ""
         )
-        query = f"SELECT _id, files_id, n, data FROM {table} {where_clause}"
+        return where_clause, params
+
+    def _find_chunks_direct(
+        self,
+        filter: dict[str, Any] | None = None,
+        limit: int | None = None,
+        skip: int | None = None,
+        sort: list[tuple[str, int]] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Query chunk documents directly from a GridFS ``_chunks`` table."""
+        table = quote_table_name(self.name)
+        where_clause, params = self._build_chunks_where(filter)
+        order_clause = ""
+        if sort:
+            order_parts: list[str] = []
+            for key, direction in sort:
+                if key in ("files_id", "n", "_id"):
+                    dir_sql = "DESC" if direction == -1 else "ASC"
+                    order_parts.append(f"{key} {dir_sql}")
+            if order_parts:
+                order_clause = "ORDER BY " + ", ".join(order_parts)
+
+        pagination_clause = ""
+        limit_val = int(limit) if limit else 0
+        skip_val = int(skip) if skip else 0
+        if limit_val > 0 and skip_val > 0:
+            pagination_clause = "LIMIT ? OFFSET ?"
+            params.extend([limit_val, skip_val])
+        elif limit_val > 0:
+            pagination_clause = "LIMIT ?"
+            params.append(limit_val)
+        elif skip_val > 0:
+            pagination_clause = "LIMIT -1 OFFSET ?"
+            params.append(skip_val)
+
+        query = (
+            f"SELECT _id, files_id, n, data FROM {table} "
+            f"{where_clause} {order_clause} {pagination_clause}"
+        ).strip()
         cursor = self.db.execute(query, params)
         return [
             {"_id": row[0], "files_id": row[1], "n": row[2], "data": row[3]}
@@ -1186,53 +1322,7 @@ class Collection:
             row = cursor.fetchone()
             return int(row[0]) if row else 0
         elif self.name.endswith("_chunks"):
-            where_parts: list[str] = []
-            chunks_params: list[Any] = []
-            for key, value in (filter or {}).items():
-                if key in ("files_id", "n", "_id"):
-                    column = key
-                    if isinstance(value, dict):
-                        for op, op_val in value.items():
-                            match op:
-                                case "$eq":
-                                    where_parts.append(f"{column} = ?")
-                                    chunks_params.append(op_val)
-                                case "$ne":
-                                    where_parts.append(f"{column} != ?")
-                                    chunks_params.append(op_val)
-                                case "$gt":
-                                    where_parts.append(f"{column} > ?")
-                                    chunks_params.append(op_val)
-                                case "$gte":
-                                    where_parts.append(f"{column} >= ?")
-                                    chunks_params.append(op_val)
-                                case "$lt":
-                                    where_parts.append(f"{column} < ?")
-                                    chunks_params.append(op_val)
-                                case "$lte":
-                                    where_parts.append(f"{column} <= ?")
-                                    chunks_params.append(op_val)
-                                case "$in" if isinstance(op_val, (list, tuple)):
-                                    if not op_val:
-                                        where_parts.append("1=0")
-                                    else:
-                                        placeholders = ", ".join(
-                                            "?" * len(op_val)
-                                        )
-                                        where_parts.append(
-                                            f"{column} IN ({placeholders})"
-                                        )
-                                        chunks_params.extend(op_val)
-                                case _:
-                                    where_parts.append("1=0")
-                    else:
-                        where_parts.append(f"{column} = ?")
-                        chunks_params.append(value)
-                else:
-                    where_parts.append("1=0")
-            where_clause = (
-                "WHERE " + " AND ".join(where_parts) if where_parts else ""
-            )
+            where_clause, chunks_params = self._build_chunks_where(filter)
             query = f"SELECT COUNT(*) FROM {table} {where_clause}".strip()
             cursor = self.db.execute(query, chunks_params)
             row = cursor.fetchone()

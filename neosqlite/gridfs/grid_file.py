@@ -9,7 +9,10 @@ from copy import deepcopy
 from typing import Any, Self
 
 from .._sqlite import sqlite3
+from ..collection.json_helpers import neosqlite_json_dumps
 from ..collection.schema_utils import column_exists
+from ..collection.type_correction import get_integer_id_for_doc_id
+from ..collection.type_utils import regex_to_sql_pattern
 
 # Import ObjectId for GridIn and GridOut
 from ..objectid import ObjectId
@@ -42,11 +45,12 @@ class GridIn:
         chunk_size_bytes: int,
         filename: str,
         metadata: dict[str, Any] | None = None,
-        file_id: ObjectId | int | None = None,
+        file_id: ObjectId | int | str | None = None,
         disable_md5: bool = False,
         write_concern: dict[str, Any] | None = None,
         content_type: str | None = None,
         aliases: list[str] | None = None,
+        session: Any | None = None,
     ):
         """Initialize a new ``GridIn`` writable stream.
 
@@ -56,11 +60,12 @@ class GridIn:
             chunk_size_bytes: Maximum size of each chunk in bytes.
             filename: Name of the stored file.
             metadata: Optional metadata dictionary for the file.
-            file_id: Optional custom ``ObjectId`` or integer file ID.
+            file_id: Optional custom ``ObjectId``, integer, or string file ID.
             disable_md5: If True, skip MD5 digest computation.
             write_concern: Optional write concern settings for sync behavior.
             content_type: Optional MIME content type of the file.
             aliases: Optional list of alternative filenames.
+            session: Optional ``ClientSession`` bound to this upload stream.
         """
         self._db = db
         self._bucket_name = bucket_name
@@ -74,6 +79,11 @@ class GridIn:
         self._write_concern = write_concern or {}
         self._content_type = content_type
         self._aliases = aliases
+        self._had_outer_transaction = getattr(
+            db, "in_transaction", False
+        ) is True or bool(
+            session is not None and getattr(session, "in_transaction", False)
+        )
 
         # Stream state
         self._buffer = bytearray()
@@ -211,9 +221,9 @@ class GridIn:
         """Create the file document in the GridFS files table once.
 
         Records the UTC upload timestamp and inserts a row into the files
-        table, generating an ``ObjectId`` if ``_file_id`` is ``None`` or
-        handling explicit ``ObjectId`` and integer IDs. Caches the resulting
-        SQLite integer row ID in ``_int_file_id``.
+        table (always auto-generating SQLite ``id`` PK and storing the caller
+        or generated ``_id`` in ``_id``). Caches the resulting SQLite integer
+        row ID in ``_int_file_id``.
         """
         if getattr(self, "_file_document_created", False):
             return
@@ -222,68 +232,32 @@ class GridIn:
         upload_date = datetime.datetime.now(datetime.UTC).isoformat()
 
         if self._file_id is None:
-            # Generate an ObjectId for the new file
-            oid = ObjectId()
-            cur = self._db.execute(
-                f"""
-                INSERT INTO {quote_table_name(self._files_collection)}
-                (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
-                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    str(oid),  # Store ObjectId as hex string
-                    self._filename,
-                    self._chunk_size_bytes,
-                    upload_date,
-                    serialize_metadata(self._metadata),
-                    self._content_type,
-                    serialize_aliases(self._aliases),
-                ),
-            )
-            self._file_id = oid  # Store the ObjectId
-            self._int_file_id = cur.lastrowid
-        else:
-            # Check if file_id is an ObjectId or integer
-            if isinstance(self._file_id, ObjectId):
-                # Store ObjectId in _id column, let SQLite auto-generate id
-                cur = self._db.execute(
-                    f"""
-                    INSERT INTO {quote_table_name(self._files_collection)}
-                    (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
-                    VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        str(self._file_id),
-                        self._filename,
-                        self._chunk_size_bytes,
-                        upload_date,
-                        serialize_metadata(self._metadata),
-                        self._content_type,
-                        serialize_aliases(self._aliases),
-                    ),
-                )
-                # Cache the rowid: per-chunk lookups were O(chunks) (#152)
-                self._int_file_id = cur.lastrowid
-            else:
-                # Integer ID provided
-                cur = self._db.execute(
-                    f"""
-                    INSERT INTO {quote_table_name(self._files_collection)}
-                    (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (
-                        self._file_id,
-                        str(self._file_id),  # Store as string for consistency
-                        self._filename,
-                        self._chunk_size_bytes,
-                        upload_date,
-                        serialize_metadata(self._metadata),
-                        self._content_type,
-                        serialize_aliases(self._aliases),
-                    ),
-                )
-                self._int_file_id = cur.lastrowid
+            self._file_id = ObjectId()
+
+        stored_id: Any = (
+            str(self._file_id)
+            if isinstance(self._file_id, ObjectId)
+            or not isinstance(self._file_id, (int, float, str))
+            or isinstance(self._file_id, bool)
+            else self._file_id
+        )
+        cur = self._db.execute(
+            f"""
+            INSERT INTO {quote_table_name(self._files_collection)}
+            (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
+            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+        """,
+            (
+                stored_id,
+                self._filename,
+                self._chunk_size_bytes,
+                upload_date,
+                serialize_metadata(self._metadata),
+                self._content_type,
+                serialize_aliases(self._aliases),
+            ),
+        )
+        self._int_file_id = cur.lastrowid
 
     def _get_file_id(self) -> int:
         """Return the SQLite integer row ID for the file document.
@@ -301,46 +275,28 @@ class GridIn:
         if not getattr(self, "_file_document_created", False):
             self._create_file_document()
 
-        # Return the integer ID, which can be obtained by looking up the stored _id
         cached = getattr(self, "_int_file_id", None)
         if cached is not None:
             return int(cached)
-        if isinstance(self._file_id, ObjectId):
-            # Look up the integer ID for this ObjectId — cache it: chunked
-            # uploads previously re-ran this SELECT per chunk (#152)
-            cursor = self._db.execute(
-                f"SELECT id FROM {quote_table_name(self._files_collection)} WHERE _id = ?",
-                (str(self._file_id),),
+        try:
+            row_id = get_integer_id_for_doc_id(
+                self._db, self._files_collection, self._file_id
             )
-            if (row := cursor.fetchone()) is None:
-                raise RuntimeError(
-                    f"File with ObjectId {self._file_id} not found in database"
-                )
-            self._int_file_id = row[0]
-            return row[0]
-        elif isinstance(self._file_id, int):
-            # If file_id is already an integer, return it as-is
-            self._int_file_id = self._file_id
-            return self._file_id
-        else:
-            # For other types, try to look it up by value
-            cursor = self._db.execute(
-                f"SELECT id FROM {quote_table_name(self._files_collection)} WHERE _id = ?",
-                (str(self._file_id),),
-            )
-            if (row := cursor.fetchone()) is None:
-                raise RuntimeError(
-                    f"File with ID {self._file_id} not found in database"
-                )
-            return row[0]
+            self._int_file_id = row_id
+            return row_id
+        except ValueError as exc:
+            raise RuntimeError(
+                f"File with ID {self._file_id} not found in database"
+            ) from exc
 
     def close(self) -> None:
         """Close the ``GridIn`` stream and finalize file metadata.
 
         Flushes any remaining buffered bytes as a final chunk (or ensures an
         empty file document is created), updates ``length`` and ``md5`` on
-        the files row, triggers write-concern sync if needed, commits the
-        transaction, and marks the stream closed.
+        the files row, triggers write-concern sync if needed, commits only if
+        no outer transaction was active at open time, and marks the stream
+        closed.
         """
         if self._closed:
             return
@@ -392,10 +348,11 @@ class GridIn:
         # Force sync if write concern requires it
         self._force_sync_if_needed()
 
-        try:
-            self._db.commit()
-        except Exception:
-            pass
+        if not getattr(self, "_had_outer_transaction", False):
+            try:
+                self._db.commit()
+            except Exception:
+                pass
 
         self._closed = True
 
@@ -430,23 +387,26 @@ class GridIn:
     def abort(self) -> None:
         """Discard an in-progress upload by deleting its chunks and file row.
 
-        Skips deletion if the stream is already closed with zero chunks
-        written; otherwise removes rows from the chunks and files tables,
-        commits, and marks the stream closed.
+        Returns early if the stream is already closed (so finalized files are
+        never deleted); otherwise removes rows from the chunks and files tables,
+        commits when no outer transaction is active, and marks the stream
+        closed.
         """
-        if self._closed and self._chunk_number == 0:
+        if self._closed:
             return
         try:
-            file_int_id = self._get_file_id()
-            self._db.execute(
-                f"DELETE FROM {quote_table_name(self._chunks_collection)} WHERE files_id = ?",
-                (file_int_id,),
-            )
-            self._db.execute(
-                f"DELETE FROM {quote_table_name(self._files_collection)} WHERE id = ?",
-                (file_int_id,),
-            )
-            self._db.commit()
+            if getattr(self, "_file_document_created", False):
+                file_int_id = self._get_file_id()
+                self._db.execute(
+                    f"DELETE FROM {quote_table_name(self._chunks_collection)} WHERE files_id = ?",
+                    (file_int_id,),
+                )
+                self._db.execute(
+                    f"DELETE FROM {quote_table_name(self._files_collection)} WHERE id = ?",
+                    (file_int_id,),
+                )
+                if not getattr(self, "_had_outer_transaction", False):
+                    self._db.commit()
         finally:
             self._closed = True
 
@@ -679,15 +639,15 @@ class GridOut:
         if self._closed:
             raise ValueError("I/O operation on closed file")
 
-        if size == -1:
-            # Read all remaining data
-            if self._length is None:
-                # Abandoned upload: length was never finalized (#127)
-                from .errors import CorruptGridFile
+        if self._length is None:
+            # Abandoned upload: length was never finalized (#127, #191)
+            from .errors import CorruptGridFile
 
-                raise CorruptGridFile(
-                    "File has no finalized length (abandoned upload)"
-                )
+            raise CorruptGridFile(
+                "File has no finalized length (abandoned upload)"
+            )
+
+        if size == -1:
             size = self._length - self._position
 
         if size <= 0:
@@ -730,12 +690,19 @@ class GridOut:
         """Load the chunk containing the current stream position.
 
         Skips querying if the target chunk is already buffered in memory, and
-        raises ``CorruptGridFile`` if the chunk row is missing (#147).
+        raises ``CorruptGridFile`` if the chunk row is missing or its byte
+        length does not match the expected chunk size (#147, #191).
 
         Raises:
-            CorruptGridFile: If the required chunk is missing from the chunks
-                table.
+            CorruptGridFile: If the required chunk is missing or truncated.
         """
+        if self._length is None:
+            from .errors import CorruptGridFile
+
+            raise CorruptGridFile(
+                "File has no finalized length (abandoned upload)"
+            )
+
         chunk_index = self._position // self._chunk_size
 
         # If we already have the right chunk, we're done
@@ -760,7 +727,20 @@ class GridOut:
                 f"Chunk {chunk_index} for file id {self._int_file_id} missing"
             )
 
-        self._current_chunk_data = row[0]
+        chunk_data = row[0]
+        expected_chunk_size = min(
+            self._chunk_size,
+            self._length - chunk_index * self._chunk_size,
+        )
+        if len(chunk_data) != expected_chunk_size:
+            from .errors import CorruptGridFile
+
+            raise CorruptGridFile(
+                f"Chunk {chunk_index} for file id {self._int_file_id} has "
+                f"invalid length {len(chunk_data)} (expected {expected_chunk_size})"
+            )
+
+        self._current_chunk_data = chunk_data
         self._current_chunk_index = chunk_index
 
     @property
@@ -1125,29 +1105,17 @@ def _append_json_column_operators(
                         # Only dict/list values — fall back to no-match guard.
                         where_conditions.append("1=0")
             case "$regex":
-                pattern = (
-                    op_val.pattern
-                    if isinstance(op_val, re.Pattern)
-                    else str(op_val)
-                )
-                if (
-                    isinstance(regex_options, str)
-                    and "i" in regex_options.lower()
-                ):
-                    where_conditions.append(
-                        f"({extract} LIKE ? ESCAPE '\\' COLLATE NOCASE OR "
-                        f"({json_type} = 'array' AND EXISTS "
-                        f"(SELECT 1 FROM {each} WHERE value LIKE ? "
-                        f"ESCAPE '\\' COLLATE NOCASE)))"
-                    )
+                opts = regex_options if isinstance(regex_options, str) else ""
+                pattern = regex_to_sql_pattern(op_val, opts)
+                if pattern is None:
+                    where_conditions.append("1=0")
                 else:
                     where_conditions.append(
-                        f"({extract} LIKE ? ESCAPE '\\' OR "
+                        f"({extract} REGEXP ? OR "
                         f"({json_type} = 'array' AND EXISTS "
-                        f"(SELECT 1 FROM {each} WHERE value LIKE ? "
-                        f"ESCAPE '\\')))"
+                        f"(SELECT 1 FROM {each} WHERE value REGEXP ?)))"
                     )
-                params.extend([f"%{pattern}%", f"%{pattern}%"])
+                    params.extend([pattern, pattern])
             case "$exists":
                 if not isinstance(op_val, bool):
                     where_conditions.append("1=0")
@@ -1209,7 +1177,11 @@ def _append_dotted_json_condition(
         where_conditions.append("1=0")
         return
     json_path_sql = f"'{json_path.replace(chr(39), chr(39) * 2)}'"
-    if isinstance(value, dict) and any(
+    if isinstance(value, re.Pattern):
+        _append_json_column_operators(
+            column, json_path_sql, {"$regex": value}, where_conditions, params
+        )
+    elif isinstance(value, dict) and any(
         isinstance(k, str) and k.startswith("$") for k in value
     ):
         _append_json_column_operators(
@@ -1322,47 +1294,110 @@ def build_gridfs_files_where(
 
         match key:
             case "_id":
+
+                def _id_param(val: Any) -> Any:
+                    return str(val) if isinstance(val, ObjectId) else val
+
                 if isinstance(value, dict):
-                    if "$eq" in value:
-                        value = value["$eq"]
-                    elif "$in" in value:
-                        in_vals = value["$in"]
-                        placeholders = ", ".join("?" for _ in in_vals)
-                        conds.append(f"_id IN ({placeholders})")
-                        plist.extend(
-                            str(v) if isinstance(v, ObjectId) else v
-                            for v in in_vals
-                        )
-                        return
-                if isinstance(value, ObjectId):
-                    conds.append("_id = ?")
-                    plist.append(str(value))
-                elif isinstance(value, str) and len(value) == 24:
-                    try:
-                        ObjectId(value)
-                        conds.append("_id = ?")
-                        plist.append(value)
-                    except ValueError as e:
-                        logger.debug(
-                            f"ID '{value}' is not a valid ObjectId: {e}"
-                        )
-                        conds.append("_id = ?")
-                        plist.append(value)
+                    for op, op_val in value.items():
+                        match op:
+                            case "$eq":
+                                if op_val is None:
+                                    conds.append("_id IS NULL")
+                                else:
+                                    conds.append("_id = ?")
+                                    plist.append(_id_param(op_val))
+                            case "$ne":
+                                if op_val is None:
+                                    conds.append("_id IS NOT NULL")
+                                else:
+                                    conds.append("(_id IS NULL OR _id != ?)")
+                                    plist.append(_id_param(op_val))
+                            case "$in" if isinstance(op_val, (list, tuple)):
+                                if not op_val:
+                                    conds.append("1=0")
+                                else:
+                                    has_null = any(v is None for v in op_val)
+                                    non_nulls = [
+                                        _id_param(v)
+                                        for v in op_val
+                                        if v is not None
+                                    ]
+                                    parts: list[str] = []
+                                    if non_nulls:
+                                        ph = ", ".join("?" for _ in non_nulls)
+                                        parts.append(f"_id IN ({ph})")
+                                        plist.extend(non_nulls)
+                                    if has_null:
+                                        parts.append("_id IS NULL")
+                                    conds.append("(" + " OR ".join(parts) + ")")
+                            case "$nin" if isinstance(op_val, (list, tuple)):
+                                if not op_val:
+                                    conds.append("1=1")
+                                else:
+                                    has_null = any(v is None for v in op_val)
+                                    non_nulls = [
+                                        _id_param(v)
+                                        for v in op_val
+                                        if v is not None
+                                    ]
+                                    if has_null and non_nulls:
+                                        ph = ", ".join("?" for _ in non_nulls)
+                                        conds.append(
+                                            f"(_id IS NOT NULL AND _id NOT IN ({ph}))"
+                                        )
+                                        plist.extend(non_nulls)
+                                    elif has_null:
+                                        conds.append("_id IS NOT NULL")
+                                    else:
+                                        ph = ", ".join("?" for _ in non_nulls)
+                                        conds.append(
+                                            f"(_id IS NULL OR _id NOT IN ({ph}))"
+                                        )
+                                        plist.extend(non_nulls)
+                            case "$exists" if isinstance(op_val, bool):
+                                conds.append(
+                                    "_id IS NOT NULL"
+                                    if op_val
+                                    else "_id IS NULL"
+                                )
+                            case _:
+                                conds.append("1=0")
+                    return
+                if value is None:
+                    conds.append("_id IS NULL")
                 else:
                     conds.append("_id = ?")
-                    plist.append(
-                        str(value) if isinstance(value, ObjectId) else value
-                    )
+                    plist.append(_id_param(value))
             case "id":
                 conds.append("id = ?")
                 plist.append(value)
             case "filename":
-                if isinstance(value, dict):
+                if isinstance(value, re.Pattern):
+                    pattern = regex_to_sql_pattern(value)
+                    if pattern is None:
+                        conds.append("1=0")
+                    else:
+                        conds.append("filename REGEXP ?")
+                        plist.append(pattern)
+                elif isinstance(value, dict):
+                    regex_options = value.get("$options", "")
                     for op, val in value.items():
+                        if op == "$options":
+                            continue
                         match op:
                             case "$regex":
-                                conds.append("filename LIKE ?")
-                                plist.append(f"%{val}%")
+                                opts = (
+                                    regex_options
+                                    if isinstance(regex_options, str)
+                                    else ""
+                                )
+                                pattern = regex_to_sql_pattern(val, opts)
+                                if pattern is None:
+                                    conds.append("1=0")
+                                else:
+                                    conds.append("filename REGEXP ?")
+                                    plist.append(pattern)
                             case "$ne":
                                 conds.append("filename != ?")
                                 plist.append(val)
@@ -1474,18 +1509,70 @@ def build_gridfs_files_where(
                     conds.append("md5 = ?")
                     plist.append(value)
             case "metadata":
-                if isinstance(value, dict):
+                if value is None:
+                    conds.append("metadata IS NULL")
+                elif isinstance(value, re.Pattern):
+                    pattern = regex_to_sql_pattern(value)
+                    if pattern is None:
+                        conds.append("1=0")
+                    else:
+                        conds.append(
+                            "(metadata IS NOT NULL AND json(metadata) REGEXP ?)"
+                        )
+                        plist.append(pattern)
+                elif isinstance(value, dict) and any(
+                    isinstance(k, str) and k.startswith("$") for k in value
+                ):
+                    regex_options = value.get("$options", "")
                     for op, val in value.items():
+                        if op == "$options":
+                            continue
                         match op:
                             case "$regex":
-                                conds.append("metadata LIKE ?")
-                                plist.append(f"%{val}%")
+                                opts = (
+                                    regex_options
+                                    if isinstance(regex_options, str)
+                                    else ""
+                                )
+                                pattern = regex_to_sql_pattern(val, opts)
+                                if pattern is None:
+                                    conds.append("1=0")
+                                else:
+                                    conds.append(
+                                        "(metadata IS NOT NULL AND json(metadata) REGEXP ?)"
+                                    )
+                                    plist.append(pattern)
+                            case "$eq":
+                                if val is None:
+                                    conds.append("metadata IS NULL")
+                                elif isinstance(val, (dict, list)):
+                                    conds.append("json(metadata) = json(?)")
+                                    plist.append(neosqlite_json_dumps(val))
+                                else:
+                                    conds.append("metadata = ?")
+                                    plist.append(val)
                             case "$ne":
-                                conds.append("metadata != ?")
-                                plist.append(
-                                    str(val)
-                                    if not isinstance(val, str)
-                                    else val
+                                if val is None:
+                                    conds.append("metadata IS NOT NULL")
+                                elif isinstance(val, (dict, list)):
+                                    conds.append(
+                                        "(metadata IS NULL OR json(metadata) IS NOT json(?))"
+                                    )
+                                    plist.append(neosqlite_json_dumps(val))
+                                else:
+                                    conds.append(
+                                        "(metadata IS NULL OR metadata != ?)"
+                                    )
+                                    plist.append(
+                                        str(val)
+                                        if not isinstance(val, str)
+                                        else val
+                                    )
+                            case "$exists" if isinstance(val, bool):
+                                conds.append(
+                                    "metadata IS NOT NULL"
+                                    if val
+                                    else "metadata IS NULL"
                                 )
                             case _:
                                 if not op.startswith("$"):
@@ -1495,6 +1582,9 @@ def build_gridfs_files_where(
                                 else:
                                     conds.append("metadata LIKE ?")
                                     plist.append(f"%{op}%{val}%")
+                elif isinstance(value, dict):
+                    conds.append("json(metadata) = json(?)")
+                    plist.append(neosqlite_json_dumps(value))
                 else:
                     conds.append("metadata LIKE ?")
                     plist.append(f"%{value}%")
@@ -1768,12 +1858,20 @@ class GridOutCursor:
         """
         self._ensure_executed()
         assert self._file_ids is not None
+        start = self._index
         if length is not None:
-            if not isinstance(length, int) or length < 0:
+            if (
+                not isinstance(length, int)
+                or isinstance(length, bool)
+                or length < 0
+            ):
                 raise ValueError("length must be a non-negative integer")
-            selected_ids = self._file_ids[:length]
+            stop = min(start + length, len(self._file_ids))
+            selected_ids = self._file_ids[start:stop]
+            self._index = stop
         else:
-            selected_ids = self._file_ids
+            selected_ids = self._file_ids[start:]
+            self._index = len(self._file_ids)
         return [
             GridOut(self._db, self._bucket_name, fid) for fid in selected_ids
         ]

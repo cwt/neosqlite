@@ -76,10 +76,10 @@ def test_build_gridfs_files_where_filename_and_length():
             }
         }
     )
-    assert "filename LIKE ?" in where
+    assert "filename REGEXP ?" in where
     assert "filename != ?" in where
     assert "filename = ?" in where
-    assert "%doc%" in params
+    assert "doc" in params
     assert "doc_0.txt" in params
     assert "doc_1.txt" in params
 
@@ -265,7 +265,8 @@ def test_append_json_column_operators_coverage():
         conds,
         params,
     )
-    assert "NOCASE" in conds[0]
+    assert "REGEXP" in conds[0]
+    assert params == ["abc", "abc"]
 
     # 6. $exists variations
     conds = []
