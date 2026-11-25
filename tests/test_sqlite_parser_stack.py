@@ -1,7 +1,8 @@
 """Tests for the SQLite parser-stack fallback in complex updates."""
 
-import sqlite3
 from types import SimpleNamespace
+
+from neosqlite._sqlite import sqlite3
 
 import neosqlite
 from neosqlite.collection.query_helper import _sql_updates
