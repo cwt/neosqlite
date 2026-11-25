@@ -25,7 +25,7 @@ from ..expr_evaluator import (
     ExprEvaluator,
     _is_expression,
 )
-from ..type_utils import bson_sort_key
+from ..type_utils import _hashable_group_key, bson_sort_key
 
 if TYPE_CHECKING:
     from . import QueryEngine
@@ -340,12 +340,16 @@ def _compute_bucket_output(
             ]
         elif "$addToSet" in accumulator:
             set_expr = accumulator["$addToSet"]
-            seen: list[Any] = []
+            unique_values: list[Any] = []
+            seen_keys: set[tuple] = set()
             for d in eval_docs:
                 v = evaluator._evaluate_operand_python(set_expr, d)
-                if v is not None and v not in seen:
-                    seen.append(v)
-            output_doc[field_name] = seen
+                if v is not None:
+                    k = _hashable_group_key(v)
+                    if k not in seen_keys:
+                        seen_keys.add(k)
+                        unique_values.append(v)
+            output_doc[field_name] = unique_values
         elif "$stdDevPop" in accumulator or "$stdDevSamp" in accumulator:
             is_samp = "$stdDevSamp" in accumulator
             sd_expr = accumulator["$stdDevSamp" if is_samp else "$stdDevPop"]
@@ -431,10 +435,13 @@ def execute_python_aggregation(
                 ]
             case "$match":
                 query = stage["$match"]
+                match_context: dict[str, Any] = {}
                 docs_with_context = [
                     dc
                     for dc in docs_with_context
-                    if query_engine.helpers._apply_query(query, dc["__doc__"])
+                    if query_engine.helpers._apply_query(
+                        query, dc["__doc__"], _context=match_context
+                    )
                 ]
             case "$sort":
                 sort_spec = stage["$sort"]

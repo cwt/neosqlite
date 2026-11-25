@@ -27,6 +27,7 @@ from .index_manager import IndexManager
 from .query_engine import QueryEngine
 from .raw_batch_cursor import RawBatchCursor
 from .schema_utils import (
+    column_exists,
     create_unique_index_on_id,
     get_table_info,
     invalidate_table_columns_cache,
@@ -295,14 +296,8 @@ class Collection:
             for legacy schemas, or ``None`` if unavailable.
         """
         try:
-            # Check if the _id column exists
-            cursor = self.db.execute(
-                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
-                (self.name,),
-            )
-            column_exists = cursor.fetchone() is not None
-
-            if column_exists:
+            # Check if the _id column exists (cached via schema_utils)
+            if column_exists(self.db, self.name, "_id"):
                 cursor = self.db.execute(
                     f"SELECT _id FROM {quote_table_name(self.name)} WHERE id = ?",
                     (doc_id,),
@@ -334,11 +329,7 @@ class Collection:
         Returns:
             str: ``"_id"`` when the column exists, otherwise ``"id"``.
         """
-        cursor = self.db.execute(
-            "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
-            (self.name,),
-        )
-        if cursor.fetchone() is not None:
+        if column_exists(self.db, self.name, "_id"):
             return "_id"
         return "id"
 
@@ -462,18 +453,13 @@ class Collection:
         and creates a unique index on it if missing.
         """
         try:
-            # Check if _id column exists using PRAGMA table_info
-            cursor = self.db.execute(
-                "SELECT name FROM pragma_table_info(?) WHERE name = '_id'",
-                (self.name,),
-            )
-            column_exists = cursor.fetchone() is not None
-
-            if not column_exists:
+            # Check if _id column exists (cached via schema_utils)
+            if not column_exists(self.db, self.name, "_id"):
                 # Add the _id column with BLOB affinity (storage-class neutral)
                 self.db.execute(
                     f"ALTER TABLE {quote_table_name(self.name)} ADD COLUMN _id BLOB"
                 )
+                invalidate_table_columns_cache(self.db, self.name)
                 # Create unique index on _id column for faster lookups
                 create_unique_index_on_id(self.db, self.name)
         except Exception as e:

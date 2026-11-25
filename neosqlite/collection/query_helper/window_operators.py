@@ -89,9 +89,10 @@ def process_set_window_fields(
 
                 partition_docs.sort(key=get_sort_val, reverse=is_desc)
 
-        # Pre-calculate ranks if needed
+        # Pre-calculate partition-wide O(N) sequence operators if needed
         ranks: list[int] | None = None
         dense_ranks: list[int] | None = None
+        exp_moving_avgs: dict[str, list[Any]] = {}
 
         # 3. Apply window operators against unmodified partition snapshot
         new_partition_docs: list[dict[str, Any]] = []
@@ -115,6 +116,14 @@ def process_set_window_fields(
                             partition_docs, sort_by, collection
                         )
                     result = dense_ranks[i]
+                elif op_name == "$expMovingAvg":
+                    if field_path not in exp_moving_avgs:
+                        exp_moving_avgs[field_path] = (
+                            _calculate_all_exp_moving_avg(
+                                partition_docs, op_val, evaluator
+                            )
+                        )
+                    result = exp_moving_avgs[field_path][i]
                 else:
                     frame = _get_window_frame(
                         i,
@@ -657,3 +666,30 @@ def _calculate_all_dense_ranks(
                 current_rank += 1
         ranks.append(current_rank)
     return ranks
+
+
+def _calculate_all_exp_moving_avg(
+    partition_docs: list[dict[str, Any]],
+    op_val: dict[str, Any],
+    evaluator: ExprEvaluator,
+) -> list[Any]:
+    """Calculate cumulative exponential moving averages for a partition in O(N)."""
+    input_expr = op_val.get("input")
+    if "alpha" in op_val:
+        alpha = op_val["alpha"]
+    elif "n" in op_val:
+        alpha = 2 / (op_val["n"] + 1)
+    else:
+        return [None] * len(partition_docs)
+
+    results: list[Any] = []
+    ema: Any = None
+    for dc in partition_docs:
+        val = evaluator._evaluate_operand_python(input_expr, dc["__doc__"])
+        if isinstance(val, (int, float)):
+            if ema is None:
+                ema = val
+            else:
+                ema = val * alpha + ema * (1 - alpha)
+        results.append(ema)
+    return results

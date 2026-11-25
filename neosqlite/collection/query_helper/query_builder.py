@@ -148,10 +148,65 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
             case _:
                 return False
 
+    def _get_fts_field_names(self) -> list[str] | None:
+        """Return FTS-indexed field names for this collection, or ``None`` if none exist."""
+        coll_name = validate_identifier(self.collection.name)
+        escaped_coll = (
+            coll_name.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        cursor = self.collection.db.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type = 'table' AND name LIKE ? ESCAPE '\\'",
+            (f"{escaped_coll}\\_%\\_fts",),
+        )
+        fts_tables = cursor.fetchall()
+        if not fts_tables:
+            return None
+
+        # Filter out FTS tables belonging to other collections
+        # whose names start with `{coll_name}_`
+        all_tables = {
+            row[0]
+            for row in self.collection.db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        longer_prefixes = [
+            tbl + "_"
+            for tbl in all_tables
+            if tbl != coll_name and tbl.startswith(coll_name + "_")
+        ]
+
+        field_names: list[str] = []
+        prefix_len = len(f"{coll_name}_")
+        for fts_table in fts_tables:
+            fts_table_name = fts_table[0]
+            base_name = fts_table_name[:-4]
+            if any(base_name.startswith(lp) for lp in longer_prefixes):
+                continue
+            index_name = fts_table_name[prefix_len:-4]
+            stored_keys = _load_index_keys(self.collection.db, fts_table_name)
+            field_names.append(
+                stored_keys[0] if stored_keys else index_name.replace("_", ".")
+            )
+        return field_names
+
+    @staticmethod
+    def _get_expr_evaluator(_context: dict[str, Any], db: Any) -> ExprEvaluator:
+        """Return cached ``ExprEvaluator`` from query evaluation ``_context``."""
+        evaluator = _context.get("evaluator")
+        if evaluator is None:
+            evaluator = ExprEvaluator(data_column="data", db_connection=db)
+            _context["evaluator"] = evaluator
+        return evaluator
+
     def _apply_query(
         self,
         query: dict[str, Any],
         document: dict[str, Any],
+        _context: dict[str, Any] | None = None,
     ) -> bool:
         """Apply a query to a document to check if it matches the criteria.
 
@@ -164,12 +219,17 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
         Args:
             query: Dictionary representing the MongoDB-style query criteria.
             document: Document dictionary to evaluate against ``query``.
+            _context: Optional per-query cache reused across documents and
+                recursive subqueries to avoid repeated ``ExprEvaluator``
+                creation and ``sqlite_master`` metadata lookups.
 
         Returns:
             bool: True if the document matches the query, False otherwise.
         """
         if document is None:
             return False
+        if _context is None:
+            _context = {}
         matches: list[bool] = []
 
         def reapply(q: dict[str, Any]) -> bool:
@@ -181,14 +241,14 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
             Returns:
                 bool: True if ``document`` matches ``q``, False otherwise.
             """
-            return self._apply_query(q, document)
+            return self._apply_query(q, document, _context)
 
         for field, value in query.items():
             match field:
                 case "$expr":
                     # Handle $expr operator in Python fallback
-                    evaluator = ExprEvaluator(
-                        data_column="data", db_connection=self.collection.db
+                    evaluator = self._get_expr_evaluator(
+                        _context, self.collection.db
                     )
                     result = evaluator._evaluate_expr_python(value, document)
                     matches.append(bool(result))
@@ -227,8 +287,8 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                     # Check if value is an array (expression form) vs dict (field operator form)
                     if isinstance(value, list) and len(value) == 2:
                         # This is a direct expression, not a field operator
-                        evaluator = ExprEvaluator(
-                            data_column="data", db_connection=self.collection.db
+                        evaluator = self._get_expr_evaluator(
+                            _context, self.collection.db
                         )
                         result = evaluator._evaluate_expr_python(
                             query, document
@@ -242,59 +302,19 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                     if isinstance(value, dict) and "$search" in value:
                         search_term = value["$search"]
                         if isinstance(search_term, str):
-                            # Find FTS tables for this collection to determine which fields are indexed
-                            coll_name = validate_identifier(
-                                self.collection.name
-                            )
-                            escaped_coll = (
-                                coll_name.replace("\\", "\\\\")
-                                .replace("%", "\\%")
-                                .replace("_", "\\_")
-                            )
-                            cursor = self.collection.db.execute(
-                                "SELECT name FROM sqlite_master "
-                                "WHERE type = 'table' AND name LIKE ? ESCAPE '\\'",
-                                (f"{escaped_coll}\\_%\\_fts",),
-                            )
-                            fts_tables = cursor.fetchall()
-
-                            # Filter out FTS tables belonging to other collections
-                            # whose names start with `{coll_name}_`
-                            all_tables = {
-                                row[0]
-                                for row in self.collection.db.execute(
-                                    "SELECT name FROM sqlite_master WHERE type = 'table'"
-                                ).fetchall()
-                            }
-                            longer_prefixes = [
-                                tbl + "_"
-                                for tbl in all_tables
-                                if tbl != coll_name
-                                and tbl.startswith(coll_name + "_")
+                            if "fts_fields" not in _context:
+                                _context["fts_fields"] = (
+                                    self._get_fts_field_names()
+                                )
+                            fts_fields: list[str] | None = _context[
+                                "fts_fields"
                             ]
 
                             # Check each FTS-indexed field for matches and accumulate score
-                            if fts_tables:
+                            if fts_fields is not None:
                                 search_lower = search_term.lower()
                                 matched_score = 0.0
-                                prefix_len = len(f"{coll_name}_")
-                                for fts_table in fts_tables:
-                                    fts_table_name = fts_table[0]
-                                    base_name = fts_table_name[:-4]
-                                    if any(
-                                        base_name.startswith(lp)
-                                        for lp in longer_prefixes
-                                    ):
-                                        continue
-                                    index_name = fts_table_name[prefix_len:-4]
-                                    stored_keys = _load_index_keys(
-                                        self.collection.db, fts_table_name
-                                    )
-                                    field_name = (
-                                        stored_keys[0]
-                                        if stored_keys
-                                        else index_name.replace("_", ".")
-                                    )
+                                for field_name in fts_fields:
                                     try:
                                         field_value = self.collection._get_val(
                                             document, field_name
@@ -338,7 +358,9 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                         raise MalformedQueryException(
                             "$not requires a dictionary query expression"
                         )
-                    matches.append(not self._apply_query(value, document))
+                    matches.append(
+                        not self._apply_query(value, document, _context)
+                    )
                 case "$jsonSchema":
                     from .schema_validator import matches_json_schema
 
@@ -362,7 +384,9 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                                     raise MalformedQueryException(
                                         "$not requires a regex or operator expression"
                                     )
-                                if self._apply_query({field: arg}, document):
+                                if self._apply_query(
+                                    {field: arg}, document, _context
+                                ):
                                     matches.append(False)
                                     break
                                 continue

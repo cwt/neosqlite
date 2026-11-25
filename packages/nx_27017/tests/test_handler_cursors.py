@@ -45,9 +45,39 @@ class TestFindPagination:
         cid = res["cursor"]["id"]
         assert cid != 0
 
+        # In MongoDB, getMore without batchSize fills up to the 16 MB BSON budget
         res2 = _cmd(
             handler,
             {"getMore": cid, "collection": "big", "$db": "test"},
+            req=3,
+        )
+        assert len(res2["cursor"]["nextBatch"]) == 149
+        assert res2["cursor"]["id"] == 0
+
+        # Exhausted cursor is gone.
+        res3 = _cmd(
+            handler,
+            {"getMore": cid, "collection": "big", "$db": "test"},
+            req=4,
+        )
+        assert res3["cursor"]["id"] == 0
+        assert res3["cursor"]["nextBatch"] == []
+
+    def test_getmore_explicit_batch_size_paginates(self, handler):
+        _insert_many(handler, 250)
+        res = _cmd(handler, {"find": "big", "filter": {}, "$db": "test"})
+        assert len(res["cursor"]["firstBatch"]) == 101
+        cid = res["cursor"]["id"]
+        assert cid != 0
+
+        res2 = _cmd(
+            handler,
+            {
+                "getMore": cid,
+                "collection": "big",
+                "batchSize": 101,
+                "$db": "test",
+            },
             req=3,
         )
         assert len(res2["cursor"]["nextBatch"]) == 101
@@ -60,15 +90,6 @@ class TestFindPagination:
         )
         assert len(res3["cursor"]["nextBatch"]) == 48
         assert res3["cursor"]["id"] == 0
-
-        # Exhausted cursor is gone.
-        res4 = _cmd(
-            handler,
-            {"getMore": cid, "collection": "big", "$db": "test"},
-            req=5,
-        )
-        assert res4["cursor"]["id"] == 0
-        assert res4["cursor"]["nextBatch"] == []
 
     def test_explicit_batch_size(self, handler):
         _insert_many(handler, 10)
@@ -194,3 +215,42 @@ class TestBsonBudget:
             assert len(delivered) == 10
         finally:
             h.close_all()
+
+    def test_fit_bson_budget_handles_neosqlite_objectids_without_exception(
+        self, monkeypatch
+    ):
+        from bson import BSON
+        from nx_27017.handler import NeoSQLiteHandler
+
+        from neosqlite.objectid import ObjectId as NeoObjectId
+
+        orig_encode = BSON.encode
+        encode_errors = []
+
+        def tracked_encode(doc, *args, **kwargs):
+            try:
+                return orig_encode(doc, *args, **kwargs)
+            except Exception as exc:
+                encode_errors.append(exc)
+                raise
+
+        monkeypatch.setattr(BSON, "encode", tracked_encode)
+        docs = [{"_id": NeoObjectId(), "name": f"doc-{i}"} for i in range(10)]
+        head, tail = NeoSQLiteHandler._fit_bson_budget(docs, limit=10**9)
+        assert len(head) == 10
+        assert tail == []
+        assert encode_errors == []
+
+    def test_drop_collection_with_open_lazy_cursor(self, handler):
+        _insert_many(handler, 200)
+        res = _cmd(
+            handler,
+            {"find": "big", "filter": {}, "batchSize": 10, "$db": "test"},
+        )
+        cid = res["cursor"]["id"]
+        assert cid != 0
+
+        # Dropping collection while an unexhausted lazy cursor exists must succeed
+        drop_res = _cmd(handler, {"drop": "big", "$db": "test"}, req=3)
+        assert drop_res["ok"] == 1
+        assert cid not in handler._cursors

@@ -17,9 +17,11 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any, Self
 
+from bson import BSON
 from bson.int64 import Int64
 
 from neosqlite import Connection
+from neosqlite.collection.type_utils import _hashable_group_key
 from nx_27017.changestream import (
     ChangeStreamManager,
     extract_change_stream_options,
@@ -31,6 +33,7 @@ from nx_27017.gridfs_adapter import (
     create_gridfs_adapter,
     is_regular_collection_table,
 )
+from nx_27017.utils import convert_neo_to_bson_objectids
 from nx_27017.wire_protocol import (
     DEFAULT_MAX_CONNECTIONS,
     DEFAULT_SESSION_TIMEOUT_MINUTES,
@@ -680,6 +683,12 @@ class NeoSQLiteHandler:
                 return True
             if any(key[1] == db_name for key in self._session_tx_conns):
                 return True
+        with self._cursors_lock:
+            if any(
+                entry.get("db") == db_name and entry.get("cursor") is not None
+                for entry in self._cursors.values()
+            ):
+                return True
         return self._change_stream_manager.has_activity(db_name)
 
     def _evict_db_locked(self, db_name: str) -> None:
@@ -769,7 +778,13 @@ class NeoSQLiteHandler:
             except Exception:
                 pass
         with self._cursors_lock:
+            cursor_entries = [
+                (entry.get("db"), entry.get("cursor"))
+                for entry in self._cursors.values()
+            ]
             self._cursors.clear()
+        for _c_db, cursor_obj in cursor_entries:
+            self._close_cursor_obj(cursor_obj)
         with self._dict_lock:
             conns = list(self._conns.values())
             self._conns.clear()
@@ -828,6 +843,7 @@ class NeoSQLiteHandler:
             db_name: Logical database name to drop.
         """
         self._change_stream_manager.invalidate(db_name)
+        self._close_cursors_for_namespace(db_name)
         dropped_sessions: list[tuple[str, Any, Connection | None]] = []
         with self._sessions_lock:
             for sess_key in [
@@ -902,14 +918,50 @@ class NeoSQLiteHandler:
         return size if size > 0 else _DEFAULT_BATCH_SIZE
 
     @staticmethod
+    def _getmore_batch_size(cmd: dict[str, Any]) -> int | None:
+        """Return the document batch size limit for a ``getMore`` command.
+
+        In MongoDB, ``_DEFAULT_BATCH_SIZE`` (101) applies only to initial
+        ``find`` / ``aggregate`` commands; ``getMore`` without an explicit
+        positive ``batchSize`` fills up to the 16 MB BSON budget.
+
+        Args:
+            cmd: Parsed ``getMore`` command body dictionary.
+
+        Returns:
+            int | None: Explicit positive batch size, or ``None`` when
+                omitted/zero (bounded only by BSON size budget).
+        """
+        raw = cmd.get("batchSize", None)
+        if raw is None:
+            return None
+        try:
+            size = abs(int(raw))
+        except (TypeError, ValueError):
+            return None
+        return size if size > 0 else None
+
+    @staticmethod
+    def _estimate_bson_size(doc: dict[str, Any]) -> int:
+        """Compute exact BSON size after converting NeoSQLite types."""
+        try:
+            return len(BSON.encode(convert_neo_to_bson_objectids(doc)))
+        except Exception:
+            return len(repr(doc))
+
+    @classmethod
     def _fit_bson_budget(
-        docs: list[dict[str, Any]], limit: int = MAX_BSON_DOCUMENT_SIZE
+        cls,
+        docs: list[dict[str, Any]],
+        limit: int = MAX_BSON_DOCUMENT_SIZE,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Split documents so the head fits within a BSON size budget.
 
         Always keeps at least one document in ``head`` (an oversized single
         document is returned as-is rather than raising, documenting NX's
-        leniency compared to MongoDB).
+        leniency compared to MongoDB). Converts NeoSQLite types to BSON before
+        encoding so ``BSON.encode`` computes exact byte sizes without raising
+        ``InvalidDocument`` on ``neosqlite.objectid.ObjectId`` values.
 
         Args:
             docs: Ordered list of candidate response documents.
@@ -919,25 +971,75 @@ class NeoSQLiteHandler:
             tuple[list[dict[str, Any]], list[dict[str, Any]]]: Tuple of
                 ``(head, remainder)`` slices.
         """
-        from bson import BSON
-
         head: list[dict[str, Any]] = []
         used = 0
         for doc in docs:
-            try:
-                size = len(BSON.encode(doc))
-            except Exception:
-                size = len(repr(doc))
+            size = cls._estimate_bson_size(doc)
             if head and used + size > limit:
                 break
             head.append(doc)
             used += size
         return head, docs[len(head) :]
 
-    def _expire_cursors_locked(self, now: float | None = None) -> None:
+    @staticmethod
+    def _close_cursor_obj(cursor_obj: Any) -> None:
+        """Safely close a live NeoSQLite cursor or iterator."""
+        if cursor_obj is not None and hasattr(cursor_obj, "close"):
+            try:
+                cursor_obj.close()
+            except Exception as exc:
+                logger.debug(f"Failed closing wire cursor handle: {exc}")
+
+    def _close_cursor_entries(
+        self,
+        entries: list[tuple[str | None, Any]],
+        current_db: str | None = None,
+    ) -> None:
+        """Close popped cursor handles outside ``_cursors_lock`` safely."""
+        for c_db, cursor_obj in entries:
+            if cursor_obj is None or not hasattr(cursor_obj, "close"):
+                continue
+            if (
+                current_db is not None
+                and (c_db == current_db or self._mode == "single")
+            ) or not c_db:
+                self._close_cursor_obj(cursor_obj)
+            else:
+                try:
+                    with self._lock_for(c_db):
+                        self._close_cursor_obj(cursor_obj)
+                except Exception:
+                    self._close_cursor_obj(cursor_obj)
+
+    def _close_cursors_for_namespace(
+        self, db_name: str, coll_name: str | None = None
+    ) -> None:
+        """Close and drop open data cursors belonging to a dropped db/collection."""
+        target_ns = f"{db_name}.{coll_name}" if coll_name is not None else None
+        popped: list[tuple[str | None, Any]] = []
+        with self._cursors_lock:
+            to_delete = [
+                cid
+                for cid, entry in self._cursors.items()
+                if entry.get("db") == db_name
+                and (target_ns is None or entry.get("ns") == target_ns)
+            ]
+            for cid in to_delete:
+                entry = self._cursors.pop(cid, None)
+                if entry is not None:
+                    popped.append((entry.get("db"), entry.get("cursor")))
+        self._close_cursor_entries(popped, current_db=db_name)
+
+    def _expire_cursors_locked(
+        self,
+        now: float | None = None,
+        closed_out: list[tuple[str | None, Any]] | None = None,
+    ) -> None:
         """Drop idle data cursors past timeout and enforce ``_MAX_CURSORS``.
 
-        Must be called while holding ``self._cursors_lock``.
+        Must be called while holding ``self._cursors_lock``. Removed cursor
+        handles are appended to ``closed_out`` so callers can close them after
+        releasing ``_cursors_lock``.
         """
         if not self._cursors:
             return
@@ -949,7 +1051,9 @@ class NeoSQLiteHandler:
             if entry.get("last_used", current) < cutoff
         ]
         for cid in expired:
-            del self._cursors[cid]
+            entry = self._cursors.pop(cid, None)
+            if entry is not None and closed_out is not None:
+                closed_out.append((entry.get("db"), entry.get("cursor")))
         if len(self._cursors) > _MAX_CURSORS:
             by_age = sorted(
                 self._cursors.items(),
@@ -957,25 +1061,95 @@ class NeoSQLiteHandler:
             )
             excess = len(self._cursors) - _MAX_CURSORS
             for cid, _entry in by_age[:excess]:
-                self._cursors.pop(cid, None)
+                entry = self._cursors.pop(cid, None)
+                if entry is not None and closed_out is not None:
+                    closed_out.append((entry.get("db"), entry.get("cursor")))
 
     @staticmethod
     def _cursor_last_used_key(item: tuple[int, dict[str, Any]]) -> float:
         """Return sort key for cursor eviction by ``last_used`` timestamp."""
         return float(item[1].get("last_used", 0.0))
 
+    @classmethod
+    def _take_batch_from_iter(
+        cls,
+        buffered: list[dict[str, Any]],
+        source_iter: Iterator[dict[str, Any]] | None,
+        batch_size: int | None,
+        limit: int = MAX_BSON_DOCUMENT_SIZE,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+        """Take one batch from ``buffered`` + lazy ``source_iter`` under limits.
+
+        Pulls at most ``batch_size`` documents (when given) while staying within
+        ``limit`` BSON bytes, peeking at most one trailing document past an exact
+        count boundary so exhausted streams report ``has_more = False``.
+        """
+        if source_iter is None:
+            candidates = (
+                buffered if batch_size is None else buffered[:batch_size]
+            )
+            list_head, budget_rest = cls._fit_bson_budget(
+                candidates, limit=limit
+            )
+            list_rest = budget_rest + (
+                [] if batch_size is None else buffered[batch_size:]
+            )
+            return list_head, list_rest, bool(list_rest)
+
+        head: list[dict[str, Any]] = []
+        used = 0
+        budget_hit = False
+        rest_start = len(buffered)
+        for idx, doc in enumerate(buffered):
+            if batch_size is not None and len(head) >= batch_size:
+                rest_start = idx
+                break
+            size = cls._estimate_bson_size(doc)
+            if head and used + size > limit:
+                rest_start = idx
+                budget_hit = True
+                break
+            head.append(doc)
+            used += size
+
+        rest = buffered[rest_start:]
+        exhausted = False
+        if not budget_hit:
+            while batch_size is None or len(head) < batch_size:
+                try:
+                    doc = next(source_iter)
+                except StopIteration:
+                    exhausted = True
+                    break
+                size = cls._estimate_bson_size(doc)
+                if head and used + size > limit:
+                    rest.append(doc)
+                    budget_hit = True
+                    break
+                head.append(doc)
+                used += size
+            else:
+                if not rest:
+                    try:
+                        rest.append(next(source_iter))
+                    except StopIteration:
+                        exhausted = True
+
+        has_more = bool(rest) or not exhausted
+        return head, rest, has_more
+
     def _split_first_batch(
         self,
-        docs: list[dict[str, Any]],
+        docs: Any,
         batch_size: int,
         ns: str,
         db_name: str,
         owner: Any = None,
     ) -> tuple[list[dict[str, Any]], int]:
-        """Split ``docs`` into ``(firstBatch, cursorId)``, storing remainder.
+        """Split ``docs`` (list or lazy cursor) into ``(firstBatch, cursorId)``.
 
         Args:
-            docs: Full list of result documents.
+            docs: Full list of result documents or lazy iterable/cursor.
             batch_size: Maximum document count for the first batch.
             ns: Target namespace string (``"<db>.<collection>"``).
             db_name: Logical database name owning the cursor.
@@ -985,13 +1159,31 @@ class NeoSQLiteHandler:
             tuple[list[dict[str, Any]], int]: First batch of documents and
                 allocated cursor ID (``0`` if all documents fit).
         """
-        first, rest = self._fit_bson_budget(docs[:batch_size])
-        rest = rest + docs[batch_size:]
-        if not rest:
+        if isinstance(docs, list):
+            cursor_obj = None
+            source_iter: Iterator[dict[str, Any]] | None = None
+            first, rest, has_more = self._take_batch_from_iter(
+                docs, None, batch_size
+            )
+        else:
+            cursor_obj = docs
+            source_iter = iter(docs)
+            try:
+                first, rest, has_more = self._take_batch_from_iter(
+                    [], source_iter, batch_size
+                )
+            except Exception:
+                self._close_cursor_obj(cursor_obj)
+                raise
+
+        if not has_more:
+            self._close_cursor_obj(cursor_obj)
             return first, 0
+
         now = time.monotonic()
+        expired_to_close: list[tuple[str | None, Any]] = []
         with self._cursors_lock:
-            self._expire_cursors_locked(now)
+            self._expire_cursors_locked(now, closed_out=expired_to_close)
             cursor_id = _generate_cursor_id()
             while (
                 cursor_id in self._cursors
@@ -1002,24 +1194,29 @@ class NeoSQLiteHandler:
                 "ns": ns,
                 "db": db_name,
                 "docs": rest,
+                "iter": source_iter,
+                "cursor": cursor_obj,
                 "owner": owner,
                 "last_used": now,
             }
             if len(self._cursors) > _MAX_CURSORS:
-                self._expire_cursors_locked(now)
+                self._expire_cursors_locked(now, closed_out=expired_to_close)
+        if expired_to_close:
+            self._close_cursor_entries(expired_to_close, current_db=db_name)
         return first, cursor_id
 
     def _getmore_data(
         self,
         cursor_id: int,
-        batch_size: int,
+        batch_size: int | None,
         expected_ns: str | None = None,
     ) -> dict[str, Any] | None:
         """Return the next batch for a data cursor, or ``None`` if absent.
 
         Args:
             cursor_id: Numeric cursor identifier from a prior response.
-            batch_size: Maximum number of documents to return in this batch.
+            batch_size: Maximum number of documents to return in this batch,
+                or ``None`` to fill up to the 16 MB BSON budget.
             expected_ns: Optional ``"<db>.<collection>"`` namespace that the
                 cursor must match; returns ``{"_ns_mismatch": True}`` when
                 provided and mismatched without consuming cursor state.
@@ -1030,25 +1227,48 @@ class NeoSQLiteHandler:
                 on namespace mismatch, or ``None`` if unknown.
         """
         now = time.monotonic()
+        expired_to_close: list[tuple[str | None, Any]] = []
+        finished_to_close: list[tuple[str | None, Any]] = []
         with self._cursors_lock:
-            self._expire_cursors_locked(now)
+            self._expire_cursors_locked(now, closed_out=expired_to_close)
             entry = self._cursors.get(cursor_id)
             if entry is None:
-                return None
-            ns = entry["ns"]
-            if expected_ns is not None and ns != expected_ns:
-                return {"_ns_mismatch": True}
-            docs = entry["docs"]
-            batch, rest = self._fit_bson_budget(docs[:batch_size])
-            rest = rest + docs[batch_size:]
-            if rest:
-                entry["docs"] = rest
-                entry["last_used"] = now
-                live_id = cursor_id
+                result_payload: dict[str, Any] | None = None
+                entry_db: str | None = None
+            elif expected_ns is not None and entry["ns"] != expected_ns:
+                result_payload = {"_ns_mismatch": True}
+                entry_db = entry.get("db")
             else:
-                del self._cursors[cursor_id]
-                live_id = 0
-        return {"id": Int64(live_id), "ns": ns, "nextBatch": batch}
+                ns = entry["ns"]
+                entry_db = entry.get("db")
+                docs = entry["docs"]
+                source_iter = entry.get("iter")
+                batch, rest, has_more = self._take_batch_from_iter(
+                    docs, source_iter, batch_size
+                )
+                if has_more:
+                    entry["docs"] = rest
+                    if not rest and source_iter is None:
+                        entry["iter"] = None
+                    entry["last_used"] = now
+                    live_id = cursor_id
+                else:
+                    del self._cursors[cursor_id]
+                    if entry.get("cursor") is not None:
+                        finished_to_close.append(
+                            (entry_db, entry.get("cursor"))
+                        )
+                    live_id = 0
+                result_payload = {
+                    "id": Int64(live_id),
+                    "ns": ns,
+                    "nextBatch": batch,
+                }
+        if expired_to_close or finished_to_close:
+            self._close_cursor_entries(
+                expired_to_close + finished_to_close, current_db=entry_db
+            )
+        return result_payload
 
     def _kill_data_cursors(
         self, cursor_ids: list[int], expected_ns: str | None = None
@@ -1064,15 +1284,20 @@ class NeoSQLiteHandler:
             list[int]: Subset of ``cursor_ids`` that existed and were removed.
         """
         killed = []
+        to_close: list[tuple[str | None, Any]] = []
         with self._cursors_lock:
-            self._expire_cursors_locked()
+            self._expire_cursors_locked(closed_out=to_close)
             for cid in cursor_ids:
                 entry = self._cursors.get(cid)
                 if entry is not None and (
                     expected_ns is None or entry.get("ns") == expected_ns
                 ):
                     del self._cursors[cid]
+                    if entry.get("cursor") is not None:
+                        to_close.append((entry.get("db"), entry.get("cursor")))
                     killed.append(cid)
+        if to_close:
+            self._close_cursor_entries(to_close)
         return killed
 
     def close_cursors_for_owner(self, owner: Any) -> None:
@@ -1083,13 +1308,18 @@ class NeoSQLiteHandler:
         """
         if owner is None:
             return
+        to_close: list[tuple[str | None, Any]] = []
         with self._cursors_lock:
             for cid in [
                 cid
                 for cid, entry in self._cursors.items()
                 if entry.get("owner") == owner
             ]:
-                del self._cursors[cid]
+                entry = self._cursors.pop(cid, None)
+                if entry is not None and entry.get("cursor") is not None:
+                    to_close.append((entry.get("db"), entry.get("cursor")))
+        if to_close:
+            self._close_cursor_entries(to_close)
 
     @staticmethod
     def _extract_insert_documents(
@@ -1946,6 +2176,7 @@ class NeoSQLiteHandler:
                 except Exception:
                     pass
                 return request_id, {"ok": 1}
+            self._close_cursors_for_namespace(db_name, coll_name)
             db[coll_name].drop()
             return request_id, {"ok": 1}
 
@@ -1961,6 +2192,7 @@ class NeoSQLiteHandler:
                 # so dropping one drops all user tables. Prefer data_dir
                 # (multi-file) mode for real isolation.
                 self._change_stream_manager.invalidate(dropped_name)
+                self._close_cursors_for_namespace(dropped_name)
                 self.conn.drop_database()
                 with self._dict_lock:
                     self.databases = OrderedDict([("admin", self.conn)])
@@ -2486,9 +2718,8 @@ class NeoSQLiteHandler:
                     cursor = cursor.max(list(max_val.items()))
                 elif isinstance(max_val, list):
                     cursor = cursor.max(max_val)
-            docs = list(cursor)
             first, cursor_id = self._split_first_batch(
-                docs,
+                cursor,
                 self._first_batch_size(cmd_copy),
                 f"{db_name}.{coll_name}",
                 db_name,
@@ -2606,9 +2837,8 @@ class NeoSQLiteHandler:
                 )
                 coll = db[coll_name]
                 cursor = coll.aggregate(pipeline, session=session_to_use)  # type: ignore[assignment]
-                docs = cursor.to_list()
                 first, cursor_id = self._split_first_batch(
-                    docs,
+                    cursor,
                     self._first_batch_size(cmd_copy),
                     f"{db_name}.{coll_name}",
                     db_name,
@@ -2831,7 +3061,7 @@ class NeoSQLiteHandler:
                         ),
                     }
                 next_batch, token = self._change_stream_manager.pull_stream(
-                    stream, self._first_batch_size(cmd_copy)
+                    stream, self._getmore_batch_size(cmd_copy)
                 )
                 return request_id, {
                     "ok": 1,
@@ -2844,7 +3074,7 @@ class NeoSQLiteHandler:
                 }
             data = self._getmore_data(
                 cursor_id,
-                self._first_batch_size(cmd_copy),
+                self._getmore_batch_size(cmd_copy),
                 expected_ns=expected_ns,
             )
             if data is not None:
@@ -2900,18 +3130,15 @@ class NeoSQLiteHandler:
                 else:
                     data_ids.append(cid)
             if data_ids:
-                with self._cursors_lock:
-                    self._expire_cursors_locked()
-                    for cid in data_ids:
-                        cursor_entry = self._cursors.get(cid)
-                        if cursor_entry is not None and (
-                            kill_expected_ns is None
-                            or cursor_entry.get("ns") == kill_expected_ns
-                        ):
-                            del self._cursors[cid]
-                            cursors_killed.append(cid)
-                        else:
-                            cursors_not_found.append(cid)
+                killed_ids = self._kill_data_cursors(
+                    data_ids, expected_ns=kill_expected_ns
+                )
+                killed_set = set(killed_ids)
+                for cid in data_ids:
+                    if cid in killed_set:
+                        cursors_killed.append(cid)
+                    else:
+                        cursors_not_found.append(cid)
             return request_id, {
                 "ok": 1,
                 "cursorsKilled": cursors_killed,
@@ -3406,9 +3633,12 @@ class NeoSQLiteHandler:
             else:
                 docs = adapter.handle_find(filt)
             seen: list[Any] = []
+            seen_keys: set[tuple] = set()
             for doc in docs:
                 value = doc.get(key) if isinstance(doc, dict) else None
-                if value not in seen:
+                val_key = _hashable_group_key(value)
+                if val_key not in seen_keys:
+                    seen_keys.add(val_key)
                     seen.append(value)
             return request_id, {"ok": 1, "values": seen}
         except Exception as exc:

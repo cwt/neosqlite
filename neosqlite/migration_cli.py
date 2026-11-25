@@ -216,6 +216,18 @@ def find_legacy_tables(conn: sqlite3.Connection) -> list[LegacyTable]:
             DDL and saved index/trigger SQL.
     """
     all_tables = _all_table_names(conn)
+    has_outgoing_fk: set[str] = set()
+    referenced_tables: set[str] = set()
+    for tbl in all_tables:
+        fk_rows = conn.execute(
+            f"PRAGMA foreign_key_list({quote_identifier(tbl)})"
+        ).fetchall()
+        if fk_rows:
+            has_outgoing_fk.add(tbl)
+            for fk_row in fk_rows:
+                # row[2] is the referenced table name.
+                referenced_tables.add(fk_row[2])
+
     legacy: list[LegacyTable] = []
 
     for table_name, create_sql in conn.execute(
@@ -228,11 +240,9 @@ def find_legacy_tables(conn: sqlite3.Connection) -> list[LegacyTable]:
             continue
         if not _is_collection_table(conn, table_name):
             continue
-        if conn.execute(
-            f"PRAGMA foreign_key_list({quote_identifier(table_name)})"
-        ).fetchall():
+        if table_name in has_outgoing_fk:
             continue
-        if _has_incoming_foreign_key(conn, table_name, all_tables):
+        if table_name in referenced_tables:
             continue
 
         paren_idx = create_sql.find("(")
@@ -471,7 +481,7 @@ def migrate_database(
         conn = sqlite3.connect(temp_path)
         conn.isolation_level = None
         try:
-            legacy_tables = find_legacy_tables(conn)
+            legacy_tables = tables
 
             if legacy_tables:
                 # Keep view/trigger SQL stable while the table is temporarily

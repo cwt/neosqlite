@@ -133,17 +133,12 @@ class GridFS:
             pass
 
     def list(self) -> list:
-        """List all unique filenames in GridFS in encounter order.
+        """List all unique filenames in GridFS.
 
         Returns:
             list: Distinct filenames stored in GridFS.
         """
-        cursor = self._bucket.find({})
-        filenames = []
-        for grid_out in cursor:
-            if grid_out.filename not in filenames:
-                filenames.append(grid_out.filename)
-        return filenames
+        return self._bucket.list()
 
     def find(self, filter: dict[str, Any] | None = None) -> GridOutCursor:
         """Find files in GridFS that match the filter.

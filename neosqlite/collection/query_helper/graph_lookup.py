@@ -1,7 +1,25 @@
 """Python implementation of MongoDB $graphLookup aggregation stage."""
 
+from collections import deque
 from copy import deepcopy
 from typing import Any
+
+from ..type_utils import _hashable_group_key
+
+_GRAPH_LOOKUP_IN_BATCH_SIZE = 500
+
+
+def _enqueue_lookup_values(
+    queue: deque[tuple[Any, int]],
+    raw_value: Any,
+    depth: int,
+) -> None:
+    """Append scalar or list frontier values to the BFS queue."""
+    if isinstance(raw_value, list):
+        for item in raw_value:
+            queue.append((item, depth))
+    else:
+        queue.append((raw_value, depth))
 
 
 def process_graph_lookup(
@@ -64,29 +82,41 @@ def process_graph_lookup(
         # 1. Evaluate startWith
         start_val = evaluator._evaluate_operand_python(start_with_expr, doc)
 
-        # start_val can be a single value or an array
-        if not isinstance(start_val, list):
-            search_queue = [(start_val, 0)]
-        else:
-            search_queue = [(v, 0) for v in start_val]
+        search_queue: deque[tuple[Any, int]] = deque()
+        _enqueue_lookup_values(search_queue, start_val, 0)
 
         visited_ids: set[Any] = set()
+        queried_keys: set[tuple] = set()
         results: list[dict[str, Any]] = []
 
-        # 2. Recursive search
+        # 2. Level-batched breadth-first traversal
         while search_queue:
-            current_val, depth = search_queue.pop(0)
+            depth = search_queue[0][1]
+            frontier_vals: list[Any] = []
+            while search_queue and search_queue[0][1] == depth:
+                current_val, _ = search_queue.popleft()
+                if current_val is None:
+                    continue
+                val_key = _hashable_group_key(current_val)
+                if val_key in queried_keys:
+                    continue
+                queried_keys.add(val_key)
+                frontier_vals.append(current_val)
 
-            if current_val is None:
+            if not frontier_vals:
                 continue
 
-            # Find documents in target collection where connectToField == current_val
-            query = {connect_to_field: current_val}
-            if restrict_search:
-                # Merge with restrict_search
-                query = {"$and": [query, restrict_search]}
-
-            found_docs = list(target_collection.find(query))
+            found_docs: list[dict[str, Any]] = []
+            for start_idx in range(
+                0, len(frontier_vals), _GRAPH_LOOKUP_IN_BATCH_SIZE
+            ):
+                chunk = frontier_vals[
+                    start_idx : start_idx + _GRAPH_LOOKUP_IN_BATCH_SIZE
+                ]
+                query: dict[str, Any] = {str(connect_to_field): {"$in": chunk}}
+                if restrict_search:
+                    query = {"$and": [query, restrict_search]}
+                found_docs.extend(target_collection.find(query))
 
             for found_doc in found_docs:
                 doc_id = found_doc.get("_id")
@@ -110,11 +140,7 @@ def process_graph_lookup(
                 next_val = target_collection._get_val(
                     found_doc, connect_from_field
                 )
-                if isinstance(next_val, list):
-                    for v in next_val:
-                        search_queue.append((v, depth + 1))
-                else:
-                    search_queue.append((next_val, depth + 1))
+                _enqueue_lookup_values(search_queue, next_val, depth + 1)
 
         # 3. Add results to the document
         collection._set_val(doc, as_field, results)

@@ -6,6 +6,7 @@ import operator
 import re
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
@@ -343,6 +344,7 @@ class ChangeStream:
         self._closed = False
         self._last_id = 0
         self._last_token_id: int | None = None
+        self._buffer: deque[tuple[Any, ...]] = deque()
 
         self._sanitized_name = self._sanitize_collection_name(collection.name)
 
@@ -721,27 +723,29 @@ class ChangeStream:
         )
         deadline = time.monotonic() + timeout_s
 
-        # Poll for changes
+        # Poll for changes, refilling self._buffer once exhausted
         while True:
-            cursor = self._collection.db.execute(
-                """
-                SELECT id, operation, document_id, document_data, document_id_value, timestamp
-                FROM _neosqlite_changestream
-                WHERE collection_name = ? AND id > ?
-                ORDER BY id
-                LIMIT ?
-                """,
-                (self._collection.name, self._last_id, self._batch_size),
-            )
-            rows = cursor.fetchall()
-            if not rows:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise StopIteration("Change stream timeout exceeded")
-                time.sleep(min(0.05, remaining))
-                continue
+            if not self._buffer:
+                cursor = self._collection.db.execute(
+                    """
+                    SELECT id, operation, document_id, document_data, document_id_value, timestamp
+                    FROM _neosqlite_changestream
+                    WHERE collection_name = ? AND id > ?
+                    ORDER BY id
+                    LIMIT ?
+                    """,
+                    (self._collection.name, self._last_id, self._batch_size),
+                )
+                rows = cursor.fetchall()
+                if not rows:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise StopIteration("Change stream timeout exceeded")
+                    time.sleep(min(0.05, remaining))
+                    continue
+                self._buffer.extend(rows)
 
-            row = rows[0]
+            row = self._buffer.popleft()
             (
                 change_id,
                 operation,
@@ -754,7 +758,8 @@ class ChangeStream:
             parsed_doc, utf8_failed = self._decode_document_data(document_data)
             if self._full_document == "updateLookup" and utf8_failed:
                 self._advance_watermark(change_id)
-                self._prune_consumed()
+                if not self._buffer:
+                    self._prune_consumed()
                 if timeout_s > 0 and time.monotonic() >= deadline:
                     raise StopIteration("Change stream timeout exceeded")
                 continue
@@ -788,7 +793,8 @@ class ChangeStream:
                 change_doc, self._pipeline
             ):
                 self._advance_watermark(change_id)
-                self._prune_consumed()
+                if not self._buffer:
+                    self._prune_consumed()
                 if timeout_s > 0 and time.monotonic() >= deadline:
                     raise StopIteration("Change stream timeout exceeded")
                 continue
@@ -797,7 +803,8 @@ class ChangeStream:
             # streams on this collection keep their own watermarks.
             self._last_id = change_id
             self._last_token_id = change_id
-            self._prune_consumed()
+            if not self._buffer:
+                self._prune_consumed()
 
             return change_doc
 
@@ -817,6 +824,7 @@ class ChangeStream:
         """
         if not self._closed:
             self._closed = True
+            self._buffer.clear()
             self._cleanup_triggers()
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_traceback: Any) -> None:

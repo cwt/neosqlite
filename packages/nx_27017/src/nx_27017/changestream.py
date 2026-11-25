@@ -690,17 +690,19 @@ class ChangeStreamManager:
     # -- pull ----------------------------------------------------------
 
     def pull_stream(
-        self, stream: ChangeStreamCursor, batch_size: int = 101
+        self, stream: ChangeStreamCursor, batch_size: int | None = 101
     ) -> tuple[list[dict[str, Any]], dict]:
         """Read new changelog events past the stream's watermark.
 
         Queries ``_neosqlite_changestream`` for rows with ``id > watermark``,
         translates each row, filters through ``stream.pipeline``, advances
         the watermark past all scanned rows, and prunes obsolete history.
+        When ``batch_size`` is ``None``, reads up to the 16 MB BSON budget.
 
         Args:
             stream: Change stream cursor to advance.
-            batch_size: Maximum number of changelog rows to read in one pull.
+            batch_size: Maximum number of changelog rows to read in one pull,
+                or ``None`` for BSON-budget-bounded reading.
 
         Returns:
             tuple[list[dict[str, Any]], dict]: Pair of the matched change
@@ -717,30 +719,45 @@ class ChangeStreamManager:
         try:
             # Updated documents may be stored as JSONB binary blobs
             # (pysqlite3 builds); convert to text like normal reads do.
+            from bson import BSON
+
             from neosqlite.collection.jsonb_support import JSONBContext
+            from nx_27017.utils import convert_neo_to_bson_objectids
+            from nx_27017.wire_protocol import MAX_BSON_DOCUMENT_SIZE
 
             data_expr = JSONBContext.from_db(collection.db).data_column(
                 "document_data"
             )
+            sql_limit = -1 if batch_size is None else batch_size
             rows = collection.db.execute(
                 "SELECT id, operation, document_id, "
                 f"{data_expr} AS document_data, document_id_value "
                 "FROM _neosqlite_changestream "
                 "WHERE collection_name = ? AND id > ? "
                 "ORDER BY id LIMIT ?",
-                (stream.collection_name, stream._watermark, batch_size),
+                (stream.collection_name, stream._watermark, sql_limit),
             ).fetchall()
         except Exception as exc:
             logger.debug("ChangeStream pull skipped: %s", exc)
             return batch, stream.get_resume_token()
         max_seen = stream._watermark
+        used_bytes = 0
         for row in rows:
             rowid = int(row[0])
-            max_seen = max(max_seen, rowid)
             doc = self._translate_row(stream, rowid, row)
             if doc is not None and _pipeline_matches(doc, stream.pipeline):
+                try:
+                    doc_size = len(
+                        BSON.encode(convert_neo_to_bson_objectids(doc))
+                    )
+                except Exception:
+                    doc_size = len(repr(doc))
+                if batch and used_bytes + doc_size > MAX_BSON_DOCUMENT_SIZE:
+                    break
                 batch.append(doc)
+                used_bytes += doc_size
                 stream._last_token_id = rowid
+            max_seen = max(max_seen, rowid)
         stream._watermark = max_seen
         self._prune(stream.db_name, stream.collection_name)
         return batch, stream.get_resume_token()

@@ -1303,7 +1303,12 @@ class Cursor:
             cmd = f"/* {safe_comment} */ {cmd}"
 
         db_cursor = self._collection.db.execute(cmd, params)
-        apply = partial(self._query_helpers._apply_query, self._filter)
+        query_context: dict[str, Any] = {}
+        apply = partial(
+            self._query_helpers._apply_query,
+            self._filter,
+            _context=query_context,
+        )
         check_minmax = force_fallback and bool(self._min or self._max)
 
         while True:
@@ -1492,6 +1497,7 @@ class Cursor:
 
             # Filter documents using $expr Python evaluation
             has_minmax = bool(self._min or self._max)
+            expr_context: dict[str, Any] = {}
 
             def expr_filter(doc: dict[str, Any]) -> bool:
                 """Evaluate the full ``$expr`` filter and bounds on a document.
@@ -1504,7 +1510,9 @@ class Cursor:
                         min/max bounds, ``False`` otherwise or on error.
                 """
                 try:
-                    if not self._query_helpers._apply_query(self._filter, doc):
+                    if not self._query_helpers._apply_query(
+                        self._filter, doc, _context=expr_context
+                    ):
                         return False
                     return not has_minmax or self._matches_minmax(doc)
                 except Exception as e:

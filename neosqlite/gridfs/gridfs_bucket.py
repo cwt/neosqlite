@@ -3,6 +3,7 @@ import hashlib
 import io
 import logging
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 # Import JSONB support utilities to reuse existing implementation
@@ -326,6 +327,129 @@ class GridFSBucket:
         """Checkpoint the WAL when write concern requires durability."""
         force_sync_if_needed(self._db, self._write_concern)
 
+    _UPLOAD_CHUNK_BATCH_SIZE = 64
+
+    @staticmethod
+    def _iter_source_chunks(
+        source: bytes | io.IOBase, chunk_size: int
+    ) -> Iterator[bytes]:
+        """Yield ``chunk_size`` byte slices from ``bytes`` or a readable stream."""
+        if isinstance(source, bytes):
+            for offset in range(0, len(source), chunk_size):
+                yield source[offset : offset + chunk_size]
+            return
+
+        if not hasattr(source, "read"):
+            raise TypeError("source must be bytes or a file-like object")
+
+        while True:
+            buf = bytearray()
+            while len(buf) < chunk_size:
+                piece = source.read(chunk_size - len(buf))
+                if not piece:
+                    break
+                buf.extend(piece)
+            if not buf:
+                break
+            yield bytes(buf)
+
+    def _run_in_tx(self, operation: Any) -> Any:
+        """Execute ``operation()`` inside a savepoint (if active tx) or SQL transaction."""
+        if getattr(self._db, "in_transaction", False) is True:
+            sp_name = f"gridfs_tx_{uuid.uuid4().hex[:12]}"
+            self._db.execute(f"SAVEPOINT {sp_name}")
+            try:
+                result = operation()
+            except Exception:
+                self._db.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                self._db.execute(f"RELEASE SAVEPOINT {sp_name}")
+                raise
+            self._db.execute(f"RELEASE SAVEPOINT {sp_name}")
+            return result
+
+        self._db.execute("BEGIN")
+        try:
+            result = operation()
+            self._db.commit()
+            return result
+        except Exception:
+            self._db.rollback()
+            raise
+
+    def _upload_from_source(
+        self,
+        stored_id: Any,
+        filename: str,
+        source: bytes | io.IOBase,
+        chunk_size_bytes: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Stream chunks from ``source`` and write file metadata transactionally."""
+        if not isinstance(source, bytes) and not hasattr(source, "read"):
+            raise TypeError("source must be bytes or a file-like object")
+
+        chunk_size = chunk_size_bytes or self._chunk_size_bytes
+        upload_date = datetime.datetime.now(datetime.UTC).isoformat()
+        files_coll = quote_table_name(self._files_collection)
+        chunks_sql = (
+            f"INSERT INTO {quote_table_name(self._chunks_collection)} "
+            f"(files_id, n, data) VALUES (?, ?, ?)"
+        )
+
+        def _perform_upload() -> None:
+            cursor = self._db.execute(
+                f"""
+                INSERT INTO {files_coll}
+                (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
+                VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    stored_id,
+                    filename,
+                    0,
+                    chunk_size,
+                    upload_date,
+                    None,
+                    serialize_metadata(metadata),
+                ),
+            )
+            file_int_id = cursor.lastrowid
+            if file_int_id is None and stored_id is not None:
+                row = self._db.execute(
+                    f"SELECT id FROM {files_coll} WHERE _id = ?",
+                    (stored_id,),
+                ).fetchone()
+                file_int_id = row[0] if row else None
+            if file_int_id is None:
+                raise RuntimeError("Failed to get file ID")
+
+            total_length = 0
+            md5_hasher = None if self._disable_md5 else hashlib.md5()
+            batch: list[tuple[int, int, bytes]] = []
+            for chunk_index, chunk in enumerate(
+                self._iter_source_chunks(source, chunk_size)
+            ):
+                total_length += len(chunk)
+                if md5_hasher is not None:
+                    md5_hasher.update(chunk)
+                batch.append((file_int_id, chunk_index, chunk))
+                if len(batch) >= self._UPLOAD_CHUNK_BATCH_SIZE:
+                    self._db.executemany(chunks_sql, batch)
+                    batch.clear()
+            if batch:
+                self._db.executemany(chunks_sql, batch)
+
+            md5_hash = (
+                md5_hasher.hexdigest() if md5_hasher is not None else None
+            )
+            self._db.execute(
+                f"UPDATE {files_coll} SET length = ?, md5 = ? WHERE id = ?",
+                (total_length, md5_hash, file_int_id),
+            )
+
+        self._run_in_tx(_perform_upload)
+        self._force_sync_if_needed()
+
     def upload_from_stream(
         self,
         filename: str,
@@ -336,9 +460,9 @@ class GridFSBucket:
     ) -> ObjectId:
         """Upload a file from bytes or a readable stream into GridFS.
 
-        Reads the full payload from ``source``, optionally computes its MD5
-        digest, inserts a file document into ``_files_collection``, stores all
-        chunks via ``_insert_chunks``, and forces sync if configured.
+        Streams payload chunks incrementally without buffering the entire file
+        in memory, computes an incremental MD5 digest (unless disabled), and
+        persists file metadata and chunks atomically.
 
         Args:
             filename: Stored filename for the GridFS file document.
@@ -361,54 +485,14 @@ class GridFSBucket:
         if session:
             validate_session(session, self._db)
 
-        # Get the data from the source
-        if isinstance(source, bytes):
-            data = source
-        elif hasattr(source, "read"):
-            data = source.read()
-        else:
-            raise TypeError("source must be bytes or a file-like object")
-
-        # Calculate MD5 hash of the data (unless disabled)
-        md5_hash = None
-        if not self._disable_md5:
-            md5_hash = hashlib.md5(data).hexdigest()
-
-        # Generate ObjectId for the file
         file_oid = ObjectId()
-
-        # Insert file metadata first
-        upload_date = datetime.datetime.now(datetime.UTC).isoformat()
-
-        chunk_size = chunk_size_bytes or self._chunk_size_bytes
-
-        cursor = self._db.execute(
-            f"""
-            INSERT INTO {quote_table_name(self._files_collection)}
-            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
-            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                str(file_oid),  # Store ObjectId as hex string
-                filename,
-                len(data),
-                chunk_size,
-                upload_date,
-                md5_hash,
-                serialize_metadata(metadata),
-            ),
+        self._upload_from_source(
+            str(file_oid),
+            filename,
+            source,
+            chunk_size_bytes=chunk_size_bytes,
+            metadata=metadata,
         )
-
-        file_id = cursor.lastrowid
-        if file_id is None:
-            raise RuntimeError("Failed to get file ID")
-
-        # Split data into chunks and insert them
-        self._insert_chunks(file_id, data, chunk_size_bytes=chunk_size)
-
-        # Force sync if write concern requires it
-        self._force_sync_if_needed()
-
         return file_oid
 
     def _insert_chunks(
@@ -427,40 +511,28 @@ class GridFSBucket:
             chunk_size_bytes: Bytes per chunk. Defaults to the bucket's
                 ``chunk_size_bytes`` when ``None`` or ``0``.
         """
-        chunk_size = chunk_size_bytes or self._chunk_size_bytes
-        rows = [
-            (
-                file_id,
-                i // chunk_size,
-                data[i : i + chunk_size],
-            )
-            for i in range(0, len(data), chunk_size)
-        ]
-        if not rows:
+        if not data:
             return
+        chunk_size = chunk_size_bytes or self._chunk_size_bytes
         chunks_sql = f"""
             INSERT INTO {quote_table_name(self._chunks_collection)}
             (files_id, n, data)
             VALUES (?, ?, ?)
         """
-        if getattr(self._db, "in_transaction", False) is True:
-            sp_name = f"gridfs_chunks_{uuid.uuid4().hex[:12]}"
-            self._db.execute(f"SAVEPOINT {sp_name}")
-            try:
-                self._db.executemany(chunks_sql, rows)
-            except Exception:
-                self._db.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
-                self._db.execute(f"RELEASE SAVEPOINT {sp_name}")
-                raise
-            self._db.execute(f"RELEASE SAVEPOINT {sp_name}")
-        else:
-            self._db.execute("BEGIN")
-            try:
-                self._db.executemany(chunks_sql, rows)
-                self._db.commit()
-            except Exception:
-                self._db.rollback()
-                raise
+
+        def _write_batches() -> None:
+            batch: list[tuple[int, int, bytes]] = []
+            for chunk_index, chunk in enumerate(
+                self._iter_source_chunks(data, chunk_size)
+            ):
+                batch.append((file_id, chunk_index, chunk))
+                if len(batch) >= self._UPLOAD_CHUNK_BATCH_SIZE:
+                    self._db.executemany(chunks_sql, batch)
+                    batch.clear()
+            if batch:
+                self._db.executemany(chunks_sql, batch)
+
+        self._run_in_tx(_write_batches)
 
     def _copy_grid_out_to_stream(
         self, grid_out: GridOut, destination: io.IOBase
@@ -739,23 +811,6 @@ class GridFSBucket:
         if self._get_integer_id_for_file(file_id) is not None:
             raise FileExists(f"File with id {file_id} already exists")
 
-        # Get the data from the source
-        if isinstance(source, bytes):
-            data = source
-        elif hasattr(source, "read"):
-            data = source.read()
-        else:
-            raise TypeError("source must be bytes or a file-like object")
-
-        # Calculate MD5 hash of the data (unless disabled)
-        md5_hash = None
-        if not self._disable_md5:
-            md5_hash = hashlib.md5(data).hexdigest()
-
-        # Insert file metadata with NULL for internal AUTOINCREMENT id PK so
-        # custom int/str _ids never collide with id PKs or raise datatype errors.
-        upload_date = datetime.datetime.now(datetime.UTC).isoformat()
-        files_coll = quote_table_name(self._files_collection)
         stored_id: Any = (
             str(file_id)
             if isinstance(file_id, ObjectId)
@@ -763,35 +818,13 @@ class GridFSBucket:
             or isinstance(file_id, bool)
             else file_id
         )
-        cursor = self._db.execute(
-            f"""
-            INSERT INTO {files_coll}
-            (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
-            VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                stored_id,
-                filename,
-                len(data),
-                chunk_size_bytes or self._chunk_size_bytes,
-                upload_date,
-                md5_hash,
-                serialize_metadata(metadata),
-            ),
+        self._upload_from_source(
+            stored_id,
+            filename,
+            source,
+            chunk_size_bytes=chunk_size_bytes,
+            metadata=metadata,
         )
-        file_int_id = cursor.lastrowid
-        if file_int_id is None:
-            file_int_id = self._get_integer_id_for_file(file_id)
-        if file_int_id is None:
-            raise RuntimeError("Failed to get file ID")
-
-        # Split data into chunks and insert them
-        self._insert_chunks(
-            file_int_id, data, chunk_size_bytes=chunk_size_bytes
-        )
-
-        # Force sync if write concern requires it
-        self._force_sync_if_needed()
 
     def open_upload_stream_with_id(
         self,

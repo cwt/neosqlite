@@ -423,6 +423,9 @@ class GridOut:
         db: sqlite3.Connection,
         bucket_name: str,
         file_id: ObjectId | int,
+        _prefetched_row: tuple[Any, ...] | None = None,
+        _has_content_type: bool | None = None,
+        _has_aliases: bool | None = None,
     ):
         """Initialize a new ``GridOut`` readable stream.
 
@@ -435,6 +438,11 @@ class GridOut:
             db: SQLite database connection.
             bucket_name: Bucket name prefix for GridFS tables.
             file_id: ``ObjectId`` or integer ID of the file to read.
+            _prefetched_row: Internal tuple of pre-fetched metadata columns
+                passed by ``GridOutCursor`` to avoid N+1 per-file queries.
+            _has_content_type: Whether ``_prefetched_row`` includes
+                ``content_type``.
+            _has_aliases: Whether ``_prefetched_row`` includes ``aliases``.
 
         Raises:
             RuntimeError: If an ``ObjectId`` file ID is not found in DB.
@@ -442,6 +450,19 @@ class GridOut:
         """
         self._db = db
         self._bucket_name = bucket_name
+        self._files_collection = validate_identifier(f"{bucket_name}_files")
+        self._chunks_collection = validate_identifier(f"{bucket_name}_chunks")
+
+        if _prefetched_row is not None:
+            self._int_file_id = _prefetched_row[0]
+            self._populate_from_row(
+                _prefetched_row[1:],
+                bool(_has_content_type),
+                bool(_has_aliases),
+                self._int_file_id,
+            )
+            return
+
         # Convert file_id to integer for internal use
         if isinstance(file_id, ObjectId):
             # Look up the integer ID for this ObjectId
@@ -457,24 +478,12 @@ class GridOut:
             self._int_file_id = row[0]  # Store the integer ID internally
         else:
             self._int_file_id = file_id  # Store the integer ID internally
-        self._files_collection = validate_identifier(f"{bucket_name}_files")
-        self._chunks_collection = validate_identifier(f"{bucket_name}_chunks")
 
         # Get file metadata using the integer ID
         # Check if new columns exist to maintain backward compatibility
-        has_content_type = False
-        has_aliases = False
-        try:
-            has_content_type = column_exists(
-                self._db, self._files_collection, "content_type"
-            )
-            has_aliases = column_exists(
-                self._db, self._files_collection, "aliases"
-            )
-        except (AttributeError, TypeError) as e:
-            # Handle mocked databases in tests - assume old schema
-            logger.debug(f"{e=}")
-            pass
+        has_content_type, has_aliases = self._detect_optional_columns(
+            self._db, self._files_collection
+        )
 
         # Build dynamic SELECT query based on available columns
         select_columns = [
@@ -502,7 +511,33 @@ class GridOut:
         if row is None:
             raise NoFile(f"File with id {file_id} not found")
 
-        # Unpack based on available columns
+        self._populate_from_row(row, has_content_type, has_aliases, file_id)
+
+    @staticmethod
+    def _detect_optional_columns(
+        db: sqlite3.Connection, files_collection: str
+    ) -> tuple[bool, bool]:
+        """Detect optional GridFS metadata columns on ``files_collection``."""
+        has_content_type = False
+        has_aliases = False
+        try:
+            has_content_type = column_exists(
+                db, files_collection, "content_type"
+            )
+            has_aliases = column_exists(db, files_collection, "aliases")
+        except (AttributeError, TypeError) as e:
+            # Handle mocked databases in tests - assume old schema
+            logger.debug(f"{e=}")
+        return has_content_type, has_aliases
+
+    def _populate_from_row(
+        self,
+        row: tuple[Any, ...],
+        has_content_type: bool,
+        has_aliases: bool,
+        fallback_file_id: Any,
+    ) -> None:
+        """Populate metadata attributes from an unpacked SQLite files row."""
         row_idx = 0
         self._filename = row[row_idx]
         row_idx += 1
@@ -568,7 +603,7 @@ class GridOut:
                 self._actual_id = self._stored_oid  # type: ignore
         else:
             # If no stored _id, fall back to the integer ID
-            self._actual_id = file_id  # type: ignore
+            self._actual_id = fallback_file_id  # type: ignore
 
         self._metadata = deserialize_metadata(metadata_str)
         self._aliases = deserialize_aliases(aliases_str)
@@ -1703,6 +1738,10 @@ class GridOutCursor:
         self._batch_size: int = 101
 
         self._file_ids: list[Any] | None = None
+        self._rows: list[tuple[Any, ...]] = []
+        self._sql_cursor: Any | None = None
+        self._has_content_type = False
+        self._has_aliases = False
         self._index: int = 0
 
     def sort(self, key_or_list: Any, direction: int | None = None) -> Self:
@@ -1805,24 +1844,61 @@ class GridOutCursor:
         cloned._batch_size = self._batch_size
         return cloned
 
+    def close(self) -> None:
+        """Close the underlying SQLite cursor if still open."""
+        if self._sql_cursor is not None:
+            try:
+                self._sql_cursor.close()
+            except Exception as e:
+                logger.debug(f"Error closing GridOutCursor SQL cursor: {e}")
+            self._sql_cursor = None
+
+    def __del__(self) -> None:
+        """Release any open SQLite cursor on garbage collection."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def rewind(self) -> Self:
         """Reset the cursor to its initial unexecuted state.
 
         Returns:
             Self: This ``GridOutCursor`` instance for method chaining.
         """
+        self.close()
         self._file_ids = None
+        self._rows = []
         self._index = 0
         return self
 
     def _ensure_executed(self) -> None:
         """Execute the underlying files query lazily if not yet executed.
 
-        Builds the ``WHERE``, ``ORDER BY``, and ``LIMIT``/``OFFSET`` clauses
-        and caches matching row IDs in ``_file_ids``.
+        Selects all file metadata columns in a single query and streams rows in
+        ``_batch_size`` chunks via ``fetchmany()``, eliminating N+1 per-file
+        metadata queries.
         """
         if self._file_ids is not None:
             return
+
+        self._has_content_type, self._has_aliases = (
+            GridOut._detect_optional_columns(self._db, self._files_collection)
+        )
+        select_columns = [
+            "id",
+            "filename",
+            "length",
+            "chunkSize",
+            "uploadDate",
+            "md5",
+            "json(metadata)",
+            "_id",
+        ]
+        if self._has_content_type:
+            select_columns.append("content_type")
+        if self._has_aliases:
+            select_columns.append("json(aliases)")
 
         where_clause, params = build_gridfs_files_where(self._filter)
         sort_clause = _gridfs_sort_to_sql(self._sort)
@@ -1838,10 +1914,38 @@ class GridOutCursor:
             pagination_clause = " LIMIT -1 OFFSET ?"
             params.append(self._skip)
 
-        query = f"SELECT id FROM {quote_table_name(self._files_collection)} {where_clause} {sort_clause} {pagination_clause}".strip()
-        cursor = self._db.execute(query, params)
-        self._file_ids = [row[0] for row in cursor.fetchall()]
+        query = f"SELECT {', '.join(select_columns)} FROM {quote_table_name(self._files_collection)} {where_clause} {sort_clause} {pagination_clause}".strip()
+        self._sql_cursor = self._db.execute(query, params)
+        self._file_ids = []
+        self._rows = []
         self._index = 0
+
+    def _fetch_next_batch(self, count: int | None = None) -> int:
+        """Pull a batch of file metadata rows from ``_sql_cursor``."""
+        if self._sql_cursor is None or self._file_ids is None:
+            return 0
+        batch_rows = (
+            self._sql_cursor.fetchall()
+            if count is None
+            else self._sql_cursor.fetchmany(count)
+        )
+        if not batch_rows or count is None:
+            self.close()
+        if batch_rows:
+            self._rows.extend(batch_rows)
+            self._file_ids.extend(row[0] for row in batch_rows)
+        return len(batch_rows)
+
+    def _build_grid_out(self, row: tuple[Any, ...]) -> GridOut:
+        """Construct a ``GridOut`` directly from a prefetched metadata row."""
+        return GridOut(
+            self._db,
+            self._bucket_name,
+            row[0],
+            _prefetched_row=row,
+            _has_content_type=self._has_content_type,
+            _has_aliases=self._has_aliases,
+        )
 
     def to_list(self, length: int | None = None) -> list[GridOut]:
         """Retrieve matched files as a list of ``GridOut`` objects.
@@ -1866,15 +1970,22 @@ class GridOutCursor:
                 or length < 0
             ):
                 raise ValueError("length must be a non-negative integer")
-            stop = min(start + length, len(self._file_ids))
-            selected_ids = self._file_ids[start:stop]
+            while (
+                len(self._rows) - start < length
+                and self._sql_cursor is not None
+            ):
+                needed = length - (len(self._rows) - start)
+                if self._fetch_next_batch(max(needed, self._batch_size)) == 0:
+                    break
+            stop = min(start + length, len(self._rows))
+            selected_rows = self._rows[start:stop]
             self._index = stop
         else:
-            selected_ids = self._file_ids[start:]
-            self._index = len(self._file_ids)
-        return [
-            GridOut(self._db, self._bucket_name, fid) for fid in selected_ids
-        ]
+            if self._sql_cursor is not None:
+                self._fetch_next_batch(None)
+            selected_rows = self._rows[start:]
+            self._index = len(self._rows)
+        return [self._build_grid_out(row) for row in selected_rows]
 
     def __iter__(self) -> Self:
         """Return this cursor as an iterator after executing the query.
@@ -1895,10 +2006,11 @@ class GridOutCursor:
             StopIteration: When all matched files have been yielded.
         """
         self._ensure_executed()
-        assert self._file_ids is not None
-        if self._index >= len(self._file_ids):
+        if self._index >= len(self._rows) and self._sql_cursor is not None:
+            self._fetch_next_batch(self._batch_size)
+        if self._index >= len(self._rows):
             raise StopIteration
 
-        file_id = self._file_ids[self._index]
+        row = self._rows[self._index]
         self._index += 1
-        return GridOut(self._db, self._bucket_name, file_id)
+        return self._build_grid_out(row)

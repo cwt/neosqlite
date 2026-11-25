@@ -104,38 +104,43 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                         f"CREATE TEMP TABLE {hash_table_name} (id INTEGER PRIMARY KEY, _id BLOB, data TEXT, {join_key} TEXT)"
                     )
 
-                    row_number = 0
                     if foreign_field == "_id":
-                        for doc in pipeline_result:
-                            raw_id = (
-                                _sanitize_params([doc.get("_id")]) or [None]
-                            )[0]
-                            self.db.execute(
-                                f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
-                                (
-                                    (row_number := row_number + 1),
-                                    raw_id,
-                                    neosqlite_json_dumps(doc),
-                                    _serialize_lookup_key(doc.get("_id")),
-                                ),
+                        rows_to_insert = [
+                            (
+                                row_number,
+                                (_sanitize_params([doc.get("_id")]) or [None])[
+                                    0
+                                ],
+                                neosqlite_json_dumps(doc),
+                                _serialize_lookup_key(doc.get("_id")),
                             )
+                            for row_number, doc in enumerate(
+                                pipeline_result, start=1
+                            )
+                        ]
                     else:
-                        for doc in pipeline_result:
-                            raw_id = (
-                                _sanitize_params([doc.get("_id")]) or [None]
-                            )[0]
-                            key_val = self._extract_field_value(
-                                doc, foreign_field
-                            )
-                            self.db.execute(
-                                f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
-                                (
-                                    (row_number := row_number + 1),
-                                    raw_id,
-                                    neosqlite_json_dumps(doc),
-                                    _serialize_lookup_key(key_val),
+                        rows_to_insert = [
+                            (
+                                row_number,
+                                (_sanitize_params([doc.get("_id")]) or [None])[
+                                    0
+                                ],
+                                neosqlite_json_dumps(doc),
+                                _serialize_lookup_key(
+                                    self._extract_field_value(
+                                        doc, foreign_field
+                                    )
                                 ),
                             )
+                            for row_number, doc in enumerate(
+                                pipeline_result, start=1
+                            )
+                        ]
+                    if rows_to_insert:
+                        self.db.executemany(
+                            f"INSERT INTO {hash_table_name} (id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
+                            rows_to_insert,
+                        )
             else:
                 if foreign_field == "_id":
                     self.db.execute(
@@ -226,6 +231,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
 
         inserted_count = 0
         skipped_count = 0
+        rows_to_insert: list[tuple[Any, Any, str, str | None]] = []
 
         for row in cursor.fetchall():
             doc_id, doc_underscore_id, doc_data = row
@@ -242,16 +248,13 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     key_val = self._extract_field_value(doc, foreign_field)
                     key_val = _serialize_lookup_key(key_val)
 
-                # Insert into hash table
-                self.db.execute(
-                    f"INSERT INTO {hash_table_name} "
-                    f"(id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
+                rows_to_insert.append(
                     (
                         doc_id,
                         doc_underscore_id,
                         neosqlite_json_dumps(doc),
                         key_val,
-                    ),
+                    )
                 )
                 inserted_count += 1
 
@@ -261,6 +264,13 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     f"Skipping corrupted document in $lookup hash table "
                     f"(collection='{from_collection}', id={doc_id}): {e}"
                 )
+
+        if rows_to_insert:
+            self.db.executemany(
+                f"INSERT INTO {hash_table_name} "
+                f"(id, _id, data, {join_key}) VALUES (?, ?, ?, ?)",
+                rows_to_insert,
+            )
 
         if skipped_count > 0:
             logger.warning(
@@ -509,18 +519,20 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
                     self.collection.db.execute(
                         f"CREATE TEMP TABLE {pipeline_result_table} (id INTEGER PRIMARY KEY, _id INTEGER, data TEXT)"
                     )
-                    row_number = 0
-                    for doc in pipeline_result:
-                        raw_id = (_sanitize_params([doc.get("_id")]) or [None])[
-                            0
-                        ]
-                        self.collection.db.execute(
+                    rows_to_insert = [
+                        (
+                            row_number,
+                            (_sanitize_params([doc.get("_id")]) or [None])[0],
+                            neosqlite_json_dumps(doc),
+                        )
+                        for row_number, doc in enumerate(
+                            pipeline_result, start=1
+                        )
+                    ]
+                    if rows_to_insert:
+                        self.collection.db.executemany(
                             f"INSERT INTO {pipeline_result_table} (id, _id, data) VALUES (?, ?, ?)",
-                            (
-                                (row_number := row_number + 1),
-                                raw_id,
-                                neosqlite_json_dumps(doc),
-                            ),
+                            rows_to_insert,
                         )
 
                 select_clause, from_clause = self._build_correlated_lookup_sql(

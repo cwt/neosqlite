@@ -442,10 +442,14 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
         )
 
         # Insert processed documents
-        for doc_id, doc_underscore_id, doc in processed_docs:
-            self.db.execute(
+        rows_to_insert = [
+            (doc_id, doc_underscore_id, neosqlite_json_dumps(doc))
+            for doc_id, doc_underscore_id, doc in processed_docs
+        ]
+        if rows_to_insert:
+            self.db.executemany(
                 f"INSERT INTO {new_table} (id, _id, data) VALUES (?, ?, ?)",
-                (doc_id, doc_underscore_id, neosqlite_json_dumps(doc)),
+                rows_to_insert,
             )
 
         return new_table

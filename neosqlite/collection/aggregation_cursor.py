@@ -302,13 +302,11 @@ class AggregationCursor:
         ``_use_quez`` is enabled) and standard ``aggregate()``, then marks the
         cursor as executed.
         """
-        # Estimate the result size to determine if we need memory-constrained processing
-        estimated_size = self._estimate_result_size()
-
+        # Estimate result size only when quez memory-constrained queuing is enabled
         if (
-            estimated_size > self._memory_threshold
-            and QUEZ_AVAILABLE
+            QUEZ_AVAILABLE
             and self._use_quez
+            and self._estimate_result_size() > self._memory_threshold
         ):
             # Use memory-constrained processing with quez
             self._results = (

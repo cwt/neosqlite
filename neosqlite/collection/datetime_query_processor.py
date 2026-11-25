@@ -443,6 +443,9 @@ class DateTimeQueryProcessor:
             ]
         else:
             all_docs = list(self.collection.find({}))
+        query_context: dict[str, Any] = {}
         return [
-            doc for doc in all_docs if self.helpers._apply_query(query, doc)
+            doc
+            for doc in all_docs
+            if self.helpers._apply_query(query, doc, _context=query_context)
         ]

@@ -1928,18 +1928,13 @@ def _command_dbstats(
     page_count = self.db.execute("PRAGMA page_count").fetchone()[0]
     page_size = self.db.execute("PRAGMA page_size").fetchone()[0]
 
-    collections = self.list_collection_names()
+    collections = self.list_collections()
     total_objects = 0
     total_indexes = 0
 
-    for coll_name in collections:
-        cursor = self.db.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?",
-            (coll_name,),
-        )
-        if not (row := cursor.fetchone()):
-            continue
-        sql = row[0] or ""
+    for coll_info in collections:
+        coll_name = coll_info["name"]
+        sql = coll_info["options"] or ""
 
         if "VIRTUAL TABLE" in sql.upper() and "fts" in sql.lower():
             continue

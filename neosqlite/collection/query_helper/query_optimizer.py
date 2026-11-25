@@ -235,7 +235,11 @@ class QueryOptimizerMixin:
 
         return estimated_count * estimated_avg_doc_size
 
-    def _estimate_query_cost(self, query: dict[str, Any]) -> float:
+    def _estimate_query_cost(
+        self,
+        query: dict[str, Any],
+        indexed_fields: set[str] | list[str] | None = None,
+    ) -> float:
         """Estimate the cost of executing a query based on index availability.
 
         Lower cost values indicate more selective or index-backed queries.
@@ -244,12 +248,22 @@ class QueryOptimizerMixin:
 
         Args:
             query: Dictionary representing the query filter criteria.
+            indexed_fields: Optional pre-fetched collection index field names
+                to avoid repeated ``sqlite_master`` lookups on recursive calls.
 
         Returns:
             float: Estimated cost of the query (lower is better).
         """
-        # Get indexed fields
-        indexed_fields = self._get_indexed_fields()
+        # Get indexed fields once and convert to set for O(1) lookups
+        indexed_set = (
+            set(self._get_indexed_fields())
+            if indexed_fields is None
+            else (
+                indexed_fields
+                if isinstance(indexed_fields, set)
+                else set(indexed_fields)
+            )
+        )
 
         # Base cost
         cost = 1.0
@@ -261,13 +275,17 @@ class QueryOptimizerMixin:
                 if isinstance(value, list):
                     for subquery in value:
                         if isinstance(subquery, dict):
-                            cost *= self._estimate_query_cost(subquery)
+                            cost *= self._estimate_query_cost(
+                                subquery, indexed_fields=indexed_set
+                            )
                 elif isinstance(value, dict):
-                    cost *= self._estimate_query_cost(value)
+                    cost *= self._estimate_query_cost(
+                        value, indexed_fields=indexed_set
+                    )
             elif field == "_id":
                 # _id field is always indexed (it's a column)
                 cost *= 0.1  # Very low cost for _id queries
-            elif field in indexed_fields:
+            elif field in indexed_set:
                 # Field is indexed, reduce cost
                 cost *= 0.3  # Lower cost when using an index
             else:

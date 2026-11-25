@@ -160,14 +160,19 @@ class OperatorsHybridMixin(OperatorsBaseMixin):
         new_table = create_temp(
             stage, "SELECT 1 AS id, 1 AS _id, '{}' AS data WHERE 0"
         )
-        for row_id, doc in enumerate(results, start=1):
-            value = doc.get("_id") if isinstance(doc, dict) else None
-            self.db.execute(
-                f"INSERT INTO {new_table} (id, _id, data) VALUES (?, ?, ?)",
-                (
-                    row_id,
-                    _id_column_value(value),
-                    neosqlite_json_dumps(doc),
+        rows_to_insert = [
+            (
+                row_id,
+                _id_column_value(
+                    doc.get("_id") if isinstance(doc, dict) else None
                 ),
+                neosqlite_json_dumps(doc),
+            )
+            for row_id, doc in enumerate(results, start=1)
+        ]
+        if rows_to_insert:
+            self.db.executemany(
+                f"INSERT INTO {new_table} (id, _id, data) VALUES (?, ?, ?)",
+                rows_to_insert,
             )
         return new_table
