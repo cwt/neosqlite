@@ -653,8 +653,8 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             elem_expr = (
                 "CASE "
                 "WHEN _je.type = 'object' "
-                "AND json_extract(_je.value, '$.__neosqlite_objectid__') = 1 "
-                "THEN json_extract(_je.value, '$.id') "
+                f"AND {self.jsonb.json_function_prefix}_extract(_je.value, '$.__neosqlite_objectid__') = 1 "
+                f"THEN {self.jsonb.json_function_prefix}_extract(_je.value, '$.id') "
                 "ELSE CAST(_je.value AS TEXT) END"
             )
             join_cond = (
