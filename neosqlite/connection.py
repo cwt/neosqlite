@@ -118,9 +118,26 @@ class Connection:
             )
 
         self._closed = False
+        self._parent_connection: Connection | None = None
+        self._active_tx_session_state: ClientSession | None = None
         if not self._is_clone:
             self.connect(*args, **kwargs)
             self._start_ttl_sweeper()
+
+    @property
+    def _active_tx_session(self) -> ClientSession | None:
+        """Get the active transactional ``ClientSession`` for this handle."""
+        if self._parent_connection is not None:
+            return self._parent_connection._active_tx_session
+        return self._active_tx_session_state
+
+    @_active_tx_session.setter
+    def _active_tx_session(self, session: ClientSession | None) -> None:
+        """Set or clear the active transactional ``ClientSession``."""
+        if self._parent_connection is not None:
+            self._parent_connection._active_tx_session = session
+        else:
+            self._active_tx_session_state = session
 
     @property
     def db_path(self) -> str:
@@ -147,6 +164,10 @@ class Connection:
         # __getattr__ and CREATE a bogus "db" Collection (#130's hazard).
         old_db = self.__dict__.get("db")
         if old_db is not None:
+            active_session = self.__dict__.get("_active_tx_session_state")
+            if active_session is not None:
+                active_session._clear_transaction_state()
+                self._active_tx_session_state = None
             try:
                 old_db.close()
             except sqlite3.Error as e:
@@ -495,13 +516,17 @@ class Connection:
             for collection in self._collections.values():
                 collection.cleanup()
 
-    def close(self) -> None:
-        """Close the database connection.
+    def _close_sqlite_handle(self, *, from_gc: bool = False) -> None:
+        """Close the SQLite handle and roll back any uncommitted transaction.
 
-        Stops the TTL sweeper thread if running, cleans up cached collections,
-        clears the JSONB capability cache, commits any pending transaction, and
-        closes the underlying SQLite connection. No-op for clones or already
-        closed connections.
+        Shared teardown helper for ``close()`` and ``_close_rollback()`` so
+        TTL sweeper shutdown, transaction rollback, active-session reset,
+        collection cleanup, JSONB cache eviction, and closing ``self.db``
+        remain consistent in one place.
+
+        Args:
+            from_gc: When ``True`` (called from ``__del__``), suppress
+                teardown errors that can occur during interpreter shutdown.
         """
         if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
             return
@@ -511,34 +536,65 @@ class Connection:
         except Exception:
             pass
 
-        # Clean up collections before closing the database
-        self.cleanup()
+        db = self.__dict__.get("db")
+        if db is not None:
+            try:
+                if db.in_transaction:
+                    if not from_gc and logger is not None:
+                        logger.warning(
+                            "Closing connection with uncommitted transaction; "
+                            "rolling back"
+                        )
+                    try:
+                        db.rollback()
+                    except Exception as e:
+                        if logger is not None:
+                            context = "GC" if from_gc else "close"
+                            logger.debug(
+                                f"Rollback failed during {context}: {e}"
+                            )
+            except Exception:
+                # in_transaction check itself may fail during shutdown
+                pass
 
-        if self.db is not None:
+        active_session = self.__dict__.get("_active_tx_session_state")
+        if active_session is not None:
+            active_session._clear_transaction_state()
+            self._active_tx_session_state = None
+
+        if from_gc:
+            try:
+                self.cleanup()
+            except Exception:
+                pass
+        else:
+            self.cleanup()
+
+        if db is not None:
             try:
                 from .collection.jsonb_support import clear_jsonb_cache
 
-                clear_jsonb_cache(self.db)
+                clear_jsonb_cache(db)
             except Exception:
                 pass
 
             try:
-                if self.db.in_transaction:
-                    logger.warning(
-                        "Closing connection with pending transaction; committing automatically"
-                    )
-                    self.db.commit()
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError) as e:
-                logger.debug(f"{e=}")
-                pass
-
-            try:
-                self.db.close()
-            except (sqlite3.ProgrammingError, sqlite3.OperationalError) as e:
-                logger.debug(f"{e=}")
-                pass
+                db.close()
+            except Exception as e:
+                if not from_gc and logger is not None:
+                    logger.debug(f"{e=}")
 
         self._closed = True
+
+    def close(self) -> None:
+        """Close the database connection.
+
+        Stops the TTL sweeper thread if running, rolls back any uncommitted
+        explicit transaction, cleans up cached collections, clears the JSONB
+        capability cache, and closes the underlying SQLite connection. No-op
+        for clones or already closed connections.
+        """
+        self._close_sqlite_handle(from_gc=False)
 
     def _close_rollback(self) -> None:
         """Close the database connection, rolling back pending transactions.
@@ -546,35 +602,7 @@ class Connection:
         Called from ``__del__`` so garbage collection does not persist partial
         uncommitted work. No-op for clones or already closed connections.
         """
-        if getattr(self, "_is_clone", False) or getattr(self, "_closed", False):
-            return
-
-        if self.db is not None:
-            try:
-                from .collection.jsonb_support import clear_jsonb_cache
-
-                clear_jsonb_cache(self.db)
-            except Exception:
-                pass
-
-            try:
-                if self.db.in_transaction:
-                    try:
-                        self.db.rollback()
-                    except Exception as e:
-                        if logger is not None:
-                            logger.debug(f"Rollback failed during GC: {e}")
-                        pass
-            except Exception:
-                # in_transaction check itself may fail during shutdown
-                pass
-
-            try:
-                self.db.close()
-            except Exception:
-                pass
-
-        self._closed = True
+        self._close_sqlite_handle(from_gc=True)
 
     @property
     def client(self) -> Self:
@@ -1212,6 +1240,7 @@ class Connection:
         # _collections dict do not affect the other.
         clone = self.__class__(name=self.name, _is_clone=True)
         clone.db = self.db
+        clone._parent_connection = self._parent_connection or self
         clone._tokenizers = self._tokenizers
         clone.debug = self.debug
         clone._collections = self._collections.copy()
@@ -1292,6 +1321,8 @@ class Connection:
         except Exception as e:
             logger.debug(f"Transaction failed, rolling back: {e}")
             self.db.rollback()
+            if self._active_tx_session is not None:
+                self._active_tx_session._clear_transaction_state()
             raise
 
     def __del__(self):

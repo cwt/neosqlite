@@ -12,6 +12,7 @@ import re
 from datetime import datetime
 from typing import Any
 
+from ..exceptions import InvalidOperation
 from .jsonb_support import json_constructor
 
 # =============================================================================
@@ -394,16 +395,19 @@ def _is_numeric_value(value: Any) -> bool:
 
 
 def validate_session(session: Any | None, connection: Any) -> None:
-    """Validate that the session belongs to the given database connection.
+    """Validate that the session is active and belongs to the given connection.
 
     Args:
         session: ``ClientSession`` instance or ``None``.
         connection: Parent ``Connection`` or ``sqlite3.Connection`` to check.
 
     Raises:
+        InvalidOperation: If the session has already ended.
         ValueError: If the session belongs to a different connection.
     """
     if session is not None:
+        if getattr(session, "has_ended", False):
+            raise InvalidOperation("Cannot use ended ClientSession")
         # connection could be neosqlite.Connection or sqlite3.Connection
         # session.client is neosqlite.Connection
         # neosqlite.Connection.db is sqlite3.Connection

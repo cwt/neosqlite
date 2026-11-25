@@ -56,7 +56,12 @@ class _TransactionContext:
         """
         if exc_type is not None:
             if self._session.in_transaction:
-                self._session.abort_transaction()
+                try:
+                    self._session.abort_transaction()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to abort transaction on context exit: {e}"
+                    )
         else:
             if self._session.in_transaction:
                 self._session.commit_transaction()
@@ -82,6 +87,9 @@ class ClientSession:
         self.client = client
         self.options = options or {}
         self._in_transaction = False
+        self._ended = False
+        self._is_savepoint = False
+        self._savepoint_name: str | None = None
 
     @property
     def in_transaction(self) -> bool:
@@ -93,13 +101,39 @@ class ClientSession:
         """
         return self._in_transaction
 
+    @property
+    def has_ended(self) -> bool:
+        """Check whether this session has been ended.
+
+        Returns:
+            bool: ``True`` if ``end_session()`` has been called, ``False``
+                otherwise.
+        """
+        return self._ended
+
+    def _check_not_ended(self) -> None:
+        """Raise ``InvalidOperation`` if this session has already ended."""
+        if self._ended:
+            raise InvalidOperation("Cannot use ended ClientSession")
+
+    def _clear_transaction_state(self) -> None:
+        """Reset local and connection-level transaction tracking state."""
+        self._in_transaction = False
+        self._is_savepoint = False
+        self._savepoint_name = None
+        if getattr(self.client, "_active_tx_session", None) is self:
+            self.client._active_tx_session = None
+
     def start_transaction(
         self, write_concern: dict[str, Any] | None = None
     ) -> _TransactionContext:
         """Start a new transaction on the underlying SQLite connection.
 
-        Uses a unique SQLite ``SAVEPOINT`` if the underlying connection is
-        already in a transaction; otherwise issues ``BEGIN IMMEDIATE``.
+        Issues ``BEGIN IMMEDIATE`` for a top-level transaction, or uses a
+        unique SQLite ``SAVEPOINT`` when nested inside an existing
+        ``Connection.transaction()`` block. Overlapping transactions across
+        distinct ``ClientSession`` instances on the same single SQLite
+        connection are rejected with ``InvalidOperation``.
 
         Args:
             write_concern: Optional write concern dictionary accepted for
@@ -110,71 +144,97 @@ class ClientSession:
                 and aborts on exception.
 
         Raises:
-            InvalidOperation: If a transaction is already in progress on this
-                session.
+            InvalidOperation: If this session has ended, already has an active
+                transaction, or another ``ClientSession`` already holds an open
+                transaction on the same connection.
         """
+        self._check_not_ended()
         if self._in_transaction:
             raise InvalidOperation("Transaction already in progress")
 
+        active_session = getattr(self.client, "_active_tx_session", None)
+        if active_session is not None and active_session is not self:
+            raise InvalidOperation(
+                "Concurrent transactions across multiple sessions on a single "
+                "SQLite connection are not supported"
+            )
+
         # SQLite transaction logic
         if self.client.db.in_transaction:
-            # Use SAVEPOINT for nested transactions
+            # Use SAVEPOINT when nested inside Connection.transaction()
             self._savepoint_name = f"session_tx_{uuid.uuid4().hex[:12]}"
             self.client.db.execute(f"SAVEPOINT {self._savepoint_name}")
             self._is_savepoint = True
         else:
             # Start a normal transaction
             self.client.db.execute("BEGIN IMMEDIATE")
+            self._savepoint_name = None
             self._is_savepoint = False
 
         self._in_transaction = True
+        self.client._active_tx_session = self
         return _TransactionContext(self)
 
-    def commit_transaction(self):
+    def commit_transaction(self) -> None:
         """Commit the current transaction or release its savepoint.
 
         Raises:
-            InvalidOperation: If no transaction is currently in progress.
+            InvalidOperation: If the session has ended or no transaction is
+                currently in progress.
         """
+        self._check_not_ended()
         if not self._in_transaction:
             raise InvalidOperation("No transaction in progress")
 
-        if self._is_savepoint:
-            self.client.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
-        else:
-            self.client.db.commit()
+        try:
+            if self._is_savepoint:
+                self.client.db.execute(
+                    f"RELEASE SAVEPOINT {self._savepoint_name}"
+                )
+            else:
+                self.client.db.commit()
+        finally:
+            self._clear_transaction_state()
 
-        self._in_transaction = False
-
-    def abort_transaction(self):
+    def abort_transaction(self) -> None:
         """Abort and roll back the current transaction or savepoint.
 
         Raises:
-            InvalidOperation: If no transaction is currently in progress.
+            InvalidOperation: If the session has ended or no transaction is
+                currently in progress.
         """
+        self._check_not_ended()
         if not self._in_transaction:
             raise InvalidOperation("No transaction in progress")
 
-        if self._is_savepoint:
-            self.client.db.execute(
-                f"ROLLBACK TO SAVEPOINT {self._savepoint_name}"
-            )
-            self.client.db.execute(f"RELEASE SAVEPOINT {self._savepoint_name}")
-        else:
-            self.client.db.rollback()
-
-        self._in_transaction = False
-
-    def end_session(self):
-        """End the session, aborting any active transaction if present."""
-        if self._in_transaction:
-            try:
-                self.abort_transaction()
-            except Exception as e:
-                logger.warning(
-                    f"Failed to abort transaction during session close: {e}"
+        try:
+            if self._is_savepoint:
+                self.client.db.execute(
+                    f"ROLLBACK TO SAVEPOINT {self._savepoint_name}"
                 )
-                pass
+                self.client.db.execute(
+                    f"RELEASE SAVEPOINT {self._savepoint_name}"
+                )
+            else:
+                self.client.db.rollback()
+        finally:
+            self._clear_transaction_state()
+
+    def end_session(self) -> None:
+        """End the session, aborting any active transaction if present."""
+        if self._ended:
+            return
+        try:
+            if self._in_transaction:
+                try:
+                    self.abort_transaction()
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to abort transaction during session close: {e}"
+                    )
+        finally:
+            self._clear_transaction_state()
+            self._ended = True
 
     def with_transaction(
         self,
@@ -201,11 +261,17 @@ class ClientSession:
 
         Returns:
             Any: The value returned by ``callback``.
+
+        Raises:
+            InvalidOperation: If this session has ended or cannot start a
+                transaction.
         """
+        self._check_not_ended()
         self.start_transaction()
         try:
             result = callback(self)
-            self.commit_transaction()
+            if self._in_transaction:
+                self.commit_transaction()
             return result
         except Exception as e:
             logger.debug(f"Transaction context manager failed: {e}")
@@ -221,11 +287,11 @@ class ClientSession:
         """
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Exit the session context manager and clean up session state.
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Exit the session context manager and end the session.
 
-        Aborts any active transaction when exiting due to an exception, then
-        calls ``end_session()``.
+        Delegates to ``end_session()`` so any active transaction is safely
+        aborted without masking an exception raised inside the ``with`` block.
 
         Args:
             exc_type: Exception class if an exception occurred, else ``None``.
@@ -233,6 +299,4 @@ class ClientSession:
                 ``None``.
             exc_tb: Traceback object if an exception occurred, else ``None``.
         """
-        if exc_type is not None and self._in_transaction:
-            self.abort_transaction()
         self.end_session()
