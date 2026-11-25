@@ -29,6 +29,7 @@ from nx_27017.gridfs_adapter import (
     _get_gridfs_bucket_name,
     _is_gridfs_collection,
     create_gridfs_adapter,
+    is_regular_collection_table,
 )
 from nx_27017.wire_protocol import (
     DEFAULT_MAX_CONNECTIONS,
@@ -1090,14 +1091,37 @@ class NeoSQLiteHandler:
             ]:
                 del self._cursors[cid]
 
-    def _convert_objectids(self, doc: dict) -> dict:
+    @staticmethod
+    def _extract_insert_documents(
+        command_doc: dict[str, Any], payload_docs: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Extract documents to insert from ``payload_docs`` and ``documents``."""
+        docs_to_insert = payload_docs.copy() if payload_docs else []
+        documents = command_doc.get("documents")
+        if isinstance(documents, list):
+            docs_to_insert.extend(documents)
+        elif isinstance(documents, dict):
+            docs_to_insert.append(documents)
+        return docs_to_insert
+
+    def _convert_command_doc(self, doc: dict[str, Any]) -> dict[str, Any]:
+        """Convert incoming BSON types on a command body, keeping ``lsid`` raw."""
+        converted: dict[str, Any] = {}
+        for key, value in doc.items():
+            if key == "lsid":
+                converted[key] = value
+            else:
+                converted[key] = self._convert_objectids(value)
+        return converted
+
+    def _convert_objectids(self, doc: Any) -> Any:
         """Convert PyMongo ObjectIds to NeoSQLite ObjectIds recursively.
 
         Args:
-            doc: Document or filter dictionary to transform.
+            doc: Document, list, or value to transform.
 
         Returns:
-            dict: Converted dictionary with NeoSQLite ``ObjectId`` instances.
+            Any: Converted value with NeoSQLite ``ObjectId`` instances.
         """
         from nx_27017.utils import convert_bson_to_neo_objectids
 
@@ -1653,18 +1677,12 @@ class NeoSQLiteHandler:
                 f"handle_insert: NOT gridfs, coll_name={coll_name}, command_doc keys={list(command_doc.keys())}"
             )
 
+        docs_to_insert = [
+            self._convert_objectids(doc)
+            for doc in self._extract_insert_documents(command_doc, payload_docs)
+        ]
+
         if self._is_gridfs_collection(coll_name):
-            docs_to_insert = payload_docs.copy() if payload_docs else []
-            for key, value in command_doc.items():
-                if key == "documents" and isinstance(value, list):
-                    docs_to_insert.extend(value)
-                elif (
-                    key
-                    not in {"$db", "insert", "ordered", "writeConcern", "lsid"}
-                    and not key.startswith("$")
-                    and isinstance(value, dict)
-                ):
-                    docs_to_insert.append(value)
             return self._handle_gridfs_insert(
                 request_id, coll_name, docs_to_insert, db
             )
@@ -1679,21 +1697,6 @@ class NeoSQLiteHandler:
         coll = db[coll_name]
         if coll_name not in db.list_collection_names():
             coll.create()
-
-        docs_to_insert = payload_docs.copy() if payload_docs else []
-        for key, value in command_doc.items():
-            if key == "documents" and isinstance(value, list):
-                docs_to_insert.extend(value)
-            elif (
-                key not in {"$db", "insert", "ordered", "writeConcern", "lsid"}
-                and not key.startswith("$")
-                and isinstance(value, dict)
-            ):
-                docs_to_insert.append(value)
-
-        docs_to_insert = [
-            self._convert_objectids(doc) for doc in docs_to_insert
-        ]
 
         self._apply_write_concern(db, db_name, command_doc.get("writeConcern"))
 
@@ -1877,7 +1880,10 @@ class NeoSQLiteHandler:
                         guard_session_id, self._session_scope(db_name)
                     )
 
-        cmd_copy = dict(command_doc)
+        cmd_copy = self._convert_command_doc(command_doc)
+        payload_updates = self._convert_objectids(payload_updates)
+        payload_deletes = self._convert_objectids(payload_deletes)
+        payload_ops = self._convert_objectids(payload_ops)
 
         db_name = cmd_copy.pop("$db", "test")
         db = self.get_database(db_name)
@@ -1900,9 +1906,8 @@ class NeoSQLiteHandler:
                 }
             if self._is_gridfs_collection(coll_name):
                 # Dotted names (fs.files) cannot be tables in NeoSQLite;
-                # drop the backing bucket instead.
-                from neosqlite.gridfs import GridFSBucket
-
+                # drop the backing bucket instead, unless a regular
+                # collection owns <bucket>_files or <bucket>_chunks.
                 bucket_name = self._get_gridfs_bucket_name(coll_name)
                 if bucket_name is None:
                     return request_id, {
@@ -1916,13 +1921,25 @@ class NeoSQLiteHandler:
                         "ok": 0,
                         "errmsg": f"Invalid bucket name: {bucket_name!r}",
                     }
+                is_chunks = coll_name.endswith(".chunks")
+                target_table = (
+                    f"{bucket_name}_chunks"
+                    if is_chunks
+                    else f"{bucket_name}_files"
+                )
+                if is_regular_collection_table(
+                    db.db, target_table, is_chunks=is_chunks
+                ):
+                    return request_id, {
+                        "ok": 0,
+                        "errmsg": (
+                            f"Cannot drop {coll_name!r}: {target_table!r} is "
+                            "a regular collection"
+                        ),
+                    }
                 # Like real MongoDB, dropping one side leaves the other
                 # (possibly orphaned) alone. Sanitized above: no quotes
                 # possible, double-quoting keeps dashes valid.
-                if coll_name.endswith(".chunks"):
-                    target_table = f"{bucket_name}_chunks"
-                else:
-                    target_table = f"{bucket_name}_files"
                 db.db.execute(f'DROP TABLE IF EXISTS "{target_table}"')
                 try:
                     db.db.commit()
@@ -1970,24 +1987,90 @@ class NeoSQLiteHandler:
         if "renameCollection" in cmd_copy:
             old_name = cmd_copy.pop("renameCollection")
             to_name = cmd_copy.pop("to", None)
-            if to_name:
-                old_coll = (
-                    old_name.split(".")[-1] if "." in old_name else old_name
-                )
-                new_coll = to_name.split(".")[-1] if "." in to_name else to_name
-                db[old_coll].rename(new_coll)
-                return request_id, {"ok": 1}
+            drop_target = bool(cmd_copy.pop("dropTarget", False))
+            if (
+                not isinstance(old_name, str)
+                or not to_name
+                or not isinstance(to_name, str)
+            ):
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "renameCollection requires 'to' parameter",
+                }
+            if "." in old_name:
+                src_db, _, old_coll = old_name.partition(".")
+            else:
+                src_db, old_coll = db_name, old_name
+            if "." in to_name:
+                dst_db, _, new_coll = to_name.partition(".")
+            else:
+                dst_db, new_coll = db_name, to_name
+            if not src_db or not dst_db or not old_coll or not new_coll:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": "Invalid namespace for renameCollection",
+                }
+            if self._mode != "single" and src_db != dst_db:
+                return request_id, {
+                    "ok": 0,
+                    "errmsg": (
+                        "Cannot rename collection across databases: "
+                        f"{src_db!r} != {dst_db!r}"
+                    ),
+                }
+            try:
+                _sanitize_db_name(src_db)
+            except ValueError as exc:
+                return request_id, {"ok": 0, "errmsg": str(exc)}
+            cross_db = src_db != db_name and self._mode != "single"
+            lock_ctx = (
+                self._lock_for(src_db) if cross_db else contextlib.nullcontext()
+            )
+            op_ctx = (
+                self._track_active_op(src_db)
+                if cross_db
+                else contextlib.nullcontext()
+            )
+            try:
+                with lock_ctx, op_ctx:
+                    target_db = self.get_database(src_db)
+                    existing_colls = set(target_db.list_collection_names())
+                    if (
+                        drop_target
+                        and new_coll != old_coll
+                        and old_coll in existing_colls
+                        and new_coll in existing_colls
+                    ):
+                        target_db[new_coll].drop()
+                    target_db[old_coll].rename(new_coll)
+            except Exception as exc:
+                return request_id, {"ok": 0, "errmsg": str(exc)}
+            return request_id, {"ok": 1}
+
+        if "dropIndexes" in cmd_copy:
+            coll_name = cmd_copy.pop("dropIndexes")
+            index = cmd_copy.pop("index", "*")
+            coll = db[coll_name]
+            num_before = len(coll.list_indexes())
+            if index == "*":
+                coll.drop_indexes()
+            else:
+                coll.drop_index(index)
             return request_id, {
-                "ok": 0,
-                "errmsg": "renameCollection requires 'to' parameter",
+                "ok": 1,
+                "nIndexesWas": num_before,
             }
 
-        if "createIndexes" in cmd_copy:
-            coll_name = cmd_copy.pop("createIndexes")
-            indexes_spec = cmd_copy.pop("indexes", [])
+        if "createIndexes" in cmd_copy or "createIndex" in cmd_copy:
+            if "createIndexes" in cmd_copy:
+                coll_name = cmd_copy.pop("createIndexes")
+                indexes_spec = cmd_copy.pop("indexes", [])
+            else:
+                coll_name = cmd_copy.pop("createIndex")
+                indexes_spec = [cmd_copy]
 
             if _is_gridfs_collection(coll_name):
-                adapter, bucket_name = create_gridfs_adapter(db.db, coll_name)
+                adapter, _bucket_name = create_gridfs_adapter(db.db, coll_name)
                 if adapter is None:
                     return request_id, {
                         "ok": 0,
@@ -2008,9 +2091,13 @@ class NeoSQLiteHandler:
                 tokenizer = index_spec.get("tokenizer")
                 expire_after = index_spec.get("expireAfterSeconds")
 
+                keys_list: Any
                 if isinstance(key, dict):
                     # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
-                    keys_list = [(k, v) for k, v in key.items()]
+                    # (or [("field", "text")] when fts=True so IndexManager honors fts & tokenizer).
+                    keys_list = [
+                        (k, "text" if fts else v) for k, v in key.items()
+                    ]
                 else:
                     keys_list = key
 
@@ -2033,61 +2120,6 @@ class NeoSQLiteHandler:
                 "numIndexesBefore": num_before,
                 "numIndexesAfter": len(coll.list_indexes()),
                 "indexesCreated": [{"name": n} for n in created_names],
-            }
-
-        if "dropIndexes" in cmd_copy:
-            coll_name = cmd_copy.pop("dropIndexes")
-            index = cmd_copy.pop("index", "*")
-            coll = db[coll_name]
-            num_before = len(coll.list_indexes())
-            if index == "*":
-                coll.drop_indexes()
-            else:
-                coll.drop_index(index)
-            return request_id, {
-                "ok": 1,
-                "nIndexesWas": num_before,
-            }
-
-        if "createIndex" in cmd_copy:
-            coll_name = cmd_copy.pop("createIndex")
-            key = cmd_copy.get("key", {})
-            name = cmd_copy.get("name")
-            unique = cmd_copy.get("unique", False)
-            sparse = cmd_copy.get("sparse", False)
-
-            if self._is_gridfs_collection(coll_name):
-                bucket_name = self._get_gridfs_bucket_name(coll_name)
-                if bucket_name:
-                    from neosqlite.gridfs import GridFSBucket
-
-                    GridFSBucket(db.db, bucket_name=bucket_name)
-                return request_id, {
-                    "ok": 1,
-                    "createdCollectionAutomatically": False,
-                    "numIndexesBefore": 0,
-                    "numIndexesAfter": 0,
-                    "indexesCreated": [],
-                }
-
-            coll = db[coll_name]
-            num_before = len(coll.list_indexes())
-
-            if isinstance(key, dict):
-                # Convert {"field": 1, "field2": -1} to [("field", 1), ("field2", -1)]
-                keys_list = [(k, v) for k, v in key.items()]
-            else:
-                keys_list = key
-
-            idx_name = coll.create_index(
-                keys_list, unique=unique, sparse=sparse
-            )
-            return request_id, {
-                "ok": 1,
-                "createdCollectionAutomatically": False,
-                "numIndexesBefore": num_before,
-                "numIndexesAfter": len(coll.list_indexes()),
-                "indexesCreated": [{"name": idx_name}],
             }
 
         if "dropIndex" in cmd_copy:
@@ -2216,7 +2248,9 @@ class NeoSQLiteHandler:
             fields = cmd_copy.pop("fields", None)
             sort_val = cmd_copy.pop("sort", None)
             upsert = cmd_copy.pop("upsert", False)
-            array_filters = cmd_copy.pop("arrayFilters", None)
+            array_filters = self._convert_objectids(
+                cmd_copy.pop("arrayFilters", None)
+            )
 
             sort_tuples = None
             if isinstance(sort_val, dict):
@@ -2238,10 +2272,15 @@ class NeoSQLiteHandler:
                         sort=sort_tuples,
                         session=session_to_use,
                     )
-                except Exception:
-                    doc = None
+                except Exception as exc:
+                    err = _bulk_write_error(exc, 0)
+                    return request_id, {
+                        "ok": 0,
+                        "code": err["code"],
+                        "errmsg": err["errmsg"],
+                    }
                 return request_id, {"ok": 1, "value": doc}
-            elif update_doc:
+            elif update_doc is not None:
                 update_doc = self._convert_objectids(update_doc)
                 is_replace = not any(
                     k.startswith("$") for k in update_doc.keys()
@@ -2268,8 +2307,13 @@ class NeoSQLiteHandler:
                             array_filters=array_filters,
                             session=session_to_use,
                         )
-                except Exception:
-                    doc = None
+                except Exception as exc:
+                    err = _bulk_write_error(exc, 0)
+                    return request_id, {
+                        "ok": 0,
+                        "code": err["code"],
+                        "errmsg": err["errmsg"],
+                    }
                 return request_id, {"ok": 1, "value": doc}
             else:
                 return request_id, {
@@ -2291,8 +2335,8 @@ class NeoSQLiteHandler:
                 total_n = 0
                 total_n_modified = 0
                 for update in updates:
-                    q = update.get("q", {})
-                    u = update.get("u", {})
+                    q = self._convert_objectids(update.get("q", {}))
+                    u = self._convert_objectids(update.get("u", {}))
                     file_id = q.get("_id")
                     if file_id is not None:
                         res = adapter.handle_update(file_id, u)
@@ -2322,7 +2366,9 @@ class NeoSQLiteHandler:
                 u = self._convert_objectids(u)
                 multi = update.get("multi", False)
                 upsert = update.get("upsert", False)
-                array_filters = update.get("arrayFilters")
+                array_filters = self._convert_objectids(
+                    update.get("arrayFilters")
+                )
 
                 # Change events are captured trigger-side (see changestream
                 # module), so no per-operation fan-out is needed here. This
@@ -2383,7 +2429,12 @@ class NeoSQLiteHandler:
             if self._is_gridfs_collection(coll_name):
                 cmd_copy["filter"] = filter_query
                 return self._handle_gridfs_find(
-                    request_id, cmd_copy, db, coll_name, db_name
+                    request_id,
+                    cmd_copy,
+                    db,
+                    coll_name,
+                    db_name,
+                    owner=msg.get("_conn_id"),
                 )
 
             db, session_to_use = self._resolve_db_and_session(
@@ -2424,13 +2475,13 @@ class NeoSQLiteHandler:
                 elif isinstance(hint_val, list):
                     cursor = cursor.hint(hint_val)
             if "min" in cmd_copy:
-                min_val = cmd_copy["min"]
+                min_val = self._convert_objectids(cmd_copy["min"])
                 if isinstance(min_val, dict):
                     cursor = cursor.min(list(min_val.items()))
                 elif isinstance(min_val, list):
                     cursor = cursor.min(min_val)
             if "max" in cmd_copy:
-                max_val = cmd_copy["max"]
+                max_val = self._convert_objectids(cmd_copy["max"])
                 if isinstance(max_val, dict):
                     cursor = cursor.max(list(max_val.items()))
                 elif isinstance(max_val, list):
@@ -2455,7 +2506,7 @@ class NeoSQLiteHandler:
         if "count" in cmd_copy:
             try:
                 coll_name = cmd_copy.pop("count")
-                query = cmd_copy.pop("query", {})
+                query = self._convert_objectids(cmd_copy.pop("query", {}) or {})
                 limit = cmd_copy.pop("limit", None)
                 skip = cmd_copy.pop("skip", None)
                 if self._is_gridfs_collection(coll_name):
@@ -2465,11 +2516,10 @@ class NeoSQLiteHandler:
                             "ok": 0,
                             "errmsg": "Invalid GridFS collection",
                         }
-                    filt = self._convert_objectids(query or {})
                     if coll_name.endswith(".chunks"):
-                        docs = adapter.handle_chunks_find(filt)
+                        docs = adapter.handle_chunks_find(query)
                     else:
-                        docs = adapter.handle_find(filt)
+                        docs = adapter.handle_find(query)
                     if skip:
                         docs = docs[int(skip) :]
                     if limit:
@@ -2499,7 +2549,7 @@ class NeoSQLiteHandler:
             try:
                 coll_name = cmd_copy.pop("distinct")
                 key = cmd_copy.pop("key", "")
-                query = cmd_copy.pop("query", {})
+                query = self._convert_objectids(cmd_copy.pop("query", {}) or {})
                 if self._is_gridfs_collection(coll_name):
                     return self._handle_gridfs_distinct(
                         request_id, coll_name, key, query, db
@@ -2519,9 +2569,16 @@ class NeoSQLiteHandler:
                 coll_name = cmd_copy.pop("aggregate")
                 if self._is_gridfs_collection(coll_name):
                     return self._handle_gridfs_aggregate(
-                        request_id, cmd_copy, db, coll_name, db_name
+                        request_id,
+                        cmd_copy,
+                        db,
+                        coll_name,
+                        db_name,
+                        owner=msg.get("_conn_id"),
                     )
-                pipeline = cmd_copy.pop("pipeline", [])
+                pipeline = self._convert_objectids(
+                    cmd_copy.pop("pipeline", []) or []
+                )
 
                 # Atlas-style search index listing arrives as an
                 # aggregation stage; serve it from NeoSQLite FTS metadata.
@@ -2679,12 +2736,14 @@ class NeoSQLiteHandler:
         if "explain" in cmd_copy:
             explain_value = cmd_copy.get("explain")
             if isinstance(explain_value, dict):
-                inner_cmd = dict(explain_value)
+                inner_cmd = self._convert_objectids(dict(explain_value))
                 inner_cmd.pop("$db", None)
 
                 if "find" in inner_cmd:
                     coll_name = inner_cmd.pop("find")
-                    filter_query = inner_cmd.pop("filter", {})
+                    filter_query = self._convert_objectids(
+                        inner_cmd.pop("filter", {})
+                    )
 
                     if self._is_gridfs_collection(coll_name):
                         return request_id, {
@@ -2906,6 +2965,39 @@ class NeoSQLiteHandler:
         )
         return request_id, cmd_result
 
+    def _build_gridfs_cursor_response(
+        self,
+        request_id: int,
+        docs: list[dict[str, Any]],
+        command_doc: dict[str, Any],
+        db_name: str,
+        coll_name: str,
+        owner: Any = None,
+        paginate: bool = True,
+    ) -> tuple[int, dict[str, Any]]:
+        """Build a wire cursor response for GridFS query results."""
+        resolved_owner = (
+            owner if owner is not None else command_doc.get("_conn_id")
+        )
+        if paginate:
+            first, cursor_id = self._split_first_batch(
+                docs,
+                self._first_batch_size(command_doc),
+                f"{db_name}.{coll_name}",
+                db_name,
+                owner=resolved_owner,
+            )
+        else:
+            first, cursor_id = docs, 0
+        return request_id, {
+            "ok": 1,
+            "cursor": {
+                "id": Int64(cursor_id),
+                "ns": f"{db_name}.{coll_name}",
+                "firstBatch": first,
+            },
+        }
+
     def _handle_gridfs_find(
         self,
         request_id: int,
@@ -2913,6 +3005,8 @@ class NeoSQLiteHandler:
         db: Connection,
         coll_name: str,
         db_name: str = "test",
+        owner: Any = None,
+        paginate: bool = True,
     ) -> tuple[int, dict[str, Any]]:
         """Handle find command on GridFS collections (fs.files or fs.chunks).
 
@@ -2926,6 +3020,8 @@ class NeoSQLiteHandler:
             db: Active ``neosqlite.Connection`` for the target database.
             coll_name: GridFS collection name (``*.files`` or ``*.chunks``).
             db_name: Logical database name for cursor namespace formatting.
+            owner: Optional connection identifier owning the cursor.
+            paginate: Whether to split results via ``_split_first_batch``.
 
         Returns:
             tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
@@ -2935,7 +3031,13 @@ class NeoSQLiteHandler:
 
         if coll_name.endswith(".chunks"):
             return self._handle_gridfs_chunks_find(
-                request_id, command_doc, db, coll_name, db_name
+                request_id,
+                command_doc,
+                db,
+                coll_name,
+                db_name,
+                owner=owner,
+                paginate=paginate,
             )
 
         try:
@@ -3042,14 +3144,15 @@ class NeoSQLiteHandler:
             if limit != 0:
                 docs = docs[: abs(limit)]
 
-            return request_id, {
-                "ok": 1,
-                "cursor": {
-                    "id": Int64(0),
-                    "ns": f"{db_name}.{coll_name}",
-                    "firstBatch": docs,
-                },
-            }
+            return self._build_gridfs_cursor_response(
+                request_id,
+                docs,
+                command_doc,
+                db_name,
+                coll_name,
+                owner=owner,
+                paginate=paginate,
+            )
         except Exception as e:
             logger.error(f"GridFS find error: {e}")
             traceback.print_exc()
@@ -3062,6 +3165,7 @@ class NeoSQLiteHandler:
         db: Any,
         coll_name: str,
         db_name: str = "test",
+        owner: Any = None,
     ) -> tuple[int, dict[str, Any]]:
         """Handle aggregate command on GridFS collections.
 
@@ -3077,6 +3181,7 @@ class NeoSQLiteHandler:
             db: Active ``neosqlite.Connection`` for the target database.
             coll_name: GridFS collection name (``*.files`` or ``*.chunks``).
             db_name: Logical database name for cursor namespace formatting.
+            owner: Optional connection identifier owning the cursor.
 
         Returns:
             tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
@@ -3186,37 +3291,23 @@ class NeoSQLiteHandler:
                 # Determine group _id field name (usually None).
                 group_id = group_stage.get("_id", None)
                 result_doc = {"_id": group_id, "n": len(docs)}
-                first, cursor_id = self._split_first_batch(
+                return self._build_gridfs_cursor_response(
+                    request_id,
                     [result_doc],
-                    self._first_batch_size(command_doc),
-                    f"{db_name}.{coll_name}",
+                    command_doc,
                     db_name,
-                    owner=command_doc.get("_conn_id"),
+                    coll_name,
+                    owner=owner,
                 )
-                return request_id, {
-                    "ok": 1,
-                    "cursor": {
-                        "id": Int64(cursor_id),
-                        "ns": f"{db_name}.{coll_name}",
-                        "firstBatch": first,
-                    },
-                }
 
-            first, cursor_id = self._split_first_batch(
+            return self._build_gridfs_cursor_response(
+                request_id,
                 docs,
-                self._first_batch_size(command_doc),
-                f"{db_name}.{coll_name}",
+                command_doc,
                 db_name,
-                owner=command_doc.get("_conn_id"),
+                coll_name,
+                owner=owner,
             )
-            return request_id, {
-                "ok": 1,
-                "cursor": {
-                    "id": Int64(cursor_id),
-                    "ns": f"{db_name}.{coll_name}",
-                    "firstBatch": first,
-                },
-            }
         except Exception as e:
             logger.error(f"GridFS aggregate error: {e}")
             traceback.print_exc()
@@ -3229,6 +3320,8 @@ class NeoSQLiteHandler:
         db: Connection,
         coll_name: str,
         db_name: str = "test",
+        owner: Any = None,
+        paginate: bool = True,
     ) -> tuple[int, dict[str, Any]]:
         """Handle find command on a GridFS ``.chunks`` collection.
 
@@ -3238,6 +3331,8 @@ class NeoSQLiteHandler:
             db: Active ``neosqlite.Connection`` for the target database.
             coll_name: GridFS ``*.chunks`` collection name.
             db_name: Logical database name for cursor namespace formatting.
+            owner: Optional connection identifier owning the cursor.
+            paginate: Whether to split results via ``_split_first_batch``.
 
         Returns:
             tuple[int, dict[str, Any]]: Pair of ``(request_id, response)``
@@ -3260,20 +3355,19 @@ class NeoSQLiteHandler:
             docs = adapter.handle_chunks_find(filter_query)
 
             if skip > 0:
-                docs = docs[skip:]
-            if skip > 0:
                 docs = docs[int(skip) :]
             if limit != 0:
                 docs = docs[: abs(limit)]
 
-            return request_id, {
-                "ok": 1,
-                "cursor": {
-                    "id": Int64(0),
-                    "ns": f"{db_name}.{coll_name}",
-                    "firstBatch": docs,
-                },
-            }
+            return self._build_gridfs_cursor_response(
+                request_id,
+                docs,
+                command_doc,
+                db_name,
+                coll_name,
+                owner=owner,
+                paginate=paginate,
+            )
         except Exception as e:
             logger.error(f"GridFS chunks find error: {e}")
             return request_id, {"ok": 0, "errmsg": str(e)}
@@ -3362,8 +3456,8 @@ class NeoSQLiteHandler:
                     files_id = (delete.get("q") or {}).get("files_id")
                     if isinstance(files_id, dict) and "$eq" in files_id:
                         files_id = files_id["$eq"]
-                    if files_id:
-                        chunk_file_ids.append(files_id)
+                    if files_id is not None:
+                        chunk_file_ids.append(self._convert_objectids(files_id))
                 return request_id, adapter.handle_chunks_delete(chunk_file_ids)
 
             file_ids = []
@@ -3373,8 +3467,8 @@ class NeoSQLiteHandler:
                 file_id = query.get("_id")
                 if isinstance(file_id, dict) and "$eq" in file_id:
                     file_id = file_id["$eq"]
-                if file_id:
-                    file_ids.append(file_id)
+                if file_id is not None:
+                    file_ids.append(self._convert_objectids(file_id))
                 elif query.get("filename"):
                     filenames.append(query["filename"])
 
@@ -3605,7 +3699,9 @@ class NeoSQLiteHandler:
                     mods = self._convert_objectids(op.get("updateMods", {}))
                     multi = bool(op.get("multi", False))
                     upsert = bool(op.get("upsert", False))
-                    array_filters = op.get("arrayFilters")
+                    array_filters = self._convert_objectids(
+                        op.get("arrayFilters")
+                    )
                     ns_db, _, ns_coll = namespaces[ns_idx].partition(".")
                     target_db_name = ns_db or "test"
                     with self._target_op_lock(target_db_name, command_doc):
@@ -3643,13 +3739,13 @@ class NeoSQLiteHandler:
                     n_matched += res.matched_count
                     n_modified += res.modified_count
                     if res.upserted_id is not None:
-                        n_matched += 1
                         n_upserted += 1
                     if not errors_only:
+                        upserted_inc = 1 if res.upserted_id is not None else 0
                         entry: dict[str, Any] = {
                             "ok": 1,
                             "idx": idx,
-                            "n": res.matched_count,
+                            "n": res.matched_count + upserted_inc,
                             "nModified": res.modified_count,
                         }
                         if res.upserted_id is not None:
@@ -3816,6 +3912,7 @@ class NeoSQLiteHandler:
                 containing an initial empty cursor batch and resume token.
         """
         try:
+            pipeline = self._convert_objectids(pipeline)
             options = extract_change_stream_options(pipeline)
 
             def _get_watched_collection() -> Any:
@@ -4151,6 +4248,7 @@ class NeoSQLiteHandler:
 
         skip = msg.get("number_to_skip", 0)
         limit = msg.get("number_to_return", 0)
+        query = self._convert_objectids(query)
 
         if self._is_gridfs_collection(collection):
             command_doc = dict(query)
@@ -4160,7 +4258,13 @@ class NeoSQLiteHandler:
             if limit != 0:
                 command_doc["limit"] = limit
             _, response = self._handle_gridfs_find(
-                msg["request_id"], command_doc, db, collection, db_name
+                msg["request_id"],
+                command_doc,
+                db,
+                collection,
+                db_name,
+                owner=msg.get("_conn_id"),
+                paginate=False,
             )
             docs = response.get("cursor", {}).get("firstBatch", [])
             return msg["request_id"], docs

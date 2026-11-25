@@ -317,3 +317,163 @@ class TestCollectionOperations:
         }
         _, count_resp = handler.handle_command(count_msg)
         assert count_resp["n"] == 2
+
+    def test_create_index_preserves_name_fts_tokenizer_ttl(self, handler):
+        """Legacy createIndex must forward name, fts, tokenizer, and TTL."""
+        handler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    ("body", {"insert": "articles", "$db": "test"}),
+                    ("payload_docs", [{"body": "hello world"}]),
+                ],
+            }
+        )
+        _, fts_res = handler.handle_command(
+            {
+                "request_id": 2,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "createIndex": "articles",
+                            "key": {"body": 1},
+                            "name": "custom_fts_idx",
+                            "fts": True,
+                            "tokenizer": "porter",
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert fts_res["ok"] == 1
+        assert fts_res["indexesCreated"] == [{"name": "custom_fts_idx"}]
+
+        _, ttl_res = handler.handle_command(
+            {
+                "request_id": 3,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "createIndex": "articles",
+                            "key": {"created_at": 1},
+                            "name": "ttl_idx",
+                            "expireAfterSeconds": 120,
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert ttl_res["ok"] == 1
+        assert ttl_res["indexesCreated"] == [{"name": "ttl_idx"}]
+
+        # Confirm both FTS virtual table and TTL metadata were actually created.
+        db = handler.get_database("test")
+        _, search_res = handler.handle_command(
+            {
+                "request_id": 4,
+                "sections": [
+                    ("body", {"listSearchIndexes": "articles", "$db": "test"})
+                ],
+            }
+        )
+        assert any(
+            "body" in entry.get("name", "")
+            for entry in search_res["cursor"]["firstBatch"]
+        )
+        ttl_rows = db.db.execute(
+            "SELECT index_name, expire_after_seconds FROM _neosqlite_ttl_indexes "
+            "WHERE collection_name = ?",
+            ("articles",),
+        ).fetchall()
+        assert ttl_rows and ttl_rows[0][1] == 120
+
+    def test_rename_collection_routes_source_db_and_drop_target(self, tmp_path):
+        """renameCollection resolves src_db (not $db='admin') and handles dropTarget."""
+        from nx_27017.nx_27017 import NeoSQLiteHandler
+
+        h = NeoSQLiteHandler(str(tmp_path), data_dir=str(tmp_path))
+        try:
+            h.handle_insert(
+                {
+                    "request_id": 1,
+                    "sections": [
+                        ("body", {"insert": "u", "$db": "mydb"}),
+                        ("payload_docs", [{"_id": 1, "name": "Picard"}]),
+                    ],
+                }
+            )
+            _, res = h.handle_command(
+                {
+                    "request_id": 2,
+                    "sections": [
+                        (
+                            "body",
+                            {
+                                "renameCollection": "mydb.u",
+                                "to": "mydb.users",
+                                "$db": "admin",
+                            },
+                        )
+                    ],
+                }
+            )
+            assert res["ok"] == 1
+            assert "users" in h.get_database("mydb").list_collection_names()
+            assert "u" not in h.get_database("mydb").list_collection_names()
+            assert (
+                "users" not in h.get_database("admin").list_collection_names()
+            )
+
+            # Cross-DB rename is rejected in multi-DB mode.
+            _, cross_res = h.handle_command(
+                {
+                    "request_id": 3,
+                    "sections": [
+                        (
+                            "body",
+                            {
+                                "renameCollection": "mydb.users",
+                                "to": "otherdb.users",
+                                "$db": "admin",
+                            },
+                        )
+                    ],
+                }
+            )
+            assert cross_res["ok"] == 0
+
+            # dropTarget=True overwrites existing destination collection.
+            h.handle_insert(
+                {
+                    "request_id": 4,
+                    "sections": [
+                        ("body", {"insert": "old_target", "$db": "mydb"}),
+                        ("payload_docs", [{"_id": 99}]),
+                    ],
+                }
+            )
+            _, drop_res = h.handle_command(
+                {
+                    "request_id": 5,
+                    "sections": [
+                        (
+                            "body",
+                            {
+                                "renameCollection": "mydb.users",
+                                "to": "mydb.old_target",
+                                "dropTarget": True,
+                                "$db": "admin",
+                            },
+                        )
+                    ],
+                }
+            )
+            assert drop_res["ok"] == 1
+            docs = list(h.get_database("mydb")["old_target"].find())
+            assert [d["_id"] for d in docs] == [1]
+        finally:
+            h.close_all()

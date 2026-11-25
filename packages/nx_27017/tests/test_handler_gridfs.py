@@ -426,3 +426,245 @@ class TestGridFSDottedRouting:
         bucket = GridFSBucket(db.db, bucket_name="fs")
         stream = bucket.open_download_stream(ObjectId(oid_hex))
         assert stream.read() == b"Hello"
+
+
+class TestIssue205GridFSFixes:
+    """Regression tests for GridFS bugs fixed in #205."""
+
+    def _cmd(self, handler, body, req=30):
+        _, res = handler.handle_command(
+            {"request_id": req, "sections": [("body", body)]}
+        )
+        return res
+
+    def test_metadata_with_objectid_and_datetime_insert_and_update(
+        self, handler
+    ):
+        from datetime import UTC, datetime
+
+        from bson import ObjectId as BsonObjectId
+
+        oid = BsonObjectId()
+        meta_oid = BsonObjectId()
+        ts = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+
+        _, ins_res = handler.handle_insert(
+            {
+                "request_id": 31,
+                "sections": [
+                    ("body", {"insert": "fs.files", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {
+                                "_id": oid,
+                                "filename": "meta.bin",
+                                "length": 0,
+                                "chunkSize": 261120,
+                                "uploadDate": ts,
+                                "metadata": {"ref": meta_oid, "at": ts},
+                            }
+                        ],
+                    ),
+                ],
+            }
+        )
+        assert ins_res["ok"] == 1
+        assert ins_res["n"] == 1
+
+        new_ref = BsonObjectId()
+        upd_res = self._cmd(
+            handler,
+            {
+                "update": "fs.files",
+                "updates": [
+                    {
+                        "q": {"_id": oid},
+                        "u": {"$set": {"metadata": {"ref": new_ref, "at": ts}}},
+                    }
+                ],
+                "$db": "test",
+            },
+            req=32,
+        )
+        assert upd_res == {"ok": 1, "n": 1, "nModified": 1}
+
+    def test_chunks_find_skip_applies_once(self, handler):
+        from neosqlite.objectid import ObjectId
+
+        fid = ObjectId()
+        handler.handle_insert(
+            {
+                "request_id": 33,
+                "sections": [
+                    ("body", {"insert": "fs.files", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [{"_id": fid, "filename": "multi.bin", "length": 3}],
+                    ),
+                ],
+            }
+        )
+        handler.handle_insert(
+            {
+                "request_id": 34,
+                "sections": [
+                    ("body", {"insert": "fs.chunks", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {"files_id": fid, "n": i, "data": f"c{i}".encode()}
+                            for i in range(4)
+                        ],
+                    ),
+                ],
+            }
+        )
+        res = self._cmd(
+            handler,
+            {
+                "find": "fs.chunks",
+                "filter": {"files_id": fid},
+                "skip": 1,
+                "$db": "test",
+            },
+            req=35,
+        )
+        assert res["ok"] == 1
+        ns = [doc["n"] for doc in res["cursor"]["firstBatch"]]
+        assert ns == [1, 2, 3]
+
+    def test_ensure_bucket_recreates_dropped_chunks_table(self, handler):
+        from neosqlite.objectid import ObjectId
+
+        drop_res = self._cmd(
+            handler, {"drop": "fs.chunks", "$db": "test"}, req=36
+        )
+        assert drop_res == {"ok": 1}
+
+        fid = ObjectId()
+        handler.handle_insert(
+            {
+                "request_id": 37,
+                "sections": [
+                    ("body", {"insert": "fs.files", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {
+                                "_id": fid,
+                                "filename": "after_drop.bin",
+                                "length": 2,
+                            }
+                        ],
+                    ),
+                ],
+            }
+        )
+        _, chunk_ins = handler.handle_insert(
+            {
+                "request_id": 38,
+                "sections": [
+                    ("body", {"insert": "fs.chunks", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [{"files_id": fid, "n": 0, "data": b"ok"}],
+                    ),
+                ],
+            }
+        )
+        assert chunk_ins == {
+            "ok": 1,
+            "n": 1,
+            "insertedIds": chunk_ins["insertedIds"],
+        }
+
+    def test_delete_missing_file_returns_n_zero(self, handler):
+        from bson import ObjectId as BsonObjectId
+
+        res = self._cmd(
+            handler,
+            {
+                "delete": "fs.files",
+                "deletes": [{"q": {"_id": BsonObjectId()}, "limit": 1}],
+                "$db": "test",
+            },
+            req=39,
+        )
+        assert res == {"ok": 1, "n": 0}
+
+    def test_regular_collection_named_prefix_files_not_altered_or_dropped(
+        self, handler
+    ):
+        db = handler.get_database("test")
+        handler.handle_insert(
+            {
+                "request_id": 40,
+                "sections": [
+                    ("body", {"insert": "user_files", "$db": "test"}),
+                    ("payload_docs", [{"_id": 1, "path": "/a/b"}]),
+                ],
+            }
+        )
+        cols_before = {
+            row[1]
+            for row in db.db.execute(
+                "PRAGMA table_info('user_files')"
+            ).fetchall()
+        }
+
+        find_res = self._cmd(
+            handler, {"find": "user.files", "filter": {}, "$db": "test"}, req=41
+        )
+        assert find_res["ok"] == 0
+
+        drop_res = self._cmd(
+            handler, {"drop": "user.files", "$db": "test"}, req=42
+        )
+        assert drop_res["ok"] == 0
+
+        cols_after = {
+            row[1]
+            for row in db.db.execute(
+                "PRAGMA table_info('user_files')"
+            ).fetchall()
+        }
+        assert cols_after == cols_before
+        assert [d["path"] for d in db["user_files"].find()] == ["/a/b"]
+
+    def test_gridfs_find_paginates_via_batch_size(self, handler):
+        from neosqlite.gridfs import GridFSBucket
+
+        db = handler.get_database("test")
+        bucket = GridFSBucket(db.db, bucket_name="fs")
+        for i in range(4):
+            bucket.upload_from_stream(f"extra_{i}.txt", b"x")
+
+        res = self._cmd(
+            handler,
+            {
+                "find": "fs.files",
+                "filter": {},
+                "sort": {"filename": 1},
+                "batchSize": 2,
+                "$db": "test",
+            },
+            req=43,
+        )
+        assert res["ok"] == 1
+        assert len(res["cursor"]["firstBatch"]) == 2
+        cid = res["cursor"]["id"]
+        assert cid != 0
+
+        more = self._cmd(
+            handler,
+            {
+                "getMore": cid,
+                "collection": "fs.files",
+                "batchSize": 2,
+                "$db": "test",
+            },
+            req=44,
+        )
+        assert more["ok"] == 1
+        assert len(more["cursor"]["nextBatch"]) == 2

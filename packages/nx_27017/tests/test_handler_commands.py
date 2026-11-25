@@ -928,3 +928,271 @@ class TestAggregate:
         assert len(docs) == 4
         assert docs[0]["idx"] == 3
         assert docs[-1]["idx"] == 6
+
+
+class TestIssue205CommandFixes:
+    """Regression tests for #205 command handler fixes."""
+
+    def test_insert_ignores_dict_command_options(self, handler):
+        from bson import ObjectId as BsonObjectId
+
+        oid = BsonObjectId()
+        _, res = handler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "insert": "u",
+                            "documents": [{"_id": oid, "name": "Picard"}],
+                            "readConcern": {"level": "local"},
+                            "comment": {"trace": "abc"},
+                            "let": {"v": 1},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert res["ok"] == 1
+        assert res["n"] == 1
+        assert handler.get_database("test")["u"].count_documents({}) == 1
+
+    def test_bson_objectid_in_aggregate_count_distinct_explain_opquery_min_max(
+        self, handler
+    ):
+        from bson import ObjectId as BsonObjectId
+
+        oid1 = BsonObjectId()
+        oid2 = BsonObjectId()
+        handler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    ("body", {"insert": "items", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {"_id": oid1, "tag": "alpha", "scores": [5, 95]},
+                            {"_id": oid2, "tag": "beta", "scores": [10]},
+                        ],
+                    ),
+                ],
+            }
+        )
+
+        # aggregate $match with bson.ObjectId
+        _, agg_res = handler.handle_command(
+            {
+                "request_id": 2,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "aggregate": "items",
+                            "pipeline": [{"$match": {"_id": oid1}}],
+                            "cursor": {},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert agg_res["ok"] == 1
+        assert len(agg_res["cursor"]["firstBatch"]) == 1
+
+        # count with bson.ObjectId
+        _, cnt_res = handler.handle_command(
+            {
+                "request_id": 3,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "count": "items",
+                            "query": {"_id": oid1},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert cnt_res == {"ok": 1, "n": 1}
+
+        # distinct with bson.ObjectId
+        _, dist_res = handler.handle_command(
+            {
+                "request_id": 4,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "distinct": "items",
+                            "key": "tag",
+                            "query": {"_id": oid2},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert dist_res == {"ok": 1, "values": ["beta"]}
+
+        # explain find with bson.ObjectId
+        _, exp_res = handler.handle_command(
+            {
+                "request_id": 5,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "explain": {
+                                "find": "items",
+                                "filter": {"_id": oid1},
+                            },
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert exp_res["ok"] == 1
+
+        # OP_QUERY handle_query with bson.ObjectId
+        _, opq_docs = handler.handle_query(
+            {
+                "request_id": 6,
+                "collection": "items",
+                "query": {"$query": {"_id": oid1}},
+                "db": "test",
+            }
+        )
+        assert len(opq_docs) == 1
+        assert opq_docs[0]["tag"] == "alpha"
+
+        # find with min/max bson.ObjectId bounds
+        handler.get_database("test")["items"].create_index([("_id", 1)])
+        _, minmax_res = handler.handle_command(
+            {
+                "request_id": 7,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "find": "items",
+                            "filter": {},
+                            "min": {"_id": oid1},
+                            "max": {"_id": oid2},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert minmax_res["ok"] == 1
+
+    def test_find_and_modify_propagates_errors_and_array_filters(self, handler):
+        from bson import ObjectId as BsonObjectId
+
+        oid_a = BsonObjectId()
+        oid_b = BsonObjectId()
+        handler.handle_command(
+            {
+                "request_id": 1,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "createIndexes": "uniq",
+                            "indexes": [
+                                {
+                                    "name": "code_uniq",
+                                    "key": {"code": 1},
+                                    "unique": True,
+                                }
+                            ],
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        handler.handle_insert(
+            {
+                "request_id": 2,
+                "sections": [
+                    ("body", {"insert": "uniq", "$db": "test"}),
+                    (
+                        "payload_docs",
+                        [
+                            {"_id": 1, "code": "A", "ids": [oid_a, oid_b]},
+                            {"_id": 2, "code": "B", "ids": [oid_a]},
+                        ],
+                    ),
+                ],
+            }
+        )
+
+        # arrayFilters containing bson.ObjectId works cleanly
+        _, ok_res = handler.handle_command(
+            {
+                "request_id": 3,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "findAndModify": "uniq",
+                            "query": {"_id": 1},
+                            "update": {"$set": {"ids.$[e]": oid_a}},
+                            "arrayFilters": [{"e": oid_b}],
+                            "new": True,
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert ok_res["ok"] == 1
+        assert ok_res["value"]["ids"][0] == ok_res["value"]["ids"][1]
+
+        # Duplicate-key constraint failure must return ok: 0 with code 11000
+        _, dup_res = handler.handle_command(
+            {
+                "request_id": 4,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "findAndModify": "uniq",
+                            "query": {"_id": 2},
+                            "update": {"$set": {"code": "A"}},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert dup_res["ok"] == 0
+        assert dup_res["code"] == 11000
+        assert "errmsg" in dup_res
+
+        # Invalid operator failure must return ok: 0 instead of ok: 1, value: None
+        _, bad_res = handler.handle_command(
+            {
+                "request_id": 5,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "findAndModify": "uniq",
+                            "query": {"_id": 1},
+                            "update": {"$nonexistentOp": {"code": "C"}},
+                            "$db": "test",
+                        },
+                    )
+                ],
+            }
+        )
+        assert bad_res["ok"] == 0
+        assert "errmsg" in bad_res

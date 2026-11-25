@@ -14,14 +14,21 @@ per-database lock and are plain indexed SELECTs.
 
 from __future__ import annotations
 
-import json
 import logging
+import re
 import secrets
 import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+
+from neosqlite.changestream import (
+    _RANGE_OPS,
+    _compare_range_op,
+    _field_present,
+)
+from neosqlite.collection.json_helpers import neosqlite_json_loads
 
 logger = logging.getLogger("nx_27017")
 
@@ -103,15 +110,16 @@ def _get_dotted(document: Any, path: str) -> Any:
 
 
 def _match_spec(value: Any, condition: Any) -> bool:
-    """Evaluate a minimal ``$match`` predicate against a field value.
+    """Evaluate a ``$match`` predicate against a field value.
 
-    Supports direct equality as well as operator dictionaries using
-    ``$eq``, ``$ne``, ``$in``, ``$nin``, and ``$exists``. Unrecognized
-    ``$``-prefixed operators evaluate to ``False``.
+    Supports direct equality, compiled ``re.Pattern``, as well as operator
+    dictionaries using ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``,
+    ``$lte``, ``$in``, ``$nin``, ``$exists``, ``$regex``/``$options``, and
+    ``$not``. Unrecognized ``$``-prefixed operators evaluate to ``False``.
 
     Args:
         value: Actual field value extracted from a change event.
-        condition: Expected scalar/dict value or operator specification dict.
+        condition: Expected scalar/dict/pattern value or operator dict.
 
     Returns:
         bool: ``True`` if ``value`` satisfies ``condition``, otherwise
@@ -127,19 +135,106 @@ def _match_spec(value: Any, condition: Any) -> bool:
             elif op == "$ne":
                 if value == expected:
                     return False
+            elif op in _RANGE_OPS:
+                if not _compare_range_op(value, expected, _RANGE_OPS[op]):
+                    return False
             elif op == "$in":
-                if value not in expected:
+                try:
+                    matched = value in expected
+                except TypeError:
+                    return False
+                if not matched:
                     return False
             elif op == "$nin":
-                if value in expected:
+                try:
+                    matched = value in expected
+                except TypeError:
+                    return False
+                if matched:
                     return False
             elif op == "$exists":
                 if bool(expected) != (value is not None):
                     return False
+            elif op == "$regex":
+                if isinstance(expected, re.Pattern):
+                    pattern = expected
+                elif isinstance(expected, str):
+                    flags = 0
+                    raw_opts = condition.get("$options", "")
+                    if isinstance(raw_opts, str):
+                        if "i" in raw_opts:
+                            flags |= re.IGNORECASE
+                        if "m" in raw_opts:
+                            flags |= re.MULTILINE
+                        if "s" in raw_opts:
+                            flags |= re.DOTALL
+                        if "x" in raw_opts:
+                            flags |= re.VERBOSE
+                    try:
+                        pattern = re.compile(expected, flags)
+                    except re.error:
+                        return False
+                else:
+                    return False
+                if not isinstance(value, str) or pattern.search(value) is None:
+                    return False
+            elif op == "$options":
+                if "$regex" not in condition:
+                    return False
+            elif op == "$not":
+                if isinstance(expected, re.Pattern):
+                    if (
+                        isinstance(value, str)
+                        and expected.search(value) is not None
+                    ):
+                        return False
+                elif isinstance(expected, dict):
+                    if _match_spec(value, expected):
+                        return False
+                else:
+                    return False
             else:
                 return False
         return True
+    if isinstance(condition, re.Pattern):
+        return isinstance(value, str) and condition.search(value) is not None
     return bool(value == condition)
+
+
+def _match_filter(change: dict[str, Any], spec: dict[str, Any]) -> bool:
+    """Evaluate a change-stream ``$match`` filter against a change event."""
+    for key, condition in spec.items():
+        if key == "$and":
+            if not isinstance(condition, list) or not all(
+                isinstance(sub, dict) and _match_filter(change, sub)
+                for sub in condition
+            ):
+                return False
+        elif key == "$or":
+            if not isinstance(condition, list) or not any(
+                isinstance(sub, dict) and _match_filter(change, sub)
+                for sub in condition
+            ):
+                return False
+        elif key == "$nor":
+            if not isinstance(condition, list) or any(
+                isinstance(sub, dict) and _match_filter(change, sub)
+                for sub in condition
+            ):
+                return False
+        elif isinstance(condition, dict) and any(
+            k.startswith("$") for k in condition
+        ):
+            ops = dict(condition)
+            if "$exists" in ops:
+                exists_expected = ops.pop("$exists")
+                if bool(exists_expected) != _field_present(change, key):
+                    return False
+            if ops and not _match_spec(_get_dotted(change, key), ops):
+                return False
+        elif not _match_spec(_get_dotted(change, key), condition):
+            return False
+    return True
 
 
 def _pipeline_matches(
@@ -166,9 +261,8 @@ def _pipeline_matches(
             spec = stage["$match"]
             if not isinstance(spec, dict):
                 continue
-            for key, condition in spec.items():
-                if not _match_spec(_get_dotted(change, key), condition):
-                    return False
+            if not _match_filter(change, spec):
+                return False
         else:
             logger.debug("Ignoring unsupported change-stream stage: %r", stage)
     return True
@@ -504,8 +598,8 @@ class ChangeStreamManager:
     def close_stream(self, stream_id: int) -> None:
         """Close and unregister a change stream cursor by ID.
 
-        Marks the cursor closed and prunes consumed changelog rows for its
-        collection.
+        Marks the cursor closed, prunes consumed changelog rows for its
+        collection, and drops the backing tracker when no open streams remain.
 
         Args:
             stream_id: Wire cursor identifier of the stream to close.
@@ -515,7 +609,11 @@ class ChangeStreamManager:
         if stream is None:
             return
         stream._closed = True
-        self._prune(stream.db_name, stream.collection_name)
+        self._prune(
+            stream.db_name,
+            stream.collection_name,
+            fallback_watermark=stream._watermark,
+        )
 
     def close_streams_for_owner(
         self,
@@ -538,16 +636,39 @@ class ChangeStreamManager:
             ]
             for stream in owned:
                 del self._streams[stream._id]
+        closed_targets: dict[tuple[str, str], int] = {}
         for stream in owned:
             stream._closed = True
+            key = (stream.db_name, stream.collection_name)
+            closed_targets[key] = max(
+                closed_targets.get(key, 0), stream._watermark
+            )
+        for (db_name, coll_name), max_mark in closed_targets.items():
             if lock_for is not None:
                 try:
-                    with lock_for(stream.db_name):
-                        self._prune(stream.db_name, stream.collection_name)
+                    with lock_for(db_name):
+                        self._prune(
+                            db_name,
+                            coll_name,
+                            fallback_watermark=max_mark,
+                        )
                 except ValueError:
-                    pass
+                    # DB already invalidated/unmapped; still drop tracker ref.
+                    with self._lock:
+                        still_open = any(
+                            not s._closed
+                            and s.db_name == db_name
+                            and s.collection_name == coll_name
+                            for s in self._streams.values()
+                        )
+                        if not still_open:
+                            tracker = self._trackers.pop(
+                                (db_name, coll_name), None
+                            )
+                            if tracker is not None:
+                                self._drop_tracker_locked(tracker)
             else:
-                self._prune(stream.db_name, stream.collection_name)
+                self._prune(db_name, coll_name, fallback_watermark=max_mark)
 
     def invalidate(self, db_name: str | None = None) -> None:
         """Drop trigger trackers for a database or for all databases.
@@ -648,7 +769,7 @@ class ChangeStreamManager:
                 data = document_data
                 if isinstance(data, bytes):
                     data = data.decode("utf-8")
-                full_doc = json.loads(data)
+                full_doc = neosqlite_json_loads(data)
                 if isinstance(full_doc, dict) and "_id" not in full_doc:
                     full_doc["_id"] = actual_id
             except (ValueError, TypeError, UnicodeDecodeError) as exc:
@@ -666,18 +787,30 @@ class ChangeStreamManager:
             "updateDescription": None,
         }
 
-    def _prune(self, db_name: str, collection_name: str) -> None:
+    def _prune(
+        self,
+        db_name: str,
+        collection_name: str,
+        fallback_watermark: int = 0,
+    ) -> None:
         """Delete changelog rows passed by all open streams on a collection.
 
         Retains the newest ``_RESUME_RETENTION_ROWS`` entries per collection
-        so resume tokens remain replayable.
+        so resume tokens remain replayable. When no open streams remain for
+        ``(db_name, collection_name)``, prunes up to ``fallback_watermark``
+        (still capped by ``_RESUME_RETENTION_ROWS``), drops the SQLite
+        triggers, and removes the tracker entry so database LRU eviction is
+        not blocked.
 
         Args:
             db_name: Database name owning the collection.
             collection_name: Collection name whose changelog may be pruned.
+            fallback_watermark: Watermark used when the last stream closes.
         """
+        tracker: dict[str, Any] | None = None
+        dropping_last = False
+        floor = fallback_watermark
         with self._lock:
-            tracker = self._trackers.get((db_name, collection_name))
             marks = [
                 stream._watermark
                 for stream in self._streams.values()
@@ -685,26 +818,36 @@ class ChangeStreamManager:
                 and stream.db_name == db_name
                 and stream.collection_name == collection_name
             ]
-        if tracker is None or not marks:
+            if marks:
+                tracker = self._trackers.get((db_name, collection_name))
+                floor = min(marks)
+            else:
+                tracker = self._trackers.pop((db_name, collection_name), None)
+                dropping_last = tracker is not None
+                if tracker is not None:
+                    self._drop_tracker_locked(tracker)
+
+        if tracker is None:
             return
-        floor = min(marks)
-        if floor <= 0:
-            return
-        try:
-            tracker["collection"].db.execute(
-                "DELETE FROM _neosqlite_changestream "
-                "WHERE collection_name = ? AND id < ? AND id NOT IN ("
-                "SELECT id FROM _neosqlite_changestream "
-                "WHERE collection_name = ? ORDER BY id DESC LIMIT ?)",
-                (
-                    collection_name,
-                    floor,
-                    collection_name,
-                    _RESUME_RETENTION_ROWS,
-                ),
-            )
-        except Exception as exc:
-            logger.debug("ChangeStream prune skipped: %s", exc)
+        if floor > 0:
+            try:
+                conn = tracker["collection"].db
+                conn.execute(
+                    "DELETE FROM _neosqlite_changestream "
+                    "WHERE collection_name = ? AND id < ? AND id NOT IN ("
+                    "SELECT id FROM _neosqlite_changestream "
+                    "WHERE collection_name = ? ORDER BY id DESC LIMIT ?)",
+                    (
+                        collection_name,
+                        floor,
+                        collection_name,
+                        _RESUME_RETENTION_ROWS,
+                    ),
+                )
+                if dropping_last and not conn.in_transaction:
+                    conn.commit()
+            except Exception as exc:
+                logger.debug("ChangeStream prune skipped: %s", exc)
 
     # -- legacy compat ---------------------------------------------------
 

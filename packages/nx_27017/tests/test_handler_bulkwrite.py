@@ -183,6 +183,39 @@ class TestClientBulkWrite:
         )
         assert res["nInserted"] == 1
 
+    def test_upsert_counts_not_counted_as_matched(self, handler):
+        from bson import ObjectId as BsonObjectId
+
+        oid = BsonObjectId()
+        res = self._cmd(
+            handler,
+            {
+                "bulkWrite": 1,
+                "ordered": True,
+                "errorsOnly": False,
+                "ops": [
+                    {
+                        "update": 0,
+                        "filter": {"_id": oid},
+                        "updateMods": {"$set": {"v": 42}},
+                        "upsert": True,
+                        "multi": False,
+                    }
+                ],
+                "nsInfo": [{"ns": "test.t"}],
+                "$db": "admin",
+            },
+        )
+        assert res["ok"] == 1
+        assert res["nMatched"] == 0
+        assert res["nModified"] == 0
+        assert res["nUpserted"] == 1
+        batch = res["cursor"]["firstBatch"]
+        assert len(batch) == 1
+        assert batch[0]["n"] == 1
+        assert batch[0]["nModified"] == 0
+        assert "upserted" in batch[0]
+
 
 class TestOptionForwarding:
     def _cmd(self, handler, body, req=5):
@@ -240,6 +273,40 @@ class TestOptionForwarding:
         )
         assert res["ok"] == 1
         assert res["nModified"] == 1
+
+    def test_update_array_filters_with_objectid(self, handler):
+        from bson import ObjectId as BsonObjectId
+
+        oid_a = BsonObjectId()
+        oid_b = BsonObjectId()
+        handler.handle_insert(
+            {
+                "request_id": 1,
+                "sections": [
+                    ("body", {"insert": "tags", "$db": "test"}),
+                    ("payload_docs", [{"_id": 1, "ids": [oid_a, oid_b]}]),
+                ],
+            }
+        )
+        res = self._cmd(
+            handler,
+            {
+                "update": "tags",
+                "updates": [
+                    {
+                        "q": {"_id": 1},
+                        "u": {"$set": {"ids.$[e]": oid_a}},
+                        "arrayFilters": [{"e": oid_b}],
+                    }
+                ],
+                "$db": "test",
+            },
+        )
+        assert res["ok"] == 1
+        assert res["nModified"] == 1
+        doc = handler.get_database("test")["tags"].find_one({"_id": 1})
+        assert len(doc["ids"]) == 2
+        assert doc["ids"][0] == doc["ids"][1]
 
 
 class TestWriteConcernMapping:

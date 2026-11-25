@@ -10,18 +10,46 @@ operations on GridFS collections (fs.files, fs.chunks, etc.) and route them
 to the appropriate NeoSQLite GridFSBucket methods.
 """
 
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from neosqlite.collection.json_helpers import neosqlite_json_dumps
 from neosqlite.gridfs import GridFSBucket
+from neosqlite.gridfs.errors import NoFile
 from neosqlite.objectid import ObjectId
+from neosqlite.sql_utils import quote_table_name
 
 logger = logging.getLogger(__name__)
 
 # GridFS constants
 DEFAULT_CHUNK_SIZE_BYTES = 261_120  # 256 KiB (MongoDB default)
+
+
+def _table_columns(db: Any, table_name: str) -> set[str] | None:
+    """Return column names for ``table_name``, or ``None`` if absent."""
+    cursor = db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    )
+    if cursor.fetchone() is None:
+        return None
+    info_cursor = db.execute(
+        f"PRAGMA table_info({quote_table_name(table_name)})"
+    )
+    return {row[1] for row in info_cursor.fetchall()}
+
+
+def is_regular_collection_table(
+    db: Any, table_name: str, *, is_chunks: bool
+) -> bool:
+    """Return True if ``table_name`` exists as a regular document collection."""
+    columns = _table_columns(db, table_name)
+    if columns is None:
+        return False
+    if is_chunks:
+        return "data" in columns and "files_id" not in columns
+    return "data" in columns and "filename" not in columns
 
 
 class GridFSAdapter:
@@ -46,35 +74,47 @@ class GridFSAdapter:
         self._bucket: GridFSBucket | None = None  # type: ignore[assignment]
         self._ensure_bucket()
 
+    def _validate_no_regular_collection_conflict(
+        self, files_table: str, chunks_table: str
+    ) -> None:
+        """Raise ValueError if a regular collection collides with GridFS names."""
+        if is_regular_collection_table(self._db, files_table, is_chunks=False):
+            raise ValueError(
+                f"Table '{files_table}' is a regular collection, not a GridFS files table"
+            )
+        if is_regular_collection_table(self._db, chunks_table, is_chunks=True):
+            raise ValueError(
+                f"Table '{chunks_table}' is a regular collection, not a GridFS chunks table"
+            )
+
     def _ensure_gridfs_schema(self) -> None:
         """Ensure the GridFS tables have the required schema columns.
 
         If ``<bucket>_files`` or ``<bucket>_chunks`` tables already exist from
         an older schema, adds any missing columns via ``ALTER TABLE`` before
-        ``GridFSBucket`` creates indexes on them.
+        ``GridFSBucket`` creates indexes on them. Regular document collections
+        sharing ``<bucket>_files`` or ``<bucket>_chunks`` names are rejected
+        without altering them.
         """
         files_table = f"{self._bucket_name}_files"
         chunks_table = f"{self._bucket_name}_chunks"
+
+        self._validate_no_regular_collection_conflict(files_table, chunks_table)
 
         logger.debug(
             f"_ensure_gridfs_schema: bucket_name={self._bucket_name}, files_table={files_table}"
         )
 
-        cursor = self._db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            (files_table,),
-        )
-        table_exists = cursor.fetchone() is not None
+        columns = _table_columns(self._db, files_table)
+        table_exists = columns is not None
         logger.debug(
             f"_ensure_gridfs_schema: files_table exists={table_exists}"
         )
 
-        if table_exists:
+        if table_exists and columns is not None:
             logger.debug(
                 f"GridFS files table '{files_table}' already exists, checking schema..."
             )
-            cursor = self._db.execute(f"PRAGMA table_info('{files_table}')")
-            columns = {row[1] for row in cursor.fetchall()}
             logger.debug(
                 f"_ensure_gridfs_schema: columns in {files_table}: {columns}"
             )
@@ -100,48 +140,32 @@ class GridFSAdapter:
                 logger.debug(
                     f"Adding missing columns to {files_table}: {missing_columns}"
                 )
+                quoted_files = quote_table_name(files_table)
                 for col in missing_columns:
-                    if col in ("content_type", "aliases"):
+                    if col in ("content_type", "aliases", "metadata"):
                         col_type = "TEXT"
-                        self._db.execute(
-                            f"ALTER TABLE {files_table} ADD COLUMN {col} {col_type}"
-                        )
-                    elif col == "metadata":
-                        col_type = "TEXT"
-                        self._db.execute(
-                            f"ALTER TABLE {files_table} ADD COLUMN {col} {col_type}"
-                        )
                     else:
                         col_type = (
                             "TEXT"
                             if col in ("_id", "filename", "uploadDate", "md5")
                             else "INTEGER"
                         )
-                        self._db.execute(
-                            f"ALTER TABLE {files_table} ADD COLUMN {col} {col_type}"
-                        )
+                    self._db.execute(
+                        f"ALTER TABLE {quoted_files} ADD COLUMN {col} {col_type}"
+                    )
             else:
                 logger.debug(
                     f"_ensure_gridfs_schema: All required columns exist in {files_table}"
                 )
 
-            chunks_exists = (
-                self._db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' "
-                    "AND name=?",
-                    (chunks_table,),
-                ).fetchone()
-                is not None
-            )
-            if not chunks_exists:
+            chunks_columns = _table_columns(self._db, chunks_table)
+            if chunks_columns is None:
                 # _ensure_bucket() recreates it via CREATE TABLE IF EXISTS.
                 logger.debug(
                     f"Chunks table '{chunks_table}' missing; "
                     "leaving creation to GridFSBucket"
                 )
                 return
-            cursor = self._db.execute(f"PRAGMA table_info('{chunks_table}')")
-            chunks_columns = {row[1] for row in cursor.fetchall()}
             logger.debug(
                 f"_ensure_gridfs_schema: columns in {chunks_table}: {chunks_columns}"
             )
@@ -149,14 +173,15 @@ class GridFSAdapter:
                 logger.debug(
                     f"Adding missing columns to {chunks_table}: files_id, n, data"
                 )
+                quoted_chunks = quote_table_name(chunks_table)
                 self._db.execute(
-                    f"ALTER TABLE {chunks_table} ADD COLUMN files_id INTEGER"
+                    f"ALTER TABLE {quoted_chunks} ADD COLUMN files_id INTEGER"
                 )
                 self._db.execute(
-                    f"ALTER TABLE {chunks_table} ADD COLUMN n INTEGER"
+                    f"ALTER TABLE {quoted_chunks} ADD COLUMN n INTEGER"
                 )
                 self._db.execute(
-                    f"ALTER TABLE {chunks_table} ADD COLUMN data BLOB"
+                    f"ALTER TABLE {quoted_chunks} ADD COLUMN data BLOB"
                 )
 
         cursor = self._db.execute(
@@ -172,8 +197,9 @@ class GridFSAdapter:
         """Ensure the underlying ``GridFSBucket`` instance is initialized.
 
         Runs schema verification first, reuses existing properly structured
-        tables directly when present, or instantiates a new ``GridFSBucket``
-        with ``DEFAULT_CHUNK_SIZE_BYTES``.
+        tables directly when both files and chunks tables are present, or
+        instantiates a new ``GridFSBucket`` with
+        ``DEFAULT_CHUNK_SIZE_BYTES``.
         """
         if self._bucket is None:
             from neosqlite.gridfs import GridFSBucket
@@ -188,43 +214,44 @@ class GridFSAdapter:
 
             self._ensure_gridfs_schema()
 
-            # Check if the correct tables already exist with correct schema
-            # If so, we can skip GridFSBucket creation to avoid migration issues
+            # Check if both files and chunks tables already exist with GridFS
+            # schemas. If so, we can skip GridFSBucket creation to avoid
+            # migration overhead; otherwise let GridFSBucket recreate missing
+            # tables (e.g., after fs.chunks was dropped).
             files_table = f"{self._bucket_name}_files"
-            cursor = self._db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-                (files_table,),
-            )
-            if cursor.fetchone():
-                cursor = self._db.execute(f"PRAGMA table_info('{files_table}')")
-                columns = {row[1] for row in cursor.fetchall()}
-                required_cols = {
-                    "id",
-                    "_id",
-                    "filename",
-                    "length",
-                    "chunkSize",
-                    "uploadDate",
-                    "md5",
-                    "metadata",
-                }
-                if required_cols.issubset(columns):
-                    logger.debug(
-                        f"Table {files_table} already exists with correct schema, skipping GridFSBucket creation"
-                    )
-                    # Create a dummy bucket object just to satisfy the adapter
-                    self._bucket = GridFSBucket.__new__(GridFSBucket)
-                    self._get_bucket()._db = self._db
-                    self._get_bucket()._bucket_name = self._bucket_name
-                    self._get_bucket()._files_collection = files_table
-                    self._get_bucket()._chunks_collection = (
-                        f"{self._bucket_name}_chunks"
-                    )
-                    self._get_bucket()._chunk_size_bytes = (
-                        DEFAULT_CHUNK_SIZE_BYTES
-                    )
-                    logger.debug("GridFSBucket initialized (skipped creation)")
-                    return
+            chunks_table = f"{self._bucket_name}_chunks"
+            files_cols = _table_columns(self._db, files_table)
+            chunks_cols = _table_columns(self._db, chunks_table)
+            required_files_cols = {
+                "id",
+                "_id",
+                "filename",
+                "length",
+                "chunkSize",
+                "uploadDate",
+                "md5",
+                "metadata",
+            }
+            required_chunks_cols = {"_id", "files_id", "n", "data"}
+            if (
+                files_cols is not None
+                and chunks_cols is not None
+                and "data" not in files_cols
+                and required_files_cols.issubset(files_cols)
+                and required_chunks_cols.issubset(chunks_cols)
+            ):
+                logger.debug(
+                    f"Tables {files_table} and {chunks_table} already exist with correct schema, skipping GridFSBucket creation"
+                )
+                # Create a dummy bucket object just to satisfy the adapter
+                self._bucket = GridFSBucket.__new__(GridFSBucket)
+                self._get_bucket()._db = self._db
+                self._get_bucket()._bucket_name = self._bucket_name
+                self._get_bucket()._files_collection = files_table
+                self._get_bucket()._chunks_collection = chunks_table
+                self._get_bucket()._chunk_size_bytes = DEFAULT_CHUNK_SIZE_BYTES
+                logger.debug("GridFSBucket initialized (skipped creation)")
+                return
 
             # Also check fs.chunks table if it exists (PyMongo might create this instead)
             cursor = self._db.execute(
@@ -312,7 +339,7 @@ class GridFSAdapter:
     def _convert_objectid(self, oid: Any) -> ObjectId | str | None:
         """Convert an ObjectId value from wire or query formats.
 
-        Unwraps ``$eq`` and ``$oid`` dict wrappers and attempts to parse
+        Unwraps ``$eq`` and ``$oid`` dict wrappers and converts BSON or hex
         string values into ``ObjectId`` instances, returning unrecognized
         strings or other values unchanged.
 
@@ -325,8 +352,11 @@ class GridFSAdapter:
         """
         if oid is None:
             return None
+        from nx_27017.utils import convert_bson_to_neo_objectids
+
+        oid = convert_bson_to_neo_objectids(oid)
         if isinstance(oid, dict) and "$eq" in oid:
-            oid = oid["$eq"]
+            oid = convert_bson_to_neo_objectids(oid["$eq"])
         if isinstance(oid, ObjectId):
             return oid
         if isinstance(oid, dict) and "$oid" in oid:
@@ -439,9 +469,10 @@ class GridFSAdapter:
         md5 = doc.get("md5")
         metadata = doc.get("metadata", {})
 
-        # Serialize metadata as JSON string
+        # Serialize metadata as JSON string using NeoSQLite's JSON encoder
+        # so ObjectId / datetime values don't fail json.dumps.
         if isinstance(metadata, dict):
-            metadata = json.dumps(metadata)
+            metadata = neosqlite_json_dumps(metadata)
 
         logger.debug(
             f"_insert_file: file_id={file_id}, filename={filename}, length={length}"
@@ -701,12 +732,18 @@ class GridFSAdapter:
         try:
             for file_id in file_ids:
                 file_id = self._convert_objectid(file_id)
-                if file_id:
-                    self._get_bucket().delete(file_id)
-                    deleted += 1
+                if file_id is not None:
+                    try:
+                        self._get_bucket().delete(file_id)
+                        deleted += 1
+                    except NoFile:
+                        pass
             for filename in filenames or []:
-                self._get_bucket().delete_by_name(filename)
-                deleted += 1
+                try:
+                    self._get_bucket().delete_by_name(filename)
+                    deleted += 1
+                except NoFile:
+                    pass
 
             return {"ok": 1, "n": deleted}
         except Exception as e:
@@ -783,7 +820,7 @@ class GridFSAdapter:
 
             if "metadata" in set_ops:
                 updates.append("metadata = ?")
-                params.append(json.dumps(set_ops["metadata"]))
+                params.append(neosqlite_json_dumps(set_ops["metadata"]))
 
             if not updates:
                 return {"ok": 1, "n": 0, "nModified": 0}
@@ -830,19 +867,22 @@ class GridFSAdapter:
 
 
 def _convert_objectids_in_dict(doc: dict) -> dict | None:
-    """Recursively convert extended-JSON ``$oid`` dicts in a document.
+    """Recursively convert extended-JSON ``$oid`` and BSON types in a document.
 
     Args:
         doc: Document dictionary potentially containing ``{"$oid": ...}``
-            wrappers.
+            or ``bson`` values.
 
     Returns:
         dict | None: Converted document with NeoSQLite ``ObjectId`` instances,
         or ``None`` if conversion returns ``None``.
     """
-    from nx_27017.utils import convert_json_to_neo_objectids
+    from nx_27017.utils import (
+        convert_bson_to_neo_objectids,
+        convert_json_to_neo_objectids,
+    )
 
-    return convert_json_to_neo_objectids(doc)
+    return convert_json_to_neo_objectids(convert_bson_to_neo_objectids(doc))
 
 
 def create_gridfs_adapter(
@@ -857,7 +897,8 @@ def create_gridfs_adapter(
     Returns:
         tuple[GridFSAdapter | None, str | None]: Tuple of
         ``(GridFSAdapter, bucket_name)`` if ``coll_name`` is a GridFS
-        collection, otherwise ``(None, None)``.
+        collection without a regular-collection name conflict, otherwise
+        ``(None, None)``.
     """
     if not _is_gridfs_collection(coll_name):
         return None, None
@@ -866,7 +907,11 @@ def create_gridfs_adapter(
     if bucket_name is None:
         return None, None
 
-    adapter = GridFSAdapter(db, bucket_name=bucket_name)
+    try:
+        adapter = GridFSAdapter(db, bucket_name=bucket_name)
+    except ValueError as exc:
+        logger.debug("GridFS adapter rejected for %r: %s", coll_name, exc)
+        return None, None
     return adapter, bucket_name
 
 

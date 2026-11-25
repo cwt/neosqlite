@@ -288,3 +288,122 @@ def test_streams_isolated_across_databases(tmp_path):
         assert [d["fullDocument"]["_id"] for d in cur["nextBatch"]] == [1]
     finally:
         h.close_all()
+
+
+def test_full_document_decodes_nested_objectid(handler):
+    from bson import ObjectId as BsonObjectId
+
+    from neosqlite.objectid import ObjectId as NeoObjectId
+
+    oid = BsonObjectId()
+    ref_oid = BsonObjectId()
+    cid = _open_stream(handler, "items")
+    _wire_insert(
+        handler,
+        "test",
+        "items",
+        [{"_id": oid, "ref": ref_oid, "name": "widget"}],
+    )
+    cur = _getmore(handler, cid, "items")
+    assert len(cur["nextBatch"]) == 1
+    full_doc = cur["nextBatch"][0]["fullDocument"]
+    assert isinstance(full_doc["_id"], NeoObjectId)
+    assert isinstance(full_doc["ref"], NeoObjectId)
+    assert "__neosqlite_objectid__" not in repr(full_doc)
+
+
+def test_match_operators_and_objectid_in_pipeline(handler):
+    from bson import ObjectId as BsonObjectId
+
+    target_oid = BsonObjectId()
+    other_oid = BsonObjectId()
+    cid = _open_stream(
+        handler,
+        "events",
+        pipeline=[
+            {"$changeStream": {}},
+            {
+                "$match": {
+                    "$or": [
+                        {
+                            "fullDocument.score": {"$gt": 10},
+                            "fullDocument.opt": {"$exists": True},
+                        },
+                        {"fullDocument._id": target_oid},
+                    ]
+                }
+            },
+        ],
+    )
+    # Missing opt even with score > 10 should not match first $or branch
+    _wire_insert(handler, "test", "events", [{"_id": other_oid, "score": 20}])
+    # Explicit None for opt satisfies $exists: True and score > 10
+    _wire_insert(
+        handler,
+        "test",
+        "events",
+        [{"_id": BsonObjectId(), "score": 20, "opt": None}],
+        req=4,
+    )
+    # Exact ObjectId match via second $or branch
+    _wire_insert(
+        handler,
+        "test",
+        "events",
+        [{"_id": target_oid, "score": 1}],
+        req=5,
+    )
+    cur = _getmore(handler, cid, "events")
+    scores = [ev["fullDocument"]["score"] for ev in cur["nextBatch"]]
+    assert scores == [20, 1]
+
+
+def test_close_stream_removes_tracker_and_unblocks_lru(tmp_path, monkeypatch):
+    import nx_27017.handler as handler_mod
+    from nx_27017.nx_27017 import NeoSQLiteHandler
+
+    monkeypatch.setattr(handler_mod, "_MAX_OPEN_DBS", 4)
+    h = NeoSQLiteHandler(str(tmp_path), data_dir=str(tmp_path))
+    try:
+        cid = _open_stream(h, "logs", db="watchdb")
+        _wire_insert(h, "watchdb", "logs", [{"_id": 1}])
+        _getmore(h, cid, "logs", db="watchdb")
+        assert h._change_stream_manager.has_activity("watchdb") is True
+
+        _, kill_res = h.handle_command(
+            {
+                "request_id": 10,
+                "sections": [
+                    (
+                        "body",
+                        {
+                            "killCursors": "logs",
+                            "cursors": [cid],
+                            "$db": "watchdb",
+                        },
+                    )
+                ],
+            }
+        )
+        assert kill_res["ok"] == 1
+        assert cid in kill_res["cursorsKilled"]
+        assert h._change_stream_manager.has_activity("watchdb") is False
+        assert ("watchdb", "logs") not in h._change_stream_manager._trackers
+
+        # Subsequent writes do not append changelog rows because triggers dropped.
+        db_conn = h.get_database("watchdb")
+        before_rows = db_conn.db.execute(
+            "SELECT COUNT(*) FROM _neosqlite_changestream"
+        ).fetchone()[0]
+        _wire_insert(h, "watchdb", "logs", [{"_id": 2}], req=11)
+        after_rows = db_conn.db.execute(
+            "SELECT COUNT(*) FROM _neosqlite_changestream"
+        ).fetchone()[0]
+        assert after_rows == before_rows
+
+        # LRU eviction is no longer blocked for watchdb.
+        for idx in range(6):
+            h.get_database(f"other{idx}")
+        assert "watchdb" not in h._conns
+    finally:
+        h.close_all()
