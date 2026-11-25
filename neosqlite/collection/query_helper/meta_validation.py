@@ -149,6 +149,19 @@ def _normalize_stages(
             result.append({stage_name: new_spec})
             changed = changed or sub_changed
 
+        elif (
+            stage_name == "$unionWith"
+            and isinstance(spec, dict)
+            and isinstance(spec.get("pipeline"), list)
+        ):
+            new_sub, sub_changed = _normalize_stages(
+                spec["pipeline"], False, rewrite_text_score=False
+            )
+            new_spec = dict(spec)
+            new_spec["pipeline"] = new_sub
+            result.append({stage_name: new_spec})
+            changed = changed or sub_changed
+
         else:
             new_value, value_changed = _normalize_value(
                 spec, scope_has_text_score, rewrite_text_score
@@ -161,12 +174,11 @@ def _normalize_stages(
                 result.append(stage)
             changed = changed or value_changed
 
-        if (
-            stage_name == "$match"
-            and isinstance(spec, dict)
-            and "$text" in spec
-        ):
-            scope_has_text_score = True
+        if stage_name == "$match" and isinstance(spec, dict):
+            from ..jsonb_support import _contains_text_operator
+
+            if _contains_text_operator(spec):
+                scope_has_text_score = True
 
     return (result if changed else stages), changed
 

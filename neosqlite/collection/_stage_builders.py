@@ -1525,9 +1525,35 @@ class StageBuildersMixin:
         foreign_field = spec.get("foreignField")
         as_field = spec.get("as")
         pipeline = spec.get("pipeline", [])
+        let_spec = spec.get("let")
 
-        if not from_coll or not as_field:
+        if not from_coll or not as_field or let_spec is not None:
             return None, []
+
+        def _lookup_join_condition(
+            l_field: str, l_expr: str, f_expr: str
+        ) -> str:
+            """Build scalar or array-expanding equality condition."""
+            if l_field == "_id":
+                return f"{f_expr} = {l_expr}"
+            local_path = parse_json_path(l_field)
+            elem_expr = (
+                "CASE "
+                "WHEN _je.type = 'object' "
+                "AND json_extract(_je.value, '$.__neosqlite_objectid__') = 1 "
+                "THEN json_extract(_je.value, '$.id') "
+                "ELSE _je.value END"
+            )
+            return (
+                f"("
+                f"(json_type(t1.data, '{local_path}') = 'array' AND EXISTS ("
+                f"SELECT 1 FROM json_each(t1.data, '{local_path}') AS _je "
+                f"WHERE _je.value IS NOT NULL AND ({elem_expr}) = {f_expr}"
+                f")) OR ("
+                f"json_type(t1.data, '{local_path}') IS NOT 'array' "
+                f"AND {f_expr} = {l_expr}"
+                f"))"
+            )
 
         json_set_func = self._get_json_set()
 
@@ -1563,6 +1589,9 @@ class StageBuildersMixin:
                     f"json_extract(pipeline_result.data, '{parse_json_path(foreign_field)}')"
                 )
             )
+            join_cond = _lookup_join_condition(
+                local_field, local_expr, foreign_expr
+            )
 
             joined_data_expr = f"""
                 COALESCE((SELECT json_group_array(
@@ -1574,7 +1603,7 @@ class StageBuildersMixin:
                     END)
                  )
                  FROM ({pipeline_sql}) AS pipeline_result
-                 WHERE {foreign_expr} = {local_expr}), '[]')
+                 WHERE {join_cond}), '[]')
             """
 
             data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
@@ -1607,6 +1636,10 @@ class StageBuildersMixin:
                 f"json_extract(t2.data, '{parse_json_path(foreign_field)}')"
             )
         )
+        assert local_field is not None
+        join_cond = _lookup_join_condition(
+            local_field, local_expr, foreign_expr
+        )
 
         if _check_sqlite_version("3.30.0"):
             joined_data_expr = (
@@ -1623,11 +1656,12 @@ class StageBuildersMixin:
                 select_parts, context, preserve_root, table_alias="t1"
             )
 
+            # Use ROW_NUMBER() per row so rows sharing t1.id after $unionWith/$densify never collapse
             sql = f"""
                 SELECT {", ".join(select_parts)}
-                FROM {prev_stage} AS t1
-                LEFT JOIN {quote_table_name(from_coll)} AS t2 ON {local_expr} = {foreign_expr}
-                GROUP BY t1.id
+                FROM (SELECT *, ROW_NUMBER() OVER () AS __lkp_rn FROM {prev_stage}) AS t1
+                LEFT JOIN {quote_table_name(from_coll)} AS t2 ON {join_cond}
+                GROUP BY t1.__lkp_rn
             """
             return sql, []
 
@@ -1639,7 +1673,7 @@ class StageBuildersMixin:
             f"WHEN json_type(t2.data, '$._id') IS NOT NULL OR t2._id IS NULL THEN t2.data "
             f"ELSE {json_set_func}(t2.data, '$._id', t2._id) END)"
             f") FROM {quote_table_name(from_coll)} AS t2 "
-            f"WHERE {local_expr} = {foreign_expr}), '[]')"
+            f"WHERE {join_cond}), '[]')"
         )
         data_expr = f"json({json_set_func}(t1.data, '{parse_json_path(as_field)}', json({joined_data_expr})))"
 
@@ -2406,6 +2440,7 @@ class StageBuildersMixin:
 
         all_params = []
         partition_clause = ""
+        partition_params: list[Any] = []
         if partition_by:
             if isinstance(partition_by, dict) and not (
                 len(partition_by) == 1
@@ -2415,8 +2450,10 @@ class StageBuildersMixin:
             expr_sql, expr_params = self.evaluator.build_select_expression(
                 partition_by, context=agg_ctx
             )
+            if expr_sql is None:
+                return None, []
             partition_clause = f"PARTITION BY {expr_sql}"
-            all_params.extend(expr_params)
+            partition_params = list(expr_params)
 
         sort_clause = ""
         if sort_by:
@@ -2453,13 +2490,17 @@ class StageBuildersMixin:
                 expr_sql = (
                     f"{sql_func}() OVER ({partition_clause} {sort_clause})"
                 )
+                all_params.extend(partition_params)
             elif op_name in ("$first", "$last"):
                 inner_sql, inner_params = (
                     self.evaluator.build_select_expression(
                         op_spec, context=agg_ctx
                     )
                 )
+                if inner_sql is None:
+                    return None, []
                 all_params.extend(inner_params)
+                all_params.extend(partition_params)
                 frame = (
                     "ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING"
                 )

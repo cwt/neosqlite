@@ -409,10 +409,30 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
         Returns:
             str: Name of the newly created temporary table with joined arrays.
         """
+        if lookup_spec.get("let") is not None:
+            raise NotImplementedError(
+                "$lookup with 'let' requires Python fallback"
+            )
+
         from_collection = lookup_spec["from"]
         pipeline = lookup_spec.get("pipeline", [])
+        local_field = lookup_spec.get("localField")
 
         use_hash_join = self._should_use_hash_join(from_collection, pipeline)
+        if use_hash_join and local_field and local_field != "_id":
+            local_path = parse_json_path(local_field)
+            try:
+                has_array_local = (
+                    self.db.execute(
+                        f"SELECT 1 FROM {current_table} "
+                        f"WHERE json_type(json(data), '{local_path}') = 'array' LIMIT 1"
+                    ).fetchone()
+                    is not None
+                )
+                if has_array_local:
+                    use_hash_join = False
+            except sqlite3.OperationalError:
+                pass
 
         if use_hash_join:
             return self._process_lookup_hash_join(
@@ -609,12 +629,31 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
 
         if local_field == "_id":
             local_extract = self._local_id_extract_expr()
+            join_cond = f"{foreign_extract} = {local_extract}"
         else:
             local_extract = _json_extract_field_with_objectid_support(
                 prefix,
                 local_field,
                 is_local_field=True,
                 data_column="main_table.data",
+            )
+            local_path = parse_json_path(local_field)
+            elem_expr = (
+                "CASE "
+                "WHEN _je.type = 'object' "
+                "AND json_extract(_je.value, '$.__neosqlite_objectid__') = 1 "
+                "THEN json_extract(_je.value, '$.id') "
+                "ELSE CAST(_je.value AS TEXT) END"
+            )
+            join_cond = (
+                f"("
+                f"(json_type(json(main_table.data), '{local_path}') = 'array' AND EXISTS ("
+                f"SELECT 1 FROM json_each(json(main_table.data), '{local_path}') AS _je "
+                f"WHERE _je.value IS NOT NULL AND ({elem_expr}) = {foreign_extract}"
+                f")) OR ("
+                f"json_type(json(main_table.data), '{local_path}') IS NOT 'array' "
+                f"AND {foreign_extract} = {local_extract}"
+                f"))"
             )
 
         select_clause = (
@@ -623,7 +662,7 @@ class OperatorsLookupMixin(OperatorsBaseMixin):
             f"{prefix}(COALESCE(("
             f"  SELECT {self.jsonb.json_group_array_function}({related_doc_expr}) "
             f"  FROM {related_table} as related "
-            f"  WHERE {foreign_extract} = {local_extract}"
+            f"  WHERE {join_cond}"
             f"), {prefix}('[]'))))) as data"
         )
         from_clause = f"FROM {current_table} as main_table"

@@ -33,6 +33,157 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _resolve_let_value(var_expr: str, let_vars: dict[str, Any]) -> Any:
+    """Resolve ``$$var`` or dotted ``$$var.field`` against ``let_vars``.
+
+    Args:
+        var_expr: Variable expression starting with ``$$``.
+        let_vars: Mapping of ``"$$name"`` to evaluated bound values.
+
+    Returns:
+        tuple[bool, Any]: ``(matched, value)`` where ``matched`` is True when
+        the base variable exists in ``let_vars``.
+    """
+    if "." in var_expr:
+        base_var, suffix = var_expr.split(".", 1)
+        if base_var not in let_vars:
+            return False, None
+        val = let_vars[base_var]
+        for part in suffix.split("."):
+            if isinstance(val, dict):
+                val = val.get(part)
+            else:
+                return True, None
+        return True, val
+    if var_expr in let_vars:
+        return True, let_vars[var_expr]
+    return False, None
+
+
+def _substitute_let_vars(
+    obj: Any,
+    let_vars: dict[str, Any],
+    shadowed: frozenset[str] = frozenset(),
+) -> Any:
+    """Substitute ``$lookup`` ``let`` variables into a sub-pipeline template.
+
+    Preserves inner lexical bindings from ``$let``, ``$map``, ``$filter``, and
+    ``$reduce`` when variable names shadow outer ``let`` variables.
+
+    Args:
+        obj: Pipeline stage, expression dict, list, or scalar value.
+        let_vars: Mapping of ``"$$name"`` to resolved outer document values.
+        shadowed: Set of ``"$$name"`` bindings currently shadowed in scope.
+
+    Returns:
+        Any: Rewritten copy with matched ``$$var`` expressions replaced by
+        ``{"$literal": ...}``.
+    """
+    if isinstance(obj, str) and obj.startswith("$$"):
+        base_var = obj.split(".", 1)[0]
+        if base_var in shadowed:
+            return obj
+        matched, val = _resolve_let_value(obj, let_vars)
+        if matched:
+            return {"$literal": deepcopy(val)}
+        return obj
+    if isinstance(obj, dict):
+        if "$let" in obj and isinstance(obj["$let"], dict):
+            let_spec = obj["$let"]
+            vars_spec = let_spec.get("vars", {})
+            new_vars = (
+                {
+                    k: _substitute_let_vars(v, let_vars, shadowed)
+                    for k, v in vars_spec.items()
+                }
+                if isinstance(vars_spec, dict)
+                else vars_spec
+            )
+            new_shadowed = shadowed | (
+                frozenset(f"$${k}" for k in vars_spec)
+                if isinstance(vars_spec, dict)
+                else frozenset()
+            )
+            new_let = dict(let_spec)
+            new_let["vars"] = new_vars
+            if "in" in new_let:
+                new_let["in"] = _substitute_let_vars(
+                    new_let["in"], let_vars, new_shadowed
+                )
+            res = {
+                k: (
+                    new_let
+                    if k == "$let"
+                    else _substitute_let_vars(v, let_vars, shadowed)
+                )
+                for k, v in obj.items()
+            }
+            return res
+        if "$map" in obj and isinstance(obj["$map"], dict):
+            ms = obj["$map"]
+            as_name = ms.get("as", "this")
+            new_ms = {
+                k: _substitute_let_vars(
+                    v,
+                    let_vars,
+                    shadowed | {f"$${as_name}"} if k == "in" else shadowed,
+                )
+                for k, v in ms.items()
+            }
+            return {
+                k: (
+                    new_ms
+                    if k == "$map"
+                    else _substitute_let_vars(v, let_vars, shadowed)
+                )
+                for k, v in obj.items()
+            }
+        if "$filter" in obj and isinstance(obj["$filter"], dict):
+            fs = obj["$filter"]
+            as_name = fs.get("as", "this")
+            new_fs = {
+                k: _substitute_let_vars(
+                    v,
+                    let_vars,
+                    shadowed | {f"$${as_name}"} if k == "cond" else shadowed,
+                )
+                for k, v in fs.items()
+            }
+            return {
+                k: (
+                    new_fs
+                    if k == "$filter"
+                    else _substitute_let_vars(v, let_vars, shadowed)
+                )
+                for k, v in obj.items()
+            }
+        if "$reduce" in obj and isinstance(obj["$reduce"], dict):
+            rs = obj["$reduce"]
+            new_rs = {
+                k: _substitute_let_vars(
+                    v,
+                    let_vars,
+                    shadowed | {"$$value", "$$this"} if k == "in" else shadowed,
+                )
+                for k, v in rs.items()
+            }
+            return {
+                k: (
+                    new_rs
+                    if k == "$reduce"
+                    else _substitute_let_vars(v, let_vars, shadowed)
+                )
+                for k, v in obj.items()
+            }
+        return {
+            k: _substitute_let_vars(v, let_vars, shadowed)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_substitute_let_vars(item, let_vars, shadowed) for item in obj]
+    return obj
+
+
 def _resolve_target_collection(
     query_engine: QueryEngine, coll_name: str, db_name: str | None = None
 ) -> Any:
@@ -596,31 +747,21 @@ def execute_python_aggregation(
                     # Remaining case: missing/null without preserve — dropped.
                 docs_with_context = unwound_docs_with_context
             case "$lookup":
-                # Python fallback implementation for $lookup
+                # Python fallback implementation for $lookup (including let & pipeline)
                 lookup_spec = stage["$lookup"]
                 from_collection_name = lookup_spec["from"]
-                local_field = lookup_spec["localField"]
-                foreign_field = lookup_spec["foreignField"]
+                local_field = lookup_spec.get("localField")
+                foreign_field = lookup_spec.get("foreignField")
                 as_field = lookup_spec["as"]
+                let_spec = lookup_spec.get("let")
+                sub_pipeline = lookup_spec.get("pipeline")
 
                 # Get the from collection from the database
                 from_collection = query_engine.collection._database[
                     from_collection_name
                 ]
 
-                # Build an index over the foreign collection ONCE, then
-                # join in memory — previously this re-scanned the whole
-                # foreign collection per input document, O(N×M) (#150).
                 from ..type_utils import _hashable_group_key
-
-                foreign_index: dict[Any, list[dict[str, Any]]] = {}
-                for match_doc in from_collection.find(session=session):
-                    foreign_value = from_collection._get_val(
-                        match_doc, foreign_field
-                    )
-                    key = _hashable_group_key(foreign_value)
-                    # MongoDB $lookup includes the foreign document's _id.
-                    foreign_index.setdefault(key, []).append(match_doc.copy())
 
                 # Element-wise local values (arrays expand like MongoDB)
                 def _local_candidates(doc: dict[str, Any]) -> list[Any]:
@@ -638,6 +779,7 @@ def execute_python_aggregation(
                         resolved at ``local_field``, or an empty list if the
                         path does not exist.
                     """
+                    assert local_field is not None
                     parts = local_field.split(".")
                     current: list[Any] = [doc]
                     for part in parts:
@@ -665,13 +807,70 @@ def execute_python_aggregation(
                         current = nxt
                     return current
 
+                if local_field is not None and foreign_field is not None:
+                    foreign_index: dict[Any, list[dict[str, Any]]] = {}
+                    for match_doc in from_collection.find(session=session):
+                        foreign_value = from_collection._get_val(
+                            match_doc, foreign_field
+                        )
+                        key = _hashable_group_key(foreign_value)
+                        foreign_index.setdefault(key, []).append(
+                            match_doc.copy()
+                        )
+                    all_foreign_docs: list[dict[str, Any]] | None = None
+                elif sub_pipeline is not None:
+                    foreign_index = {}
+                    all_foreign_docs = list(
+                        from_collection.find(session=session)
+                    )
+                else:
+                    raise MalformedQueryException(
+                        "$lookup requires localField/foreignField or pipeline"
+                    )
+
+                lookup_eval = (
+                    ExprEvaluator(
+                        data_column="data",
+                        db_connection=query_engine.collection.db,
+                    )
+                    if let_spec
+                    else None
+                )
+
                 for dc in docs_with_context:
                     doc = dc["__doc__"]
-                    matching_docs: list[dict[str, Any]] = []
-                    for lv in _local_candidates(doc):
-                        key = _hashable_group_key(lv)
-                        matching_docs.extend(foreign_index.get(key, []))
-                    # Add the matching documents as an array field
+                    if local_field is not None and foreign_field is not None:
+                        matching_docs: list[dict[str, Any]] = []
+                        for lv in _local_candidates(doc):
+                            key = _hashable_group_key(lv)
+                            matching_docs.extend(
+                                deepcopy(matched)
+                                for matched in foreign_index.get(key, [])
+                            )
+                    else:
+                        matching_docs = deepcopy(all_foreign_docs or [])
+
+                    if sub_pipeline is not None:
+                        eff_pipeline = sub_pipeline
+                        if let_spec and lookup_eval is not None:
+                            eval_ctx = _bucket_eval_doc(doc, dc["__root__"])
+                            let_vars = {
+                                f"$${var_name}": lookup_eval._evaluate_operand_python(
+                                    var_expr, eval_ctx
+                                )
+                                for var_name, var_expr in let_spec.items()
+                            }
+                            eff_pipeline = _substitute_let_vars(
+                                sub_pipeline, let_vars
+                            )
+                        if matching_docs and eff_pipeline:
+                            matching_docs = execute_python_aggregation(
+                                query_engine,
+                                eff_pipeline,
+                                session=session,
+                                initial_docs=matching_docs,
+                            )
+
                     doc[as_field] = matching_docs
             case "$addFields":
                 add_fields_spec = stage["$addFields"]
@@ -1171,64 +1370,17 @@ def execute_python_aggregation(
                 evaluator_redact = ExprEvaluator(
                     data_column="data", db_connection=query_engine.collection.db
                 )
-
-                def apply_redact(doc, spec, root):
-                    """Recursively apply redaction to a document.
-
-                    Evaluates ``spec`` via ``evaluate_redact_condition()`` for
-                    each key/value pair and handles ``$$KEEP``, ``$$DESCEND``
-                    (recursing into nested dicts and lists), and ``$$PRUNE``.
-
-                    Args:
-                        doc: Current document or subdocument being redacted.
-                        spec: ``$redact`` expression specification.
-                        root: Original root document (bound to ``$$ROOT``).
-
-                    Returns:
-                        Any: Redacted copy of ``doc``, or ``doc`` unchanged if
-                        it is not a dict.
-                    """
-                    if not isinstance(doc, dict):
-                        return doc
-
-                    result = {}
-                    for key, value in doc.items():
-                        # Evaluate the redact condition for this field
-                        redact_action = evaluate_redact_condition(
-                            spec, doc, root
-                        )
-
-                        if redact_action == "$$KEEP":
-                            # Keep the field as-is
-                            result[key] = value
-                        elif redact_action == "$$DESCEND":
-                            # Keep and process sub-fields
-                            if isinstance(value, dict):
-                                result[key] = apply_redact(value, spec, root)
-                            elif isinstance(value, list):
-                                result[key] = [
-                                    (
-                                        apply_redact(item, spec, root)
-                                        if isinstance(item, dict)
-                                        else item
-                                    )
-                                    for item in value
-                                ]
-                            else:
-                                result[key] = value
-                        elif redact_action == "$$PRUNE":
-                            # Remove this field (don't add to result)
-                            pass
-
-                    return result
+                _pruned_sentinel = object()
 
                 def evaluate_redact_condition(spec, doc, root):
-                    """Evaluate the redact condition for a document.
+                    """Evaluate the redact condition for a document level.
 
                     Binds ``$$ROOT``, ``$$CURRENT``, ``$$KEEP``, ``$$DESCEND``,
                     and ``$$PRUNE`` and evaluates ``spec`` with
-                    ``ExprEvaluator``. Falls back to ``"$$DESCEND"`` if
-                    evaluation fails or returns an unrecognized value.
+                    ``ExprEvaluator``. Fails closed by raising
+                    ``MalformedQueryException`` if evaluation raises an error
+                    or returns anything other than ``$$KEEP``, ``$$DESCEND``,
+                    or ``$$PRUNE``.
 
                     Args:
                         spec: ``$redact`` expression specification.
@@ -1238,6 +1390,10 @@ def execute_python_aggregation(
                     Returns:
                         str: One of ``"$$KEEP"``, ``"$$DESCEND"``, or
                         ``"$$PRUNE"``.
+
+                    Raises:
+                        MalformedQueryException: If the expression fails to
+                            evaluate or produces an invalid action string.
                     """
                     eval_doc = {
                         **doc,
@@ -1251,11 +1407,72 @@ def execute_python_aggregation(
                         result = evaluator_redact._evaluate_operand_python(
                             spec, eval_doc
                         )
-                        if result in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
-                            return result
                     except Exception as e:
-                        logger.debug(f"Redaction evaluation failed: {e}")
-                    return "$$DESCEND"
+                        raise MalformedQueryException(
+                            f"$redact condition evaluation failed: {e}"
+                        ) from e
+                    if result not in ("$$KEEP", "$$DESCEND", "$$PRUNE"):
+                        raise MalformedQueryException(
+                            f"Invalid $redact result {result!r}; expected "
+                            "'$$KEEP', '$$DESCEND', or '$$PRUNE'"
+                        )
+                    return result
+
+                def _redact_list(
+                    items: list[Any], spec: Any, root: Any
+                ) -> list[Any]:
+                    """Recursively redact elements of a list, omitting pruned items."""
+                    out_items: list[Any] = []
+                    for item in items:
+                        if isinstance(item, dict):
+                            redacted_item = apply_redact(item, spec, root)
+                            if redacted_item is not _pruned_sentinel:
+                                out_items.append(redacted_item)
+                        elif isinstance(item, list):
+                            out_items.append(_redact_list(item, spec, root))
+                        else:
+                            out_items.append(item)
+                    return out_items
+
+                def apply_redact(doc, spec, root):
+                    """Recursively apply redaction once per subdocument level.
+
+                    Evaluates ``spec`` via ``evaluate_redact_condition()`` once
+                    at ``doc``'s level: ``$$KEEP`` preserves the subtree,
+                    ``$$PRUNE`` returns a private sentinel so parents omit the
+                    entry, and ``$$DESCEND`` recurses into nested dicts and
+                    lists.
+
+                    Args:
+                        doc: Current document or subdocument being redacted.
+                        spec: ``$redact`` expression specification.
+                        root: Original root document (bound to ``$$ROOT``).
+
+                    Returns:
+                        Any: Redacted copy of ``doc``, or ``_pruned_sentinel``
+                        when the current level is pruned.
+                    """
+                    if not isinstance(doc, dict):
+                        return doc
+
+                    redact_action = evaluate_redact_condition(spec, doc, root)
+                    if redact_action == "$$KEEP":
+                        return deepcopy(doc)
+                    if redact_action == "$$PRUNE":
+                        return _pruned_sentinel
+
+                    # $$DESCEND: retain scalars and recurse into subdocuments/arrays
+                    result = {}
+                    for key, value in doc.items():
+                        if isinstance(value, dict):
+                            redacted_val = apply_redact(value, spec, root)
+                            if redacted_val is not _pruned_sentinel:
+                                result[key] = redacted_val
+                        elif isinstance(value, list):
+                            result[key] = _redact_list(value, spec, root)
+                        else:
+                            result[key] = value
+                    return result
 
                 # Apply redaction to each document
                 new_docs_with_context = []
@@ -1263,11 +1480,8 @@ def execute_python_aggregation(
                     doc = dc["__doc__"]
                     root = dc["__root__"]
 
-                    # Apply redaction
                     redacted_doc = apply_redact(doc, redact_spec, root)
-
-                    # Check if document should be kept (not fully pruned)
-                    if redacted_doc:  # Non-empty document
+                    if redacted_doc is not _pruned_sentinel:
                         new_docs_with_context.append(
                             {"__doc__": redacted_doc, "__root__": root}
                         )

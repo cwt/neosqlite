@@ -232,6 +232,12 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
 
                             match next_stage_name:
                                 case "$sort":
+                                    if (
+                                        sort_spec is not None
+                                        or skip_value > 0
+                                        or limit_value is not None
+                                    ):
+                                        break
                                     sort_spec = next_stage["$sort"]
                                 case "$skip":
                                     n = int(next_stage["$skip"])

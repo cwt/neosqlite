@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
+from ..._sqlite import sqlite3
 from ...sql_utils import quote_table_name
 from .._stage_builders import (
     _graph_lookup_scalar_or_oid,
@@ -263,19 +265,38 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             neosqlite_json_loads,
         )
 
-        # Extract input documents from current temp table
-        # IMPORTANT: _id is stored as a separate column, not in the data JSON
+        # Inspect available columns: _id may be absent after $group/$project/_unset
+        columns = {
+            col[1]
+            for col in self.db.execute(
+                f"PRAGMA table_info({quote_table_name(current_table)})"
+            ).fetchall()
+        }
+        has_underscore_id = "_id" in columns
         data_col = self.jsonb.data_column()
-        cursor = self.db.execute(f"SELECT _id, {data_col} FROM {current_table}")
+        if has_underscore_id:
+            cursor = self.db.execute(
+                f"SELECT _id, {data_col} FROM {current_table}"
+            )
+        else:
+            cursor = self.db.execute(f"SELECT {data_col} FROM {current_table}")
 
         input_docs = []
         skipped_count = 0
         for row in cursor.fetchall():
-            doc_id, doc_data = row
+            if has_underscore_id:
+                doc_id, doc_data = row
+            else:
+                doc_id, doc_data = None, row[0]
             try:
                 doc = neosqlite_json_loads(doc_data)
-                # Merge _id from the column into the document
-                doc["_id"] = doc_id
+                if (
+                    isinstance(doc, dict)
+                    and "_id" not in doc
+                    and has_underscore_id
+                    and doc_id is not None
+                ):
+                    doc["_id"] = self.collection._parse_stored_id(doc_id)
                 input_docs.append(doc)
             except (UnicodeDecodeError, ValueError, TypeError) as e:
                 skipped_count += 1
@@ -289,19 +310,51 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 f"out of {skipped_count + len(input_docs)} total"
             )
 
+        def _can_insert_into_temp_collection(
+            docs: list[dict[str, Any]],
+        ) -> bool:
+            """Return True when all docs carry unique non-null _id values."""
+            seen_ids: set[str] = set()
+            for d in docs:
+                if (
+                    not isinstance(d, dict)
+                    or "_id" not in d
+                    or d["_id"] is None
+                ):
+                    return False
+                key = str(d["_id"])
+                if key in seen_ids:
+                    return False
+                seen_ids.add(key)
+            return True
+
         # Process each sub-pipeline and store results
         facet_results: dict[str, Any] = {}
         result_tables: list[str] = []
+        qe = self.query_engine or getattr(self.collection, "query_engine", None)
 
         try:
             for facet_name, sub_pipeline in facet_spec.items():
-                # If no input documents, sub-pipeline results should be empty
-                # (to match Tier 3 Python fallback behavior)
                 if not input_docs:
                     facet_results[facet_name] = []
                     continue
 
-                # Create a temporary in-memory collection for this sub-pipeline
+                if (
+                    not _can_insert_into_temp_collection(input_docs)
+                    and qe is not None
+                ):
+                    from ..query_engine.python_aggregation_engine import (
+                        execute_python_aggregation,
+                    )
+
+                    facet_results[facet_name] = execute_python_aggregation(
+                        qe,
+                        sub_pipeline,
+                        session=None,
+                        initial_docs=deepcopy(input_docs),
+                    )
+                    continue
+
                 temp_collection_name = f"_facet_sub_{uuid.uuid4().hex[:12]}"
                 from .. import Collection
 
@@ -313,15 +366,25 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 )
 
                 try:
-                    # Insert input documents into temp collection, preserving _id
-                    if input_docs:
-                        # Use insert_many which should preserve _id if present
-                        temp_collection.insert_many(input_docs)
+                    try:
+                        temp_collection.insert_many(deepcopy(input_docs))
+                        sub_results = list(
+                            temp_collection.aggregate(sub_pipeline)
+                        )
+                    except sqlite3.IntegrityError:
+                        if qe is None:
+                            raise
+                        from ..query_engine.python_aggregation_engine import (
+                            execute_python_aggregation,
+                        )
 
-                    # Run sub-pipeline through normal aggregation (uses Tier 1/2/3)
-                    sub_results = list(temp_collection.aggregate(sub_pipeline))
+                        sub_results = execute_python_aggregation(
+                            qe,
+                            sub_pipeline,
+                            session=None,
+                            initial_docs=deepcopy(input_docs),
+                        )
 
-                    # Store results
                     facet_results[facet_name] = sub_results
 
                 finally:
@@ -898,6 +961,11 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         base_cols = [c for c in ("id", "_id", "data") if c in column_names]
         inner_selects = list(base_cols)
 
+        # Track outer SELECT params separately from inner FROM subquery params
+        # so SQL placeholder order matches bound parameter order.
+        outer_params: list[Any] = []
+        inner_params: list[Any] = []
+
         # 1. Compute PARTITION BY once in inner subquery
         partition_aliases: list[str] = []
         if partition_by is not None:
@@ -912,9 +980,13 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 sql, params = self.expr_evaluator.build_select_expression(
                     partition_by
                 )
+                if sql is None:
+                    raise NotImplementedError(
+                        "Unsupported $setWindowFields partitionBy expression"
+                    )
                 inner_selects.append(f"({sql}) AS _wp_0")
                 partition_aliases.append("_wp_0")
-                all_params.extend(params)
+                inner_params.extend(params)
         partition_clause = (
             f"PARTITION BY {', '.join(partition_aliases)}"
             if partition_aliases
@@ -937,9 +1009,13 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     sql, params = self.expr_evaluator.build_select_expression(
                         f"${field}"
                     )
+                    if sql is None:
+                        raise NotImplementedError(
+                            f"Unsupported $setWindowFields sortBy field: {field}"
+                        )
                     inner_selects.append(f"({sql}) AS _ws_{idx}")
                     sort_aliases.append(f"_ws_{idx} {order}")
-                    all_params.extend(params)
+                    inner_params.extend(params)
         sort_clause = (
             f"ORDER BY {', '.join(sort_aliases)}" if sort_aliases else ""
         )
@@ -996,15 +1072,23 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(op_val)
                     )
+                    if op_sql is None:
+                        raise NotImplementedError(
+                            "Unsupported $first expression in $setWindowFields"
+                        )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
-                    all_params.extend(op_params)
+                    inner_params.extend(op_params)
                     win_expr = f"FIRST_VALUE({op_col}) {over_clause}"
                 case "$last":
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(op_val)
                     )
+                    if op_sql is None:
+                        raise NotImplementedError(
+                            "Unsupported $last expression in $setWindowFields"
+                        )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
-                    all_params.extend(op_params)
+                    inner_params.extend(op_params)
                     win_expr = f"LAST_VALUE({op_col}) {over_clause}"
                 case "$shift":
                     output_expr = op_val.get("output")
@@ -1015,13 +1099,17 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(output_expr)
                     )
+                    if op_sql is None:
+                        raise NotImplementedError(
+                            "Unsupported $shift expression in $setWindowFields"
+                        )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
-                    all_params.extend(op_params)
+                    inner_params.extend(op_params)
                     if default is not None:
                         win_expr = (
                             f"{func}({op_col}, {offset}, ?) {over_clause}"
                         )
-                        all_params.append(default)
+                        outer_params.append(default)
                     else:
                         win_expr = f"{func}({op_col}, {offset}) {over_clause}"
                 case "$sum" | "$avg" | "$min" | "$max":
@@ -1029,8 +1117,12 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(op_val)
                     )
+                    if op_sql is None:
+                        raise NotImplementedError(
+                            f"Unsupported {op_name} expression in $setWindowFields"
+                        )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
-                    all_params.extend(op_params)
+                    inner_params.extend(op_params)
                     win_expr = f"{func}({op_col}) {over_clause}"
                 case "$push":
                     if not _check_sqlite_version("3.30.0"):
@@ -1040,8 +1132,12 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(op_val)
                     )
+                    if op_sql is None:
+                        raise NotImplementedError(
+                            "Unsupported $push expression in $setWindowFields"
+                        )
                     inner_selects.append(f"({op_sql}) AS {op_col}")
-                    all_params.extend(op_params)
+                    inner_params.extend(op_params)
                     win_expr = (
                         f"json(json_group_array({op_col}) "
                         f"FILTER (WHERE {op_col} IS NOT NULL) {over_clause})"
@@ -1050,12 +1146,16 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     op_sql, op_params = (
                         self.expr_evaluator.build_select_expression(op_val)
                     )
+                    if op_sql is None:
+                        raise NotImplementedError(
+                            f"Unsupported {op_name} expression in $setWindowFields"
+                        )
                     inner_selects.append(
                         f"CASE WHEN typeof(({op_sql})) IN ('integer', 'real') "
                         f"THEN CAST(({op_sql}) AS REAL) ELSE NULL END AS {op_col}"
                     )
-                    all_params.extend(op_params)
-                    all_params.extend(op_params)
+                    inner_params.extend(op_params)
+                    inner_params.extend(op_params)
                     cnt_w = f"COUNT({op_col}) {over_clause}"
                     sum_w = f"SUM({op_col}) {over_clause}"
                     sum2_w = f"SUM({op_col} * {op_col}) {over_clause}"
@@ -1088,6 +1188,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             data_expr = "data"
         outer_cols.append(data_expr)
 
+        all_params = outer_params + inner_params
         sql = (
             f"SELECT {', '.join(outer_cols)} "
             f"FROM (SELECT {', '.join(inner_selects)} FROM {current_table})"
@@ -1205,7 +1306,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             has_root=False,
         )
         if parts is None:
-            return current_table
+            raise NotImplementedError(
+                "$graphLookup specification not supported in SQL tier"
+            )
 
         recurse_sql, select_sql, rec_params = parts
         stage_sql = f"WITH RECURSIVE {rec_cte} AS ({recurse_sql}) {select_sql}"
@@ -1258,7 +1361,8 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             return current_table
 
         inner_selects = ["id", "_id", "data"]
-        all_params: list[Any] = []
+        outer_params: list[Any] = []
+        inner_params: list[Any] = []
 
         # 1. Partition expressions (evaluated once in _f0)
         part_aliases: list[str] = []
@@ -1270,17 +1374,25 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     psql, pparams = self.expr_evaluator.build_select_expression(
                         val_expr
                     )
+                    if psql is None:
+                        raise NotImplementedError(
+                            "Unsupported $fill partitionBy expression"
+                        )
                     alias = f"_fp_{idx}"
                     inner_selects.append(f"({psql}) AS {alias}")
                     part_aliases.append(alias)
-                    all_params.extend(pparams)
+                    inner_params.extend(pparams)
             else:
                 psql, pparams = self.expr_evaluator.build_select_expression(
                     partition_by
                 )
+                if psql is None:
+                    raise NotImplementedError(
+                        "Unsupported $fill partitionBy expression"
+                    )
                 inner_selects.append(f"({psql}) AS _fp_0")
                 part_aliases.append("_fp_0")
-                all_params.extend(pparams)
+                inner_params.extend(pparams)
 
         part_clause = (
             f"PARTITION BY {', '.join(part_aliases)}" if part_aliases else ""
@@ -1298,12 +1410,16 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     ssql, sparams = self.expr_evaluator.build_select_expression(
                         f"${sfield}"
                     )
+                    if ssql is None:
+                        raise NotImplementedError(
+                            f"Unsupported $fill sortBy field: {sfield}"
+                        )
                 salias = f"_fs_{idx}"
                 inner_selects.append(f"({ssql}) AS {salias}")
                 sort_aliases.append(f"{salias} {order}")
                 if idx == 0:
                     primary_sort_col = salias
-                all_params.extend(sparams)
+                inner_params.extend(sparams)
 
         order_clause = (
             f"ORDER BY {', '.join(sort_aliases)}, id ASC"
@@ -1314,8 +1430,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             f"ORDER BY {', '.join(sort_aliases)}" if sort_aliases else ""
         )
 
-        # 3. Extract each output field once in _f0
+        # 3. Extract each output field (and constant/expression fill values) in _f0
         f0_fields: list[tuple[int, str, str, dict[str, Any]]] = []
+        const_cols: dict[int, str] = {}
         has_locf = False
         has_linear = False
         for idx, (field, fill_spec) in enumerate(output.items()):
@@ -1327,25 +1444,50 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             fsql, fparams = self.expr_evaluator.build_select_expression(
                 f"${field}"
             )
+            if fsql is None:
+                raise NotImplementedError(
+                    f"Unsupported $fill output field: {field}"
+                )
             inner_selects.append(f"({fsql}) AS _fv_{idx}")
-            all_params.extend(fparams)
+            inner_params.extend(fparams)
+            if "value" in fill_spec:
+                fill_val = fill_spec["value"]
+                if isinstance(fill_val, dict) or (
+                    isinstance(fill_val, str) and fill_val.startswith("$")
+                ):
+                    csql, cparams = self.expr_evaluator.build_select_expression(
+                        fill_val
+                    )
+                    if csql is None:
+                        raise NotImplementedError(
+                            "Unsupported $fill value expression"
+                        )
+                    calias = f"_fc_{idx}"
+                    inner_selects.append(f"({csql}) AS {calias}")
+                    inner_params.extend(cparams)
+                    const_cols[idx] = calias
             f0_fields.append((idx, field, parse_json_path(field), fill_spec))
 
         json_set_func = self.jsonb.function("set")
 
         if not has_locf and not has_linear:
-            # Simple constant value fill
+            # Simple constant/expression value fill
             set_args: list[str] = []
             for idx, _, fpath, fill_spec in f0_fields:
                 set_args.append(f"'{fpath}'")
-                set_args.append(f"COALESCE(_fv_{idx}, ?)")
-                all_params.append(fill_spec.get("value"))
+                if idx in const_cols:
+                    set_args.append(f"COALESCE(_fv_{idx}, {const_cols[idx]})")
+                else:
+                    set_args.append(f"COALESCE(_fv_{idx}, ?)")
+                    outer_params.append(fill_spec.get("value"))
             data_expr = f"json({json_set_func}(data, {', '.join(set_args)}))"
             sql = (
                 f"SELECT id, _id, {data_expr} AS data "
                 f"FROM (SELECT {', '.join(inner_selects)} FROM {current_table}) _f0"
             )
-            return create_temp({"$fill": spec}, sql, all_params)
+            return create_temp(
+                {"$fill": spec}, sql, outer_params + inner_params
+            )
 
         # Two-pass block window layers for locf + linear
         f1_selects = ["*"]
@@ -1418,8 +1560,13 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                         f"ELSE NULL END)"
                     )
             else:
-                outer_set_args.append(f"COALESCE(_fv_{idx}, ?)")
-                all_params.append(fill_spec.get("value"))
+                if idx in const_cols:
+                    outer_set_args.append(
+                        f"COALESCE(_fv_{idx}, {const_cols[idx]})"
+                    )
+                else:
+                    outer_set_args.append(f"COALESCE(_fv_{idx}, ?)")
+                    outer_params.append(fill_spec.get("value"))
 
         data_expr = f"json({json_set_func}(data, {', '.join(outer_set_args)}))"
         stage_sql = (
@@ -1429,4 +1576,6 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             f"SELECT {', '.join(inner_selects)} FROM {current_table}"
             f") _f0) _f1) _f2"
         )
-        return create_temp({"$fill": spec}, stage_sql, all_params)
+        return create_temp(
+            {"$fill": spec}, stage_sql, outer_params + inner_params
+        )

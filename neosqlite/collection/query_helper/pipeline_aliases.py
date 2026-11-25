@@ -72,6 +72,18 @@ def _normalize_aliases(stages: list[Any]) -> tuple[list[Any], bool]:
             changed = changed or sub_changed
             continue
 
+        if (
+            stage_name == "$unionWith"
+            and isinstance(spec, dict)
+            and isinstance(spec.get("pipeline"), list)
+        ):
+            new_sub, sub_changed = _normalize_aliases(spec["pipeline"])
+            new_spec = dict(spec)
+            new_spec["pipeline"] = new_sub
+            result.append({stage_name: new_spec})
+            changed = changed or sub_changed
+            continue
+
         result.append(stage)
 
     return (result if changed else stages), changed

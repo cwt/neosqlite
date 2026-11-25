@@ -93,7 +93,8 @@ def process_set_window_fields(
         ranks: list[int] | None = None
         dense_ranks: list[int] | None = None
 
-        # 3. Apply window operators
+        # 3. Apply window operators against unmodified partition snapshot
+        new_partition_docs: list[dict[str, Any]] = []
         for i, dc in enumerate(partition_docs):
             doc = deepcopy(dc["__doc__"])
 
@@ -135,9 +136,11 @@ def process_set_window_fields(
 
                 collection._set_val(doc, field_path, result)
 
-            dc["__doc__"] = doc
+            new_dc = dict(dc)
+            new_dc["__doc__"] = doc
+            new_partition_docs.append(new_dc)
 
-        all_processed_docs.extend(partition_docs)
+        all_processed_docs.extend(new_partition_docs)
 
     return all_processed_docs
 

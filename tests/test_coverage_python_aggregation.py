@@ -532,10 +532,9 @@ class TestPythonAggregationMergeOutRedactDensify:
                 ],
             )
             assert len(red) == 1
-            assert red[0]["child"] == {}
-            assert len(red[0]["nested_list"]) == 2
+            assert "child" not in red[0]
+            assert len(red[0]["nested_list"]) == 1
             assert red[0]["nested_list"][0]["secret"] == "ok"
-            assert red[0]["nested_list"][1] == {}
 
             # Non-dict redact spec falls back to returning doc unchanged
             non_dict = execute_python_aggregation(qe, [{"$redact": "$$KEEP"}])
@@ -558,11 +557,13 @@ class TestPythonAggregationMergeOutRedactDensify:
             )
             assert pruned == []
 
-            # Eval error fallback treats as $$KEEP / fallback without crashing
-            err_red = execute_python_aggregation(
-                qe, [{"$redact": {"$divide": [1, 0]}}]
-            )
-            assert len(err_red) == 1
+            # Eval error / invalid action must fail closed with MalformedQueryException
+            from neosqlite.exceptions import MalformedQueryException
+
+            with pytest.raises(MalformedQueryException):
+                execute_python_aggregation(
+                    qe, [{"$redact": {"$divide": [1, 0]}}]
+                )
 
     def test_densify_numeric_partitioned_and_all_date_units(self):
         with neosqlite.Connection(":memory:") as conn:

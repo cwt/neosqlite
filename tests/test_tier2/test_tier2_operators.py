@@ -692,3 +692,387 @@ class TestIssue198BucketAndGroupFixes:
                     "sd_samp": None,
                     "sd_pop": None,
                 }
+
+
+class TestIssue200AdvancedStagesFixes:
+    """Multi-tier regression tests for #200 advanced stage & security fixes."""
+
+    @pytest.fixture(autouse=True)
+    def _reset_fallback(self):
+        yield
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(False)
+
+    def _run_both_tiers(self, coll, pipeline):
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        set_force_fallback(False)
+        res_sql = list(coll.aggregate(pipeline))
+        set_force_fallback(True)
+        res_py = list(coll.aggregate(pipeline))
+        set_force_fallback(False)
+        return res_sql, res_py
+
+    def test_redact_prunes_completely_and_fails_closed(self):
+        from neosqlite.exceptions import MalformedQueryException
+
+        with neosqlite.Connection(":memory:") as conn:
+            conn.sec.insert_one(
+                {
+                    "_id": 1,
+                    "lvl": 1,
+                    "secret": {"lvl": 5, "pw": "123"},
+                    "arr": [{"lvl": 5, "k": "secret"}, {"lvl": 1, "k": "ok"}],
+                }
+            )
+            red = list(
+                conn.sec.aggregate(
+                    [
+                        {
+                            "$redact": {
+                                "$cond": [
+                                    {"$lte": ["$lvl", 2]},
+                                    "$$DESCEND",
+                                    "$$PRUNE",
+                                ]
+                            }
+                        }
+                    ]
+                )
+            )
+            assert red == [{"_id": 1, "lvl": 1, "arr": [{"lvl": 1, "k": "ok"}]}]
+
+            for bad_spec in (
+                "BAD_ACTION",
+                {"$cond": [True, "INVALID", "$$PRUNE"]},
+                {"$divide": [1, 0]},
+            ):
+                with pytest.raises(MalformedQueryException):
+                    list(conn.sec.aggregate([{"$redact": bad_spec}]))
+
+    def test_tier2_limit_before_sort_not_coalesced(self):
+        with neosqlite.Connection(":memory:") as conn:
+            conn.sl.insert_many(
+                [
+                    {"_id": 1, "t": [1], "a": 1, "b": 10},
+                    {"_id": 2, "t": [1], "a": 2, "b": 40},
+                    {"_id": 3, "t": [1], "a": 3, "b": 20},
+                    {"_id": 4, "t": [1], "a": 4, "b": 30},
+                ]
+            )
+            p = [
+                {"$unwind": "$t"},
+                {"$sort": {"a": 1}},
+                {"$limit": 2},
+                {"$sort": {"b": -1}},
+            ]
+            sql_res, py_res = self._run_both_tiers(conn.sl, p)
+            assert [(d["a"], d["b"]) for d in sql_res] == [(2, 40), (1, 10)]
+            assert sql_res == py_res
+
+    def test_facet_unwind_missing_ids_and_large_batch(self):
+        with neosqlite.Connection(":memory:") as conn:
+            conn.fc.insert_one({"_id": 1, "tags": ["x", "y"], "v": 10})
+            for prefix in (
+                [{"$unwind": "$tags"}],
+                [{"$project": {"_id": 0, "v": 1}}],
+                [{"$group": {"_id": "$tags", "tot": {"$sum": "$v"}}}],
+            ):
+                pipe = prefix + [{"$facet": {"c": [{"$count": "n"}]}}]
+                sql_res, py_res = self._run_both_tiers(conn.fc, pipe)
+                assert sql_res == py_res
+
+            # > 101 docs inside Tier 3 $facet runs single sub-pipeline (not per chunk)
+            conn.big.insert_many([{"_id": i, "v": i} for i in range(150)])
+            from neosqlite.collection.query_helper import set_force_fallback
+
+            set_force_fallback(True)
+            big_py = list(
+                conn.big.aggregate([{"$facet": {"c": [{"$count": "n"}]}}])
+            )
+            assert big_py == [{"c": [{"n": 150}]}]
+
+            # Tier 2 ($unwind forces Tier 2) with 150 docs
+            conn.big2.insert_one({"_id": 1, "tags": list(range(150))})
+            set_force_fallback(False)
+            big_t2 = list(
+                conn.big2.aggregate(
+                    [
+                        {"$unwind": "$tags"},
+                        {"$facet": {"c": [{"$count": "n"}]}},
+                    ]
+                )
+            )
+            assert big_t2 == [{"c": [{"n": 150}]}]
+
+    def test_lookup_union_no_collapse_array_local_and_let_pipeline(self):
+        with neosqlite.Connection(":memory:") as conn:
+            conn.a.insert_one({"_id": 1, "k": "x"})
+            conn.b.insert_one({"_id": 1, "k": "y"})
+            conn.f.insert_many([{"_id": "x", "v": 10}, {"_id": "y", "v": 20}])
+
+            # $unionWith -> $lookup preserves duplicate t1.id rows
+            u_pipe = [
+                {"$unionWith": "b"},
+                {
+                    "$lookup": {
+                        "from": "f",
+                        "localField": "k",
+                        "foreignField": "_id",
+                        "as": "matched",
+                    }
+                },
+                {"$sort": {"k": 1}},
+            ]
+            sql_u, py_u = self._run_both_tiers(conn.a, u_pipe)
+            assert sql_u == py_u
+            assert len(sql_u) == 2
+
+            # Array localField in Tier 1, Tier 2, and Tier 3
+            conn.arr.insert_one({"_id": 1, "tags": ["x", "y"], "t": [1]})
+            for prefix in ([], [{"$unwind": "$t"}]):
+                arr_pipe = prefix + [
+                    {
+                        "$lookup": {
+                            "from": "f",
+                            "localField": "tags",
+                            "foreignField": "_id",
+                            "as": "matched",
+                        }
+                    }
+                ]
+                sql_a, py_a = self._run_both_tiers(conn.arr, arr_pipe)
+                assert [d["_id"] for d in sql_a[0]["matched"]] == [
+                    d["_id"] for d in py_a[0]["matched"]
+                ]
+
+            # let + pipeline in Tier 1/2 -> Tier 3 fallback
+            conn.orders.insert_many([{"_id": 1, "dept": "eng", "min_v": 15}])
+            let_pipe = [
+                {
+                    "$lookup": {
+                        "from": "f",
+                        "let": {"m": "$min_v"},
+                        "pipeline": [
+                            {"$match": {"$expr": {"$gte": ["$v", "$$m"]}}},
+                            {"$addFields": {"thresh": "$$m"}},
+                        ],
+                        "as": "hi",
+                    }
+                }
+            ]
+            sql_l, py_l = self._run_both_tiers(conn.orders, let_pipe)
+            assert (
+                sql_l
+                == py_l
+                == [
+                    {
+                        "_id": 1,
+                        "dept": "eng",
+                        "min_v": 15,
+                        "hi": [{"_id": "y", "v": 20, "thresh": 15}],
+                    }
+                ]
+            )
+
+    def test_window_fields_fill_params_overwrite_and_expr(self):
+        with neosqlite.Connection(":memory:") as conn:
+            conn.wf.insert_many(
+                [
+                    {"_id": 1, "g": 1, "x": 10, "t": [1]},
+                    {"_id": 2, "g": 1, "x": 20, "t": [1]},
+                    {"_id": 3, "g": 1, "x": 30, "t": [1]},
+                ]
+            )
+            # Tier 1: parameterized partitionBy + multiple outputs
+            wf_t1 = [
+                {
+                    "$setWindowFields": {
+                        "partitionBy": {"$add": ["$g", 1]},
+                        "sortBy": {"_id": 1},
+                        "output": {
+                            "rk": {"$rank": {}},
+                            "drk": {"$denseRank": {}},
+                            "fst": {"$first": "$x"},
+                        },
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+            s1, p1 = self._run_both_tiers(conn.wf, wf_t1)
+            assert s1 == p1
+
+            # Tier 2: $shift default + parameterized partitionBy (no param swap!)
+            wf_t2 = [
+                {"$unwind": "$t"},
+                {
+                    "$setWindowFields": {
+                        "partitionBy": {"$add": ["$g", 1]},
+                        "sortBy": {"_id": 1},
+                        "output": {
+                            "nxt": {
+                                "$shift": {
+                                    "output": {"$add": ["$x", 5]},
+                                    "by": 1,
+                                    "default": "END",
+                                }
+                            }
+                        },
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+            s2, p2 = self._run_both_tiers(conn.wf, wf_t2)
+            assert s2 == p2
+            assert [d["nxt"] for d in s2] == [25, 35, "END"]
+
+            # Tier 3 window operator overwriting input field 'x' does not mutate in-place
+            wf_ov = [
+                {
+                    "$setWindowFields": {
+                        "sortBy": {"_id": 1},
+                        "output": {
+                            "x": {
+                                "$sum": "$x",
+                                "window": {
+                                    "documents": ["unbounded", "unbounded"]
+                                },
+                            }
+                        },
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+            so, po = self._run_both_tiers(conn.wf, wf_ov)
+            assert so == po
+            assert [d["x"] for d in po] == [60, 60, 60]
+
+            # Tier 2/3 $fill constant value with parameterized partitionBy & expr value
+            conn.fl.insert_many(
+                [
+                    {"_id": 1, "g": 1, "v": None, "fb": 99, "t": [1]},
+                    {"_id": 2, "g": 1, "v": 10, "fb": 88, "t": [1]},
+                ]
+            )
+            fl_const = [
+                {"$unwind": "$t"},
+                {
+                    "$fill": {
+                        "partitionBy": {"$add": ["$g", 5]},
+                        "sortBy": {"_id": 1},
+                        "output": {"v": {"value": "FILLED"}},
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+            fc_sql, fc_py = self._run_both_tiers(conn.fl, fl_const)
+            assert fc_sql == fc_py
+            assert fc_sql[0]["v"] == "FILLED"
+
+            fl_expr = [
+                {
+                    "$fill": {
+                        "output": {"v": {"value": "$fb"}},
+                    }
+                },
+                {"$sort": {"_id": 1}},
+            ]
+            fe_sql, fe_py = self._run_both_tiers(conn.fl, fl_expr)
+            assert fe_sql == fe_py
+            assert fe_sql[0]["v"] == 99
+
+    def test_graph_lookup_start_with_falsy_and_meta_aliases(self):
+        from neosqlite.collection.query_helper.meta_validation import (
+            normalize_meta_pipeline,
+        )
+        from neosqlite.collection.query_helper.pipeline_aliases import (
+            normalize_pipeline_aliases,
+        )
+        from neosqlite.exceptions import MalformedQueryException
+
+        with neosqlite.Connection(":memory:") as conn:
+            conn.nodes.insert_many([{"_id": 0, "name": "zero", "next": None}])
+            conn.src.insert_one({"_id": 1, "start": 0})
+
+            # startWith: 0 executes instead of being skipped as falsy
+            gl_pipe = [
+                {
+                    "$graphLookup": {
+                        "from": "nodes",
+                        "startWith": 0,
+                        "connectFromField": "next",
+                        "connectToField": "_id",
+                        "as": "found",
+                    }
+                }
+            ]
+            s_gl, p_gl = self._run_both_tiers(conn.src, gl_pipe)
+            assert s_gl == p_gl
+            assert (
+                len(p_gl[0]["found"]) == 1 and p_gl[0]["found"][0]["_id"] == 0
+            )
+
+            # Tier 2 invalid maxDepth raises NotImplementedError -> falls back / errors vs skipping
+            conn.t2.insert_one({"_id": 1, "tags": [1], "s": 0})
+            s_gl2, p_gl2 = self._run_both_tiers(
+                conn.t2,
+                [
+                    {"$unwind": "$tags"},
+                    {
+                        "$graphLookup": {
+                            "from": "nodes",
+                            "startWith": "$s",
+                            "connectFromField": "next",
+                            "connectToField": "_id",
+                            "as": "found",
+                        }
+                    },
+                ],
+            )
+            assert s_gl2 == p_gl2
+
+            # pipeline_aliases & meta_validation handle $unionWith.pipeline & $and/$text
+            aliased = normalize_pipeline_aliases(
+                [
+                    {
+                        "$unionWith": {
+                            "coll": "other",
+                            "pipeline": [{"$set": {"k": 1}}],
+                        }
+                    }
+                ]
+            )
+            assert aliased[0]["$unionWith"]["pipeline"] == [
+                {"$addFields": {"k": 1}}
+            ]
+
+            with pytest.raises(MalformedQueryException):
+                normalize_meta_pipeline(
+                    [
+                        {
+                            "$unionWith": {
+                                "coll": "other",
+                                "pipeline": [
+                                    {
+                                        "$addFields": {
+                                            "s": {"$meta": "textScore"}
+                                        }
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                )
+
+            norm_and = normalize_meta_pipeline(
+                [
+                    {
+                        "$match": {
+                            "$and": [{"a": 1}, {"$text": {"$search": "py"}}]
+                        }
+                    },
+                    {"$addFields": {"s": {"$meta": "textScore"}}},
+                ]
+            )
+            assert len(norm_and) == 2

@@ -14,6 +14,7 @@ from copy import deepcopy
 from itertools import batched
 from typing import TYPE_CHECKING, Any
 
+from ..._sqlite import sqlite3
 from ..expr_evaluator import (
     ExprEvaluator,
     _is_expression,
@@ -495,43 +496,75 @@ class AggregationMixin(SqlAggregationMixin):
         """)
 
         try:
-            # Process input docs in batches
-            for batch in batched(docs, batch_size):
-                # Strip __doc__ wrapper if present
-                docs_to_insert = [
-                    (
-                        doc["__doc__"]
-                        if isinstance(doc, dict) and "__doc__" in doc
-                        else doc
+            all_docs = [
+                (
+                    deepcopy(doc["__doc__"])
+                    if isinstance(doc, dict) and "__doc__" in doc
+                    else deepcopy(doc)
+                )
+                for doc in docs
+            ]
+            if not all_docs:
+                return result_table
+
+            def _has_unique_ids(items: list[dict[str, Any]]) -> bool:
+                """Check whether all items have unique non-null _id keys."""
+                seen: set[str] = set()
+                for item in items:
+                    if (
+                        not isinstance(item, dict)
+                        or "_id" not in item
+                        or item["_id"] is None
+                    ):
+                        return False
+                    k = str(item["_id"])
+                    if k in seen:
+                        return False
+                    seen.add(k)
+                return True
+
+            if not _has_unique_ids(all_docs):
+                from ..query_engine.python_aggregation_engine import (
+                    execute_python_aggregation,
+                )
+
+                result = execute_python_aggregation(
+                    self.collection.query_engine,
+                    sub_pipeline,
+                    session=None,
+                    initial_docs=all_docs,
+                )
+            else:
+                try:
+                    for batch in batched(all_docs, batch_size):
+                        temp_collection.insert_many(deepcopy(list(batch)))
+                    result = list(
+                        temp_collection.aggregate(
+                            sub_pipeline, batchSize=batch_size
+                        )
                     )
-                    for doc in batch
-                ]
-
-                if not docs_to_insert:
-                    continue
-
-                # Insert batch into temp collection
-                temp_collection.insert_many(docs_to_insert)
-
-                # Run sub-pipeline through normal aggregation (uses Tier-1/Tier-2/Tier-3)
-                result = list(
-                    temp_collection.aggregate(
-                        sub_pipeline, batchSize=batch_size
+                except sqlite3.IntegrityError:
+                    from ..query_engine.python_aggregation_engine import (
+                        execute_python_aggregation,
                     )
-                )
 
-                # Insert results into result temp table (#154: executemany)
-                from neosqlite.collection.json_helpers import (
-                    neosqlite_json_dumps,
-                )
+                    temp_collection.delete_many({})
+                    result = execute_python_aggregation(
+                        self.collection.query_engine,
+                        sub_pipeline,
+                        session=None,
+                        initial_docs=all_docs,
+                    )
 
-                self.collection.db.executemany(
-                    f"INSERT INTO {result_table} (data) VALUES (?)",
-                    [(neosqlite_json_dumps(doc),) for doc in result],
-                )
+            # Insert results into result temp table (#154: executemany)
+            from neosqlite.collection.json_helpers import (
+                neosqlite_json_dumps,
+            )
 
-                # Clear temp collection for next batch
-                temp_collection.delete_many({})
+            self.collection.db.executemany(
+                f"INSERT INTO {result_table} (data) VALUES (?)",
+                [(neosqlite_json_dumps(doc),) for doc in result],
+            )
 
             return result_table
 

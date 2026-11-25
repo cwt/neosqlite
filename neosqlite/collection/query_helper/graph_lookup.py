@@ -42,14 +42,16 @@ def process_graph_lookup(
     depth_field = spec.get("depthField")
     restrict_search = spec.get("restrictSearchWithMatch")
 
-    if not all(
-        [
-            from_collection_name,
-            start_with_expr,
-            connect_from_field,
-            connect_to_field,
-            as_field,
-        ]
+    if (
+        not all(
+            [
+                from_collection_name,
+                connect_from_field,
+                connect_to_field,
+                as_field,
+            ]
+        )
+        or start_with_expr is None
     ):
         return docs_with_context
 

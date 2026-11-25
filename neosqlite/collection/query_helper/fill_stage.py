@@ -5,6 +5,7 @@ partition sorting via ``sortBy``, and constant-value, last-observation-carried-
 forward (``locf``), and linear interpolation (``linear``) fill strategies.
 """
 
+from copy import deepcopy
 from typing import Any
 
 from ..type_utils import bson_sort_key
@@ -112,7 +113,11 @@ def process_fill(
         for field_path, fill_spec in output.items():
             if "value" in fill_spec:
                 _fill_constant(
-                    partition_docs, field_path, fill_spec["value"], collection
+                    partition_docs,
+                    field_path,
+                    fill_spec["value"],
+                    collection,
+                    evaluator,
                 )
             elif fill_spec.get("method") == "locf":
                 _fill_locf(partition_docs, field_path, collection)
@@ -124,20 +129,36 @@ def process_fill(
     return all_processed_docs
 
 
-def _fill_constant(partition_docs, field_path, value, collection):
-    """Fill missing (``None``) values of a field with a constant value.
+def _fill_constant(
+    partition_docs, field_path, value, collection, evaluator=None
+):
+    """Fill missing (``None``) values of a field using a value or expression.
 
     Args:
         partition_docs: Ordered list of document-context dicts in a partition.
         field_path: Target field path to populate when its value is ``None``.
-        value: Constant replacement value to assign.
+        value: Constant value, field reference, or expression dictionary.
         collection: Collection instance providing ``_get_val`` and
             ``_set_val``.
+        evaluator: Optional ``ExprEvaluator`` for evaluating expressions.
     """
     for dc in partition_docs:
         doc = dc["__doc__"]
         if collection._get_val(doc, field_path) is None:
-            collection._set_val(doc, field_path, value)
+            if evaluator is not None:
+                eval_doc = dict(doc)
+                eval_doc["$$CURRENT"] = doc
+                eval_doc["$$ROOT"] = dc.get("__root__", doc)
+                resolved = evaluator._evaluate_operand_python(value, eval_doc)
+                if isinstance(resolved, (dict, list)):
+                    resolved = deepcopy(resolved)
+            else:
+                resolved = (
+                    deepcopy(value)
+                    if isinstance(value, (dict, list))
+                    else value
+                )
+            collection._set_val(doc, field_path, resolved)
 
 
 def _fill_locf(partition_docs, field_path, collection):
