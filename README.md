@@ -91,8 +91,8 @@ pip install "neosqlite[nx27017-speed]"    # With uvloop (Linux/macOS)
 ```
 
 > The `jsonb` extra installs `pysqlite3-binary` only on Linux x86_64 with
-> Python `< 3.14`, where upstream publishes `manylinux_x86_64` wheels
-> (cp312-cp313). On Python 3.14/3.15, macOS, Windows, or ARM the extra
+> Python `< 3.15`, where upstream publishes `manylinux_x86_64` wheels
+> (cp312–cp314). On Python 3.15, macOS, Windows, or ARM the extra
 > installs no additional driver; the standard library SQLite is used.
 
 ### Migrating legacy `_id TEXT` databases

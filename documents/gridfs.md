@@ -111,7 +111,7 @@ file_id = bucket.upload_from_stream("file.txt", data)
 
 **Note:** NeoSQLite uses an internal integer `id` as SQLite primary key for performance, with ObjectId stored in `_id` column for MongoDB compatibility.
 
-### 5. Metadata Storage
+### 4. Metadata Storage
 
 **PyMongo:**
 
@@ -375,8 +375,7 @@ The implementation supports both traditional GridFSBucket API usage and PyMongo-
 
 ---
 
-**Implementation Status**: All core GridFS features have been implemented and are available in the current version. NeoSQLite GridFS now provides 100% API compatibility for common use cases.</content>
-<parameter name="filePath">documents/gridfs.md
+**Implementation Status**: All core GridFS features have been implemented and are available in the current version. NeoSQLite GridFS now provides 100% API compatibility for common use cases.
 
 ---
 

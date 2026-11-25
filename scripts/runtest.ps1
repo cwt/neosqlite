@@ -1,3 +1,7 @@
+param(
+    [switch]$UpdateLocks
+)
+
 $ErrorActionPreference = "Stop"
 
 function Remove-Force {
@@ -93,8 +97,10 @@ try {
         Remove-Item -Recurse -Force
     Remove-Force "*\__pycache__", ".pytest_cache", ".coverage", ".coverage.*"
 
-    # update existing packages as defined in pyproject.toml
-    Invoke-Checked { poetry update }
+    if ($UpdateLocks) {
+        # update existing packages as defined in pyproject.toml
+        Invoke-Checked { poetry update }
+    }
 
     # install current project as editable
     Invoke-Checked { poetry run pip install -q -e ".[docs,memory-constrained]" }
@@ -104,10 +110,12 @@ try {
         Write-Host "Note: prebuilt jsbox wheel not available for this platform; skipping jsbox."
     }
 
-    # regenerate poetry.lock based on installed/updated packages
-    Remove-Force "poetry.lock"
-    Invoke-Checked { poetry lock --no-cache }
-    ConvertTo-Lf "poetry.lock"
+    if ($UpdateLocks) {
+        # regenerate poetry.lock based on installed/updated packages
+        Remove-Force "poetry.lock"
+        Invoke-Checked { poetry lock --no-cache }
+        ConvertTo-Lf "poetry.lock"
+    }
 
     # run unit tests
     Invoke-WithPythonPath {
@@ -128,10 +136,12 @@ try {
             poetry run pip install -q -e ../.. -e . pytest pytest-asyncio pytest-cov pytest-xdist
         }
 
-        # regenerate poetry.lock based on installed/updated packages
-        Remove-Force "poetry.lock"
-        Invoke-Checked { poetry lock --no-cache }
-        ConvertTo-Lf "poetry.lock"
+        if ($UpdateLocks) {
+            # regenerate poetry.lock based on installed/updated packages
+            Remove-Force "poetry.lock"
+            Invoke-Checked { poetry lock --no-cache }
+            ConvertTo-Lf "poetry.lock"
+        }
 
         # run unit tests
         Invoke-WithPythonPath {

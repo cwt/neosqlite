@@ -7,8 +7,8 @@ tags:
   - cte
   - sql-tier
   - performance
-timestamp: 2026-03-18T07:54:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -247,7 +247,7 @@ SELECT id, data FROM stage2
 | `$skip` | ✅ Full | OFFSET support |
 | `$limit` | ✅ Full | LIMIT support |
 | `$count` | ✅ Full | COUNT support |
-| `$facet` | ⚠️ Partial | Hybrid approach: streams sub-pipeline results to temp tables |
+| `$facet` | ✅ Full | Shared source CTE + sub-pipeline CTEs (falls back for complex sub-pipelines) |
 | `$unwind` | ⚠️ Partial | Falls back for advanced options |
 
 **Supported Expressions (119+ operators):**
@@ -276,8 +276,7 @@ SELECT id, data FROM stage2
 
 **Limitations:**
 - Maximum **1 `$unwind` stage** (no nested paths like `"$array.field"`)
-- `$facet` not supported (falls back to Python)
-- Complex expressions in `$replaceRoot`/`$replaceWith` fall back to Python
+- Complex expressions in stages such as `$replaceRoot`/`$replaceWith`, `$merge`, and `$out` use `@python_hybrid_fallback` when SQL translation cannot handle a spec directly
 
 **How it works:**
 
@@ -313,8 +312,11 @@ Segment 4 (SQL):    $group → final_results
 | `$group` | ✅ Full | Expression keys supported; `$first/$last` fall back with preceding `$sort` |
 | `$replaceRoot` | ⚠️ Partial | Field references only (e.g., `"$field"`) |
 | `$replaceWith` | ⚠️ Partial | Field references only (e.g., `"$field"`) |
-| `$facet` | ❌ Not Supported | Falls back to Python |
-| `$bucket`, `$bucketAuto`, `$sample`, `$unset`, `$unionWith` | ⚠️ Partial | Python fallback |
+| `$facet` | ✅ Hybrid | Sequential sub-pipeline execution via `_process_facet_stage` |
+| `$setWindowFields` | ✅ Hybrid | SQL window functions with hybrid fallback |
+| `$graphLookup` | ✅ Hybrid | Recursive CTE / iterative traversal with hybrid fallback |
+| `$fill`, `$densify`, `$redact`, `$merge`, `$out` | ⚠️ Hybrid | Temp-table SQL with `@python_hybrid_fallback` |
+| `$bucket`, `$bucketAuto`, `$sample`, `$unset`, `$unionWith` | ✅/⚠️ Hybrid | Native SQL temp-table paths with Python hybrid fallback |
 
 **Tier 2 Operators:**
 
@@ -345,10 +347,11 @@ return docs
 ```
 
 **Always Supported:**
-- `$function`, `$accumulator`, `$script` (JavaScript required)
-- `$let`, `$objectToArray` (complex expressions)
+- `$function`, `$where` (sandboxed out-of-process `jsbox` or patched Node.js worker)
+- `$accumulator` (Python fallback raises `NotImplementedError`)
+- `$let`, `$objectToArray` (complex nested scopes / edge cases)
 - `$toDecimal`, `$toObjectId` (type limitations)
-- Geospatial operators (require R-Tree)
+- Geospatial operators (when added)
 - Any pipeline that exceeds Tier 1/2 constraints
 
 **Guarantee:** Tier 3 **ALWAYS WORKS** with full MongoDB compatibility.
@@ -372,20 +375,23 @@ return docs
 | `$limit` | ✅ | ✅ | ✅ | Full support |
 | `$count` | ✅ | ✅ | ✅ | Full support |
 | `$unwind` | ⚠️ | ⚠️ | ✅ | Tier 1: partial; Tier 2: max 1 unwind, no nested paths |
-| `$lookup` | ❌ | ✅ | ✅ | JOIN-based in Tier 2 |
-| `$facet` | ⚠️ | ❌ | ✅ | Tier 1: partial (falls back for complexity); Tier 2: not supported |
-| `$replaceRoot` | ❌ | ⚠️ | ✅ | Tier 2: field references only; complex expressions fall back |
-| `$replaceWith` | ❌ | ⚠️ | ✅ | Tier 2: field references only; complex expressions fall back |
-| `$setWindowFields` | ❌ | ❌ | ✅ | Not implemented |
-| `$graphLookup` | ❌ | ❌ | ✅ | Not feasible |
-| `$merge` | ❌ | ⚠️ | ✅ | Tier 2: Python fallback |
-| `$out` | ❌ | ❌ | ✅ | Not implemented |
+| `$lookup` | ✅ | ✅ | ✅ | Tier 1: CTE; Tier 2: correlated subquery / hash join + hybrid fallback |
+| `$facet` | ✅ | ✅ | ✅ | Tier 1: CTE `_build_facet_sql`; Tier 2: `_process_facet_stage` |
+| `$replaceRoot` | ✅ | ⚠️ | ✅ | Tier 1: expression SQL; Tier 2: field references SQL + hybrid fallback |
+| `$replaceWith` | ✅ | ⚠️ | ✅ | Tier 1: expression SQL; Tier 2: field references SQL + hybrid fallback |
+| `$setWindowFields` | ✅ | ✅ | ✅ | SQL window functions in Tier 1 & Tier 2 (+ hybrid fallback) |
+| `$graphLookup` | ✅ | ✅ | ✅ | Recursive CTE in Tier 1; SQL/hybrid in Tier 2 |
+| `$merge` | ❌ | ⚠️ | ✅ | Tier 2: `@python_hybrid_fallback` writing to target collection |
+| `$out` | ❌ | ⚠️ | ✅ | Tier 2: `@python_hybrid_fallback` writing/replacing target collection |
 | `$indexStats` | ❌ | ❌ | ✅ | Metadata access |
-| `$unionWith` | ❌ | ⚠️ | ✅ | Tier 2: Python fallback |
-| `$bucket` | ❌ | ⚠️ | ✅ | Tier 2: Python fallback |
-| `$bucketAuto` | ❌ | ⚠️ | ✅ | Tier 2: Python fallback |
-| `$sample` | ❌ | ⚠️ | ✅ | Tier 2: Python fallback |
-| `$unset` | ❌ | ⚠️ | ✅ | Tier 2: Python fallback |
+| `$unionWith` | ✅ | ✅ | ✅ | SQL UNION / temp-table SQL + hybrid fallback |
+| `$bucket` | ✅ | ✅ | ✅ | SQL CASE / temp-table SQL + hybrid fallback |
+| `$bucketAuto` | ✅ | ✅ | ✅ | SQL NTILE / temp-table SQL + hybrid fallback |
+| `$sample` | ✅ | ✅ | ✅ | SQL `ORDER BY RANDOM() LIMIT` |
+| `$unset` | ✅ | ✅ | ✅ | Native SQL `json_remove` / `jsonb_remove` |
+| `$densify` | ✅ | ⚠️ | ✅ | Tier 1: SQL CTE; Tier 2: hybrid fallback |
+| `$fill` | ❌ | ⚠️ | ✅ | Tier 2: SQL + hybrid fallback |
+| `$redact` | ✅ | ⚠️ | ✅ | Tier 1: SQL CTE; Tier 2: hybrid fallback |
 
 **Legend:** ✅ Full Support | ⚠️ Partial/Conditional | ❌ Not Supported
 
@@ -403,10 +409,10 @@ return docs
 | **Trigonometric** | ✅ | ✅ | ✅ | All operators (via ExprEvaluator in both tiers) |
 | **String** | ✅ | ✅ | ✅ | All operators (via ExprEvaluator); `$split` has native SQL in Tier 1 |
 | **Date** | ✅ | ✅ | ✅ | All operators (via ExprEvaluator in both tiers) |
-| **Type Conversion** | ✅ | ⚠️ | ✅ | `$convert` supported in Tier 2 (limited) |
-| **Set Operators** | ✅ | ⚠️ | ✅ | Tier 1: native SQL implementation; Tier 2: via ExprEvaluator in `$addFields` only |
-| **Array** | ✅ | ✅ | ✅ | Including `$size`, `$in` (via ExprEvaluator) |
-| **Object** | ✅ | ⚠️ | ✅ | `$objectToArray` not supported in Tier 1/2 |
+| **Type Conversion** | ✅ | ⚠️ | ✅ | `$toString`, `$toInt`, `$toDouble`, `$toLong`, `$toBool`, `$isNumber`, `$type` in SQL; `$convert`/`$toDecimal`/`$toObjectId` fall back to Python |
+| **Set Operators** | ✅ | ✅ | ✅ | Native SQL via `ExprEvaluator` (`sql_converters/set.py`) |
+| **Array** | ✅ | ✅ | ✅ | Including `$size`, `$in`, `$slice`, `$arrayElemAt`, `$filter`, `$map`, `$reduce` (via `ExprEvaluator`) |
+| **Object** | ✅ | ✅ | ✅ | Including `$objectToArray`, `$mergeObjects`, `$getField`, `$setField`, `$unsetField`, `$let`, `$literal` |
 | **Variables** | ✅ | ✅ | ✅ | `$$ROOT`, `$$CURRENT`, `$$REMOVE` |
 
 ### Accumulators
@@ -527,7 +533,7 @@ Note: "Legacy SQL Optimization" is now called Tier 1.5 (Non-CTE-based SQL). Both
 
 ### Tier 2: TemporaryTableAggregationProcessor
 
-**Location:** `neosqlite/collection/temporary_table_aggregation.py`
+**Location:** `neosqlite/collection/temporary_table_aggregation/`
 
 **Key Features:**
 
@@ -690,11 +696,11 @@ def test_feature_tier1_vs_tier3(self, collection):
 
 | File | Changes |
 |------|---------|
-| `neosqlite/collection/temporary_table_aggregation.py` | Added `$group` expression keys, `$split`, set operators, enhanced `$unwind`, kill switch checks |
-| `neosqlite/collection/expr_evaluator/sql_converters.py` | Added `_convert_set_operator()`, `_convert_string_operator()` for `$split` |
-| `neosqlite/collection/expr_evaluator.py` | Added `build_select_expression()`, `build_group_by_expression()`, `build_having_expression()` |
+| `neosqlite/collection/temporary_table_aggregation/` | Added `$group` expression keys, `$split`, set operators, `$facet`, `$setWindowFields`, `$graphLookup`, `$out`, `$merge`, `$densify`, `$fill`, `$redact`, and kill switch checks |
+| `neosqlite/collection/expr_evaluator/sql_converters/` | Added `_convert_set_operator()`, `_convert_string_operator()` (`$split`, `$substrCP`, `$replaceOne`), object/date/array SQL converters |
+| `neosqlite/collection/expr_evaluator/` | Package providing tiered SQL/Python expression evaluation (`build_select_expression()`, `build_group_by_expression()`, etc.) |
 | `neosqlite/collection/query_engine/__init__.py` | Added `$facet` streaming, memory optimization with `fetchmany()` |
-| `neosqlite/collection/query_helper/aggregation.py` | Added `_run_subpipeline()` with batch streaming |
+| `neosqlite/collection/query_helper/` | Modularized query, update, and aggregation helpers including `_run_subpipeline()` |
 
 ---
 
@@ -802,9 +808,9 @@ The following items have working Tier 2/Python fallbacks and are deferred:
 
 #### `$setWindowFields`
 
-**Status:** Not implemented.
+**Status:** Implemented across Tier 1 (`_build_set_window_fields_sql`), Tier 2 (`_process_set_window_fields_stage`), and Tier 3 (`python_aggregation_engine.py`).
 
-**Current Behavior:** Works correctly via Tier 3 (Python fallback).
+**Current Behavior:** Compiles window functions natively to SQLite window clauses (`OVER (...)`), falling back to Tier 3 for unsupported edge options or when forced fallback is active.
 
 ### Not Feasible for SQL Optimization
 
@@ -812,14 +818,13 @@ The following operators **cannot** be optimized to Tier 1/2:
 
 | Operator | Reason |
 |----------|--------|
-| `$function` | Requires JavaScript engine |
-| `$accumulator` | Requires JavaScript engine |
-| `$script` | Requires JavaScript engine |
+| `$function` / `$where` | Require out-of-process JavaScript engine (`jsbox` / Node.js) |
+| `$accumulator` | Stateful custom JS callbacks (not supported) |
 | `$toDecimal` | SQLite lacks Decimal128 |
 | `$indexStats` | Requires metadata access |
-| Geospatial operators | Requires R-Tree index |
+| Geospatial operators | Would require R-Tree spatial integration |
 
-These operators **always** use Tier 3 (Python fallback).
+These operators use Tier 3 Python fallback (or raise `NotImplementedError` for `$accumulator` / Atlas-only operators).
 
 ---
 
@@ -830,9 +835,9 @@ These operators **always** use Tier 3 (Python fallback).
 | File | Purpose |
 |------|---------|
 | `neosqlite/collection/sql_tier_aggregator.py` | Tier-1 CTE optimization |
-| `neosqlite/collection/temporary_table_aggregation.py` | Tier-2 temp table processing |
-| `neosqlite/collection/expr_evaluator/sql_converters.py` | SQL conversion logic |
-| `neosqlite/collection/expr_evaluator/python_evaluators.py` | Tier-3 Python fallback |
+| `neosqlite/collection/temporary_table_aggregation/` | Tier-2 temp table processing package |
+| `neosqlite/collection/expr_evaluator/sql_converters/` | SQL conversion mixins |
+| `neosqlite/collection/expr_evaluator/python_evaluators/` | Tier-3 Python fallback evaluators |
 | `neosqlite/collection/query_helper/utils.py` | Kill switch implementation |
 | `neosqlite/collection/jsonb_support.py` | JSONB detection |
 

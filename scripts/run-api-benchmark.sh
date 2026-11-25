@@ -44,7 +44,8 @@ NC='\033[0m' # No Color
 MONGODB_PORT=27017
 MONGODB_IMAGE="mongo:8.2.12"
 CONTAINER_NAME="neosqlite_mongodb_benchmark"
-COMPARISON_SCRIPT="$(dirname "$0")/../examples/api_comparison_main.py"
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+COMPARISON_SCRIPT="$PROJECT_ROOT/examples/api_comparison_main.py"
 
 # Benchmark settings (can be overridden via CLI)
 BENCHMARK_ITERATIONS=10
@@ -390,6 +391,42 @@ cleanup_existing_container() {
 }
 
 #######################################
+# Wait for MongoDB to respond to ping
+#######################################
+wait_for_mongodb() {
+    info "Waiting for MongoDB to be ready..."
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        # Check if MongoDB is accepting connections and passes admin ping
+        if command -v mongosh &> /dev/null && mongosh --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+            success "MongoDB is ready"
+            return 0
+        fi
+        if command -v mongo &> /dev/null && mongo --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
+            success "MongoDB is ready"
+            return 0
+        fi
+        if (cd "$PROJECT_ROOT" && timeout 5 poetry run python3 -c "
+from pymongo import MongoClient
+client = MongoClient('mongodb://localhost:$MONGODB_PORT/', serverSelectionTimeoutMS=2000)
+client.admin.command('ping')
+client.close()
+") >/dev/null 2>&1; then
+            success "MongoDB is ready"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+
+    error "MongoDB failed ping check within ${max_attempts} seconds"
+    return 1
+}
+
+#######################################
 # Run MongoDB container
 #######################################
 run_mongodb_container() {
@@ -405,36 +442,8 @@ run_mongodb_container() {
         CONTAINER_STARTED=true
         success "MongoDB container started"
 
-        # Wait for MongoDB to be ready
-        info "Waiting for MongoDB to be ready..."
-        local max_attempts=30
-        local attempt=0
-
-        while [ $attempt -lt $max_attempts ]; do
-            # Check if MongoDB is accepting connections via mongosh or mongo
-            if command -v mongosh &> /dev/null && mongosh --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
-                success "MongoDB is ready"
-                return 0
-            fi
-            if command -v mongo &> /dev/null && mongo --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
-                success "MongoDB is ready"
-                return 0
-            fi
-
-            # After a reasonable timeout, assume ready even without a working client
-            # (mongosh may be installed but broken, e.g. Bun incompatibility)
-            if [ $attempt -ge 5 ]; then
-                sleep 1
-                success "MongoDB is ready (assumed after timeout)"
-                return 0
-            fi
-
-            attempt=$((attempt + 1))
-            sleep 1
-        done
-
-        error "MongoDB failed to become ready within ${max_attempts} seconds"
-        return 1
+        wait_for_mongodb
+        return $?
     else
         error "Failed to start MongoDB container"
         return 1
@@ -490,35 +499,8 @@ start_native_mongodb() {
     NATIVE_MONGODB_STARTED=true
     success "Native MongoDB started (PID: $NATIVE_MONGODB_PID)"
 
-    # Wait for MongoDB to be ready
-    info "Waiting for MongoDB to be ready..."
-    local max_attempts=30
-    local attempt=0
-
-    while [ $attempt -lt $max_attempts ]; do
-        # Check if MongoDB is accepting connections via mongosh or mongo
-        if command -v mongosh &> /dev/null && mongosh --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
-            success "MongoDB is ready"
-            return 0
-        fi
-        if command -v mongo &> /dev/null && mongo --host localhost --port "$MONGODB_PORT" --eval "db.adminCommand('ping')" --quiet >/dev/null 2>&1; then
-            success "MongoDB is ready"
-            return 0
-        fi
-
-        # After a reasonable timeout, assume ready even without a working client
-        if [ $attempt -ge 5 ]; then
-            sleep 1
-            success "MongoDB is ready (assumed after timeout)"
-            return 0
-        fi
-
-        attempt=$((attempt + 1))
-        sleep 1
-    done
-
-    error "MongoDB failed to become ready within ${max_attempts} seconds"
-    return 1
+    wait_for_mongodb
+    return $?
 }
 
 #######################################
@@ -539,20 +521,19 @@ run_benchmark() {
     # Make sure the script is executable
     chmod +x "$COMPARISON_SCRIPT"
 
-    # Build the command
-    SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
-    CMD="poetry run python3 api_comparison_main.py --benchmark $BENCHMARK_ITERATIONS"
-
-    if [ "$BENCHMARK_SILENT" = true ]; then
-        CMD="$CMD --silent"
-    fi
-
     # Run the benchmark script from the examples directory
     export NEOSQLITE_BENCH_DOCS="$BENCHMARK_DOCS"
-    SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
-    PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    local script_dir
+    script_dir="$(dirname "$COMPARISON_SCRIPT")"
+    local status=0
 
-    if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" $CMD >/dev/null 2>&1); then
+    if [ "$BENCHMARK_SILENT" = true ]; then
+        (cd "$script_dir" && PYTHONPATH="$PROJECT_ROOT" poetry run python3 api_comparison_main.py --benchmark "$BENCHMARK_ITERATIONS" --silent >/dev/null 2>&1) || status=$?
+    else
+        (cd "$script_dir" && PYTHONPATH="$PROJECT_ROOT" poetry run python3 api_comparison_main.py --benchmark "$BENCHMARK_ITERATIONS") || status=$?
+    fi
+
+    if [ $status -eq 0 ]; then
         if [ "$BENCHMARK_SILENT" = true ]; then
             echo "Benchmark complete. Reports generated in documents/benchmarks/"
         else

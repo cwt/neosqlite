@@ -98,7 +98,7 @@ results = list(collection.find(
 
 ### How BM25 Scoring Works
 - **Native FTS5 Auxiliary Function**: NeoSQLite evaluates SQLite FTS5's native `bm25()` function across all indexed text virtual tables.
-- **Normalized Positive Scores**: SQLite FTS5's negative score convention is mapped to standard positive relevance scores (`-bm25(...) + 100.0`).
+- **Normalized Positive Scores**: SQLite FTS5's negative score convention is mapped to positive relevance scores (`-bm25(...)`).
 - **Composite Scoring**: When searching across multiple indexed fields (e.g., `title`, `subtitle`, and `body`), individual field scores are aggregated into a composite relevance score.
 - **Clean Document Output**: Internal metadata columns used during sorting and projection are cleanly stripped from the final returned documents.
 

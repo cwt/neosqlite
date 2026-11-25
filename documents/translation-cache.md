@@ -7,8 +7,8 @@ tags:
   - lru
   - translation
   - performance
-timestamp: 2026-08-26T07:23:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -45,146 +45,66 @@ For applications that repeatedly run the same query structure (e.g., dashboard q
 
 ### Solution
 
-Cache the translated SQL template using the query structure as the key. On cache hit, extract parameter values from the new query and execute immediately.
+Cache each compiled SQL template together with its exact bound parameter tuple (`CacheEntry(sql_template, payload)`), keyed by a type-tagged canonical representation of the full pipeline (`TranslationCache.make_key()`). On a cache hit, the stored SQL template and parameter tuple are returned immediately without re-running AST/SQL translation.
 
-## Parameterized SQL Caching
+## Parameterized SQL Templates & Canonical Cache Keys
 
-NeoSQLite's translation cache uses **parameterized SQL templates**. Instead of embedding literal values in SQL, we use `?` placeholders that get filled at runtime.
+NeoSQLite compiles translated queries into **parameterized SQL templates** (`?` placeholders with a bound parameter tuple in `payload`).
 
-### Why Parameterized?
+### Canonicalizing Full Pipeline Content (`v1.15.0+`)
 
-Consider `$sample` with different sizes:
-
-```python
-# Naive approach: Each size = different cache key
-{"$sample": {"size": 3}}   → LIMIT 3   → Key: "$sample:('size',):(('size',3),)"
-{"$sample": {"size": 20}}  → LIMIT 20  → Key: "$sample:('size',):(('size',20),)"
-# Result: Cache miss every time - no benefit!
-```
-
-**Parameterized approach:**
+Previously, cache keys stripped literal values to share templates across different values and attempted to re-extract parameters on cache hits. Because sort directions, SQL literals, or operator shapes can change the compiled SQL structure—and positional re-extraction could mismatch bound values—`v1.15.0` replaced structure-only parameter re-extraction with full canonical key hashing:
 
 ```python
-# Single cache key for all sizes
-{"$sample": {"size": 3}}   → SQL: "LIMIT ?" + params: [3]
-{"$sample": {"size": 20}}  → SQL: "LIMIT ?" + params: [20]
-
-# Both use same cache entry!
-# Key: "$sample:('size',)"
-# SQL: "LIMIT ?"
+# In neosqlite/collection/query_helper/translation_cache.py:
+key = cache.make_key(pipeline)
+# Uses canonical_value_key() (type-tagged values + sorted keys, preserving
+# dict insertion order inside order-sensitive keys such as $sort, $project,
+# $addFields, $set, $setWindowFields, $fill, sortBy).
 ```
 
-### Supported Parameterized Operators
+### Nested Operator & Literal Distinction
 
-| Operator | Parameter | Example |
-|----------|-----------|---------|
-| `$sample` | `size` | `{"$sample": {"size": 10}}` |
-| `$limit` | `limit` | `{"$limit": 100}` |
-| `$skip` | `skip` | `{"$skip": 50}` |
+Canonicalizing both stage operators and type-tagged literal values ensures that:
 
-These operators' values are passed as SQL parameters rather than embedded in the SQL string.
+- Different nested `$setWindowFields` window functions (`$rank` vs `$sum`) always get distinct cache keys.
+- Type-distinct literals (`1` vs `True` vs `1.0` vs `"1"`) never collide in the cache.
+- Insertion order is preserved inside `_ORDER_SENSITIVE_KEYS` (such as `$sort` or `$project`) so `{"$sort": {"a": 1, "b": -1}}` and `{"$sort": {"b": -1, "a": 1}}` never share a key.
 
-### Nested Operator Extraction
+### Implementation Flow
 
-Certain operators like `$setWindowFields` have **nested operators** that completely change the SQL generated:
-
-```python
-# These have DIFFERENT SQL but same top-level structure!
-{"$setWindowFields": {"output": {"rank": {"$rank": {}}}}
-{"$setWindowFields": {"output": {"runningSum": {"$sum": "$score"}}}
-```
-
-Our cache key includes **nested `$` operators** to distinguish them:
-
-```text
-Pipeline: [{"$setWindowFields": {"output": {"rank": {"$rank": {}}}}]
-Key:      "$setWindowFields:('$rank',)"
-
-Pipeline: [{"$setWindowFields": {"output": {"runningSum": {"$sum": "$score"}}}}]
-Key:      "$setWindowFields:('$sum',)"
-```
-
-**How it works:** The `_extract_structure()` method recursively traverses the pipeline spec, preserving operator names (strings starting with `$`) while replacing literal values with `?` placeholders. This ensures different window functions produce different cache keys.
-
-Without this, different window functions would incorrectly share the same cache entry and return wrong results.
-
-### Implementation
-
-1. **SQL Generation**: Use `?` placeholder instead of embedding values
-
-   ```python
-   # Instead of: LIMIT {int(size)}
-   # Generate:    LIMIT ?
-   sql = f"LIMIT ?"
-   return sql, [size]
-   ```
-
-2. **Parameter Name Extraction**: Extract parameter names directly from pipeline structure (not by parsing SQL)
-
-   ```python
-   def _extract_param_names_from_pipeline(pipeline):
-       # Directly analyze pipeline dict structure
-       # For $sample, $limit, $skip: add placeholder names
-       # For $match, $group, etc.: extract field paths (e.g., "$.status")
-       params = []
-       for stage in pipeline:
-           # ... analyze stage structure ...
-       return params  # e.g., ["__placeholder_0__", "$.status"]
-   ```
-
-3. **Value Extraction**: At runtime, extract actual values from pipeline using cached parameter names
-
-   ```python
-   def _extract_param_values(pipeline, param_names):
-       # For each param_name in cached list, get value from pipeline
-       # "__placeholder_0__" → pipeline[0]["$sample"]["size"]
-       # "$.status" → extract from $match stage
-       return [3, "active"]  # Values for SQL execution
-   ```
+1. **Key Construction (`TranslationCache.make_key`)**: Formats each stage via `_canonicalize(spec, preserve_order=stage_name in _ORDER_SENSITIVE_KEYS)` using `canonical_value_key()` from `neosqlite/collection/type_utils.py`.
+2. **Cache Storage (`TranslationCache.put`)**: Stores `CacheEntry(sql_template, payload)` containing both the SQL string and its matching parameter tuple.
+3. **Cache Lookup (`TranslationCache.get`)**: Returns `(entry.sql_template, entry.payload)` in O(1) via `OrderedDict` and moves the entry to the MRU tail.
 
 ### Benefits
 
-- **Higher cache hit rate**: Same template reused with different values
-- **Less memory**: One SQL template instead of N variants
-- **Faster queries**: Translation happens once, execution is fast
+- **Repeated-query speedup**: Eliminates redundant CTE/temp-table SQL generation for repeated identical queries (e.g., paginated API polling, repeated `$match`/`$group` dashboard queries)
+- **Strict correctness**: Every key maps 1:1 to an exact SQL template + bound parameter tuple
+- **Bounded memory**: Fixed-size LRU cache prevents unbounded memory growth
 
 ## Architecture
 
 ### Cache Key Design
 
-The cache key is based on **pipeline structure** (operator names + field names), with special handling for parameterized operators:
+The cache key encodes every stage's canonicalized structure and type-tagged literal values:
 
 ```text
 Pipeline: [{"$match": {"status": "active"}}]
-Key:      "$match:('status',)"
-
-Pipeline: [{"$match": {"age": {"$gt": 25}}}]
-Key:      "$match:('age',)"
+Key:      "$match:(('status', ('str', 'active')),)"
 
 Pipeline: [{"$match": {"status": "active"}}, {"$sort": {"name": 1}}]
-Key:      "$match:('status',)|$sort:('name',)"
-
-# Parameterized operators - values NOT in key (cached as SQL params!)
-Pipeline: [{"$sample": {"size": 3}}]
-Pipeline: [{"$sample": {"size": 20}}]
-Key:      "$sample:('size',)"  ← Same key for both!
+Key:      "$match:(('status', ('str', 'active')),)|$sort:(('name', ('int', 1)),)"
 ```
 
-**Why exclude parameterized values?**
-
-For operators like `$sample`, `$limit`, `$skip`, the value is passed as a SQL parameter (`?`), not embedded in SQL. This means:
-- Same cache entry can be reused for different values
-- Only one SQL template in cache
-- Runtime fills in the parameter from pipeline
-
-This allows queries with the same structure but different parameter values to share cached SQL.
+On repeated executions of the same pipeline (such as paginated polling or dashboard refreshes), `cache.get(key)` returns the cached `(sql_template, payload)` directly.
 
 ### Cache Entry
 
-Each cache entry stores:
-- **SQL template**: The translated SQL with `?` placeholders
-- **Parameter names**: List of field paths (e.g., `$.status`, `$.age`) and placeholder names (e.g., `__placeholder_0__`) that correspond to `?` positions in the SQL template
-- **Hit count**: Number of cache hits for this entry
+Each `CacheEntry` stores (`__slots__`):
+- **`sql_template`**: The translated SQL with `?` placeholders
+- **`payload`**: Exact bound parameter `tuple[Any, ...]` corresponding 1:1 to the `?` placeholders in `sql_template`
+- **`hit_count`**: Number of cache hits for this entry
 
 ### LRU Eviction
 
@@ -361,33 +281,28 @@ aggregate(pipeline)
     ↓
 can_optimize_pipeline()  [O(n) stage check]
     ↓
-cache_key = make_key(pipeline)  [O(n) key extraction]
+cache_key = make_key(pipeline)  [O(n) canonical key with type-tagged literals]
     ↓
 cached = cache.get(cache_key)
     ↓
 if cached:
-    # Cache hit
-    params = extract_param_values(pipeline, param_names)
+    # Cache hit: sql_template and payload correspond 1:1
+    sql_template, params = cached
     execute(sql_template, params)
 else:
     # Cache miss
     sql, params = build_pipeline_sql()
-    cache.put(cache_key, sql, param_names)
+    cache.put(cache_key, sql, params)
     execute(sql, params)
 ```
 
 ### Design Characteristics
 
-1. **Structure-based keys**: Cache keys are derived solely from query structure (operator names, field names, nested operators). This is intentional for a schemaless document database.
+1. **Full canonical keys (`v1.15.0+`)**: Cache keys encode operator names, field names, and type-tagged literal values (`canonical_value_key`), preserving insertion order for `_ORDER_SENSITIVE_KEYS`. Because every cached entry pairs its `sql_template` with its exact `payload`, cache hits never serve mismatched SQL or parameters.
 
-2. **Query-centric caching**: The cache is built entirely from user queries, not database schema. This is correct behavior because:
-   - NeoSQLite is a **schemaless document database** (MongoDB-style)
-   - Document structure changes are the **application's responsibility**
-   - When users change document fields (e.g., `status` → `state`), they must update their queries accordingly
-   - Updated queries produce different cache keys → cache miss → fresh SQL generation
-   - No stale data risk since query structure drives cache invalidation
+2. **Query-centric caching**: The cache is built from user queries rather than inspecting every document. If application code alters queries to match evolved document schemas, the canonical cache key changes automatically.
 
-3. **Memory usage**: Each entry stores a full SQL template. For most applications, 100 entries (default max size) uses negligible memory.
+3. **Memory usage**: Each entry stores a SQL template and its bound parameter tuple. For most applications, 100 entries (default max size) uses negligible memory.
 
 4. **Two independent caches**: Pipeline (Tier-1) and `$expr` (Tier-2) caches operate independently, each configurable via the `translation_cache` connection parameter.
 

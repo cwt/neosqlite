@@ -29,6 +29,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NX27017_CMD="$(cd "$PROJECT_ROOT" && poetry run python3 -c "import shutil; print(shutil.which('nx-27017') or '')" 2>/dev/null || true)"
 NX27017_DB_DIR=$(mktemp -d)
 NX27017_DB="$NX27017_DB_DIR/neosqlite"  # Use file-based database for persistence
+NX27017_PID_FILE="$NX27017_DB_DIR/nx_27017.pid"
 COMPARISON_SCRIPT="$PROJECT_ROOT/examples/api_comparison_main.py"
 
 # Track if we started the server (for cleanup)
@@ -93,7 +94,10 @@ cleanup() {
 
         # Stop NX-27017 server
         info "Stopping NX-27017 server..."
-        (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop >/dev/null 2>&1) || true
+        (cd "$PROJECT_ROOT" && poetry run nx-27017 --pid-file "$NX27017_PID_FILE" --stop >/dev/null 2>&1) || true
+        if [ -n "${NX27017_PID:-}" ] && kill -0 "$NX27017_PID" 2>/dev/null; then
+            kill "$NX27017_PID" >/dev/null 2>&1 || true
+        fi
         success "NX-27017 server stopped"
     fi
 
@@ -152,12 +156,13 @@ check_port_available() {
 cleanup_existing_server() {
     info "Stopping any existing NX-27017 server..."
 
-    # Try to stop using nx_27017 command
-    (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop 2>/dev/null) || true
+    if [ -f "$NX27017_PID_FILE" ]; then
+        (cd "$PROJECT_ROOT" && poetry run nx-27017 --pid-file "$NX27017_PID_FILE" --stop 2>/dev/null) || true
+    fi
 
-    # Also try to kill any process on the port
+    # Also try to kill any process on our target port
     if command -v lsof &> /dev/null; then
-        lsof -ti:$NX27017_PORT | xargs -r kill 2>/dev/null || true
+        lsof -ti:"$NX27017_PORT" | xargs -r kill 2>/dev/null || true
     fi
 
     sleep 1
@@ -185,8 +190,8 @@ run_nx27017_server() {
         return 1
     fi
 
-    # Start NX-27017 server with memory database
-    (cd "$PROJECT_ROOT" && exec poetry run nx-27017 --db "$NX27017_DB" --host $NX27017_HOST -p $NX27017_PORT) 2>&1 &
+    # Start NX-27017 server with isolated PID file and database directory
+    (cd "$PROJECT_ROOT" && exec poetry run nx-27017 --db "$NX27017_DB" --host "$NX27017_HOST" -p "$NX27017_PORT" --pid-file "$NX27017_PID_FILE") 2>&1 &
     NX27017_PID=$!
 
     SERVER_STARTED=true
@@ -258,8 +263,8 @@ run_comparison() {
         success "API comparison completed - 100% compatible!"
         return 0
     else
-        warn "API comparison completed - some incompatibilities found (see report above)"
-        return 0  # Return 0 to allow cleanup to proceed
+        error "API comparison completed - incompatibilities found (see report above)"
+        return 1
     fi
 }
 

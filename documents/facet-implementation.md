@@ -7,8 +7,8 @@ tags:
   - aggregation
   - multi-pipeline
   - design
-timestamp: 2026-03-18T07:54:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -30,35 +30,33 @@ NeoSQLite's aggregation pipeline uses a three-tier processing model (with 4 impl
 
 The term "3-tier" refers to the 3 processing categories: SQL (Tier 1 + 1.5), Temp Tables (Tier 2), Python (Tier 3).
 
-The `$facet` implementation integrates into the Python fallback tier, leveraging the existing `aggregate_with_constraints` method.
+The `$facet` implementation supports all three execution tiers: CTE-based SQL (`_build_facet_sql` in `neosqlite/collection/_stage_builders.py`), temporary-table sub-pipeline execution (`_process_facet_stage` in `neosqlite/collection/temporary_table_aggregation/operators_advanced.py`), and the Python fallback engine (`execute_python_aggregation` in `neosqlite/collection/query_engine/python_aggregation_engine.py`).
 
 ### Core Logic
 
-When a `$facet` stage is encountered in the pipeline:
+When a `$facet` stage runs in Tier 3 Python fallback:
 
 ```python
 case "$facet":
     facet_spec = stage["$facet"]
-    results: Dict[str, Any] = {}
+    facet_results: dict[str, Any] = {}
     for facet_name, sub_pipeline in facet_spec.items():
-        facet_result = self.aggregate_with_constraints(sub_pipeline, batch_size, memory_constrained)
-        if isinstance(facet_result, list):
-            results[facet_name] = facet_result
-        else:
-            results[facet_name] = list(facet_result)
-    docs = [cast(Dict[str, Any], results)]
+        facet_results[facet_name] = list(
+            execute_python_aggregation(collection, docs, sub_pipeline)
+        )
+    docs = [facet_results]
 ```
 
-1. **Facet Execution**: Each sub-pipeline is executed independently using the full aggregation engine
+1. **Facet Execution**: Each sub-pipeline executes independently across SQL, temporary tables, or Python fallback depending on sub-pipeline complexity
 2. **Result Collection**: Outputs are stored in a dictionary keyed by facet name
 3. **Pipeline Continuation**: The combined results become the input for subsequent pipeline stages
 
 ### Key Components
 
-- **QueryEngine Integration**: Located in `neosqlite/collection/query_engine.py`, handles `$facet` in the Python fallback
-- **Reuse Strategy**: Leverages existing aggregation stages (`$match`, `$group`, `$count`, etc.) without modification
-- **Sequential Processing**: Facets execute one after another due to SQLite's single-threaded nature
-- **Memory Management**: Each facet processes independently to prevent memory bloat
+- **Tier 1 SQL CTE (`neosqlite/collection/_stage_builders.py`)**: Compiles compatible `$facet` pipelines into a shared source CTE and sub-pipeline CTEs
+- **Tier 2 Temp Tables (`neosqlite/collection/temporary_table_aggregation/operators_advanced.py`)**: Materializes intermediate rows and executes sub-pipelines via `_process_facet_stage`
+- **Tier 3 Fallback (`neosqlite/collection/query_engine/python_aggregation_engine.py`)**: Evaluates arbitrary `$facet` pipelines in Python when SQL tiers cannot handle a sub-pipeline or when fallback is forced
+- **Sequential Processing**: Facets execute sequentially due to SQLite's single-writer/single-connection model
 
 ### Benefits
 

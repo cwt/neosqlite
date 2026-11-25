@@ -6,7 +6,7 @@ tags:
   - log
   - bundle
   - changelog
-timestamp: 2026-11-16T00:00:00Z
+timestamp: 2026-11-25T00:00:00Z
 version: "1.18.1"
 lifecycle: active
 ---
@@ -14,6 +14,26 @@ lifecycle: active
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-25 — Documentation Consistency, Markdown Cleanup, and Developer Script Fixes (#210)
+
+### Summary
+Cleaned up leaked XML markup and broken table formatting, aligned Python compatibility notes for `pysqlite3-binary` across release notes and README, and brought OKF technical specifications in line with shipped `v1.18.1` implementations and package paths.
+
+### Key Modifications
+1. **Markdown & release index repairs**:
+   - Removed leaked XML tool-call markup and fixed skipped section numbering (`### 3.` -> `### 4.`) in [gridfs.md](./gridfs.md).
+   - Fixed the escaped trailing table pipe on the `v1.14.12` row in [releases/index.md](./releases/index.md).
+2. **Compatibility & formula alignment**:
+   - Aligned `pysqlite3-binary` Python support notes (`>=3.12,<3.15`, `cp312–cp314`) across `README.md` and [releases/v1.18.1.md](./releases/v1.18.1.md) with `pyproject.toml` and `poetry.lock`.
+   - Corrected the BM25 scoring expression in [text-search.md](./text-search.md) to `-bm25(...)`.
+   - Updated [ttl-indexes.md](./ttl-indexes.md) to include all lazy auto-purge callers (`find()`, `find_raw_batches()`, `find_one()`, `count_documents()`, `distinct()`, `aggregate()`, `aggregate_raw_batches()`, and `find_one_and_*()`).
+3. **Architecture & API matrix accuracy**:
+   - Updated [pymongo-api-comparison.md](./pymongo-api-comparison.md) and [analysis-summary.md](./analysis-summary.md) for sandboxed JS support (`$where` and `$function` via `jsbox` / patched Node.js), TTL indexes, `ClientSession`, and options classes.
+   - Updated [objectid-implementation.md](./objectid-implementation.md) for `_id BLOB` column affinity, `neosqlite-migration`, and SQL BSON range queries.
+   - Updated [aggregation-pipeline-optimization.md](./aggregation-pipeline-optimization.md), [expr-implementation.md](./expr-implementation.md), [facet-implementation.md](./facet-implementation.md), [translation-cache.md](./translation-cache.md), [hybrid-text-search-complete.md](./hybrid-text-search-complete.md), and [json-each-enhancements.md](./json-each-enhancements.md) to reflect shipped SQL/Tier-2/Tier-3 operator support, canonicalized translation cache keys, and modularized package paths.
 
 ---
 

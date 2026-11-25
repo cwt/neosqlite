@@ -7,8 +7,8 @@ tags:
   - pymongo
   - feasibility
   - roadmap
-timestamp: 2026-03-12T07:56:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -228,8 +228,8 @@ These features can be successfully implemented with SQLite3:
 
 Possible with some effort:
 
-- ✅ **Completed**: Advanced text search, additional aggregation stages, collation support, positional array updates
-- ❌ **Remaining**: TTL indexes simulation, connection pooling, timeout handling
+- ✅ **Completed**: Advanced text search, additional aggregation stages, collation support, positional array updates, TTL indexes (`expireAfterSeconds` lazy purge and opt-in sweeper), sandboxed JavaScript (`$where` and `$function` via `jsbox` / patched Node.js)
+- ❌ **Remaining**: Connection pooling, timeout handling
 
 ### Limited Feasibility (Challenging but Possible)
 
@@ -242,7 +242,7 @@ Technical limitations but workarounds exist:
 Fundamentally conflict with SQLite's architecture:
 
 - Distributed features (replica sets, sharding)
-- JavaScript-dependent features (`$where` operator)
+- Custom accumulators requiring stateful multi-document JavaScript callbacks (`$accumulator`)
 - MongoDB Atlas proprietary features
 
 ---

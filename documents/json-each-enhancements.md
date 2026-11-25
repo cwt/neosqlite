@@ -7,8 +7,8 @@ tags:
   - performance
   - arrays
   - sql-tier
-timestamp: 2026-03-12T03:42:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -116,7 +116,7 @@ The primary enhancement is the offloading of the `$unwind` operation to the SQLi
 
 ### Core Architecture
 
-All enhancements are implemented in the `QueryHelper` class in `neosqlite/collection/query_helper.py`:
+All enhancements are implemented in the `QueryHelper` package (`neosqlite/collection/query_helper/`):
 
 1. **Pattern Detection**: The `_build_aggregation_query` method detects optimization opportunities
 2. **SQL Generation**: Optimized SQL queries are generated using SQLite's JSON functions
@@ -218,8 +218,8 @@ pipeline = [
 ## Files Modified
 
 ### Core Implementation
-- `neosqlite/collection/query_helper.py`: Main optimization logic
-- `neosqlite/collection/query_engine.py`: Result processing
+- `neosqlite/collection/query_helper/`: Main optimization logic (`_sql_aggregation.py`, `aggregation.py`)
+- `neosqlite/collection/query_engine/`: Result processing and tier dispatch
 - `neosqlite/collection/__init__.py`: API integration
 
 ### Testing

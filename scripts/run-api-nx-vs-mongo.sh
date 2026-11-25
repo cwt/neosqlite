@@ -46,6 +46,7 @@ PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NX27017_CMD="$(cd "$PROJECT_ROOT" && poetry run python3 -c "import shutil; print(shutil.which('nx-27017') or '')" 2>/dev/null || true)"
 NX27017_DB_DIR=$(mktemp -d)
 NX27017_DB="$NX27017_DB_DIR/neosqlite"  # File-based database for persistence
+NX27017_PID_FILE="$NX27017_DB_DIR/nx_27017.pid"
 COMPARISON_SCRIPT="$PROJECT_ROOT/examples/api_nx_vs_mongo_main.py"
 WITH_CONTAINER=false
 
@@ -89,7 +90,10 @@ cleanup() {
 
     if [ "$SERVER_STARTED" = true ]; then
         info "Stopping NX-27017 server..."
-        (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop >/dev/null 2>&1) || true
+        (cd "$PROJECT_ROOT" && poetry run nx-27017 --pid-file "$NX27017_PID_FILE" --stop >/dev/null 2>&1) || true
+        if [ -n "${NX_PID:-}" ] && kill -0 "$NX_PID" 2>/dev/null; then
+            kill "$NX_PID" >/dev/null 2>&1 || true
+        fi
         success "NX-27017 server stopped"
     fi
 
@@ -169,9 +173,11 @@ wait_for_port() {
 
 cleanup_existing_server() {
     info "Stopping any existing NX-27017 server..."
-    (cd "$PROJECT_ROOT" && poetry run nx-27017 --stop 2>/dev/null) || true
+    if [ -f "$NX27017_PID_FILE" ]; then
+        (cd "$PROJECT_ROOT" && poetry run nx-27017 --pid-file "$NX27017_PID_FILE" --stop 2>/dev/null) || true
+    fi
     if command -v lsof &> /dev/null; then
-        lsof -ti:$NX27017_PORT | xargs -r kill 2>/dev/null || true
+        lsof -ti:"$NX27017_PORT" | xargs -r kill 2>/dev/null || true
     fi
     sleep 1
     success "Existing server stopped"
@@ -185,7 +191,7 @@ run_nx27017_server() {
         error "Port $NX27017_PORT is still in use after cleanup - aborting (kill the stale server first)"
         return 1
     fi
-    (cd "$PROJECT_ROOT" && exec poetry run nx-27017 --db "$NX27017_DB" --host "$NX27017_HOST" -p "$NX27017_PORT") 2>&1 &
+    (cd "$PROJECT_ROOT" && exec poetry run nx-27017 --db "$NX27017_DB" --host "$NX27017_HOST" -p "$NX27017_PORT" --pid-file "$NX27017_PID_FILE") 2>&1 &
     NX_PID=$!
     SERVER_STARTED=true
     wait_for_port "$NX27017_HOST" "$NX27017_PORT" "NX-27017" "$NX_PID"
@@ -271,8 +277,8 @@ run_comparison() {
         error "Comparison infra failure (an endpoint was unreachable)"
         return 1
     else
-        warn "Wire-vs-wire comparison found functional diffs (see report above)"
-        return 0
+        error "Wire-vs-wire comparison found functional diffs (see report above)"
+        return 1
     fi
 }
 

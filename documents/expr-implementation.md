@@ -7,8 +7,8 @@ tags:
   - query-operators
   - sql-tier
   - python-fallback
-timestamp: 2026-04-06T04:45:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -26,7 +26,7 @@ NeoSQLite employs a sophisticated three-tier approach for `$expr` evaluation:
 
 1. **Tier 1: SQL (CTE)** - Uses SQLite JSON/JSONB functions with CTE optimization for direct SQL evaluation
 2. **Tier 1.5: SQL (Non-CTE)** - Uses SQLite JSON/JSONB functions without CTE optimization
-3. **Tier 2: Temporary Tables** - Pre-extracts fields into temporary tables for complex expressions (currently defaults to Python fallback)
+3. **Tier 2: Temporary Tables** - Pre-extracts fields into temporary tables for SQL evaluation (`TempTableExprEvaluator`)
 4. **Tier 3: Python Fallback** - Full Python evaluation for unsupported operations
 
 ```mermaid
@@ -166,7 +166,7 @@ collection.find({
 |----------|-------------|-------------|----------------|
 | `$cond` | If-then-else | ✅ | ✅ |
 | `$ifNull` | If null fallback | ✅ | ✅ |
-| `$switch` | Multi-branch conditional | ❌ | ✅ |
+| `$switch` | Multi-branch conditional | ✅ | ✅ |
 
 **Example:**
 
@@ -195,13 +195,13 @@ collection.find({
 | `$size` | Array size | ✅ | ✅ |
 | `$in` | Element in array | ✅ | ✅ |
 | `$isArray` | Check if array | ✅ | ✅ |
-| `$arrayElemAt` | Get element at index | ❌ | ✅ |
-| `$first` | First element | ❌ | ✅ |
-| `$last` | Last element | ❌ | ✅ |
+| `$arrayElemAt` | Get element at index | ✅ | ✅ |
+| `$first` | First element | ✅ | ✅ |
+| `$last` | Last element | ✅ | ✅ |
 | `$slice` | Slice array | ✅ | ✅ |
 | `$indexOfArray` | Find element index | ✅ | ✅ |
 
-### Array Aggregation Operators (4/12 - 33%)
+### Array Aggregation Operators (7/12 - 58%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -209,9 +209,9 @@ collection.find({
 | `$avg` | Average of array | ✅ | ✅ |
 | `$min` | Minimum of array | ✅ | ✅ |
 | `$max` | Maximum of array | ✅ | ✅ |
-| `$filter` | Filter array | ❌ | ✅ |
-| `$map` | Transform array | ❌ | ✅ |
-| `$reduce` | Reduce array | ❌ | ✅ |
+| `$filter` | Filter array | ✅ | ✅ |
+| `$map` | Transform array | ✅ | ✅ |
+| `$reduce` | Reduce array | ✅ | ✅ |
 | `$concatArrays` | Concatenate arrays | ❌ | ❌ |
 | `$reverseArray` | Reverse array | ❌ | ❌ |
 | `$zip` | Zip arrays | ❌ | ❌ |
@@ -241,14 +241,14 @@ collection.find({
 | `$rtrim` | Trim right | ✅ | ✅ |
 | `$indexOfBytes` | Find substring | ✅ | ✅ |
 | `$regexMatch` | Regex match | ✅ | ✅ |
-| `$split` | Split string | ❌ | ✅ |
+| `$split` | Split string | ✅ (literal delim) | ✅ |
 | `$replaceAll` | Replace all | ✅ | ✅ |
-| `$regexFind` | Find regex | ❌ | ✅ |
-| `$regexFindAll` | Find all regex | ❌ | ✅ |
+| `$regexFind` | Find regex | ✅ | ✅ |
+| `$regexFindAll` | Find all regex | ✅ | ✅ |
 | `$strLenCP` | Length (code points) | ✅ | ✅ |
-| `$substrCP` | Substring (code points) | ❌ | ✅ |
+| `$substrCP` | Substring (code points) | ✅ | ✅ |
 | `$indexOfCP` | Find (code points) | ✅ | ✅ |
-| `$replaceOne` | Replace one | ❌ | ✅ |
+| `$replaceOne` | Replace one | ✅ | ✅ |
 
 **Example:**
 
@@ -269,7 +269,7 @@ collection.find({
 })
 ```
 
-### Date/Time Operators (15/17 - 88%)
+### Date/Time Operators (19/20 - 95%)
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
@@ -288,11 +288,11 @@ collection.find({
 | `$dateAdd` | Add time to date | ✅ | ✅ |
 | `$dateSubtract` | Subtract time from date | ✅ | ✅ |
 | `$dateDiff` | Difference between dates | ✅ | ✅ |
-| `$dateToString` | Format date | ❌ | ❌ |
-| `$dateFromParts` | Create date | ❌ | ❌ |
-| `$dateToParts` | Extract parts | ❌ | ❌ |
-| `$toDate` | Convert to date | ❌ | ❌ |
-| `$dateTrunc` | Truncate date | ❌ | ❌ |
+| `$dateToString` | Format date | ✅ | ✅ |
+| `$dateFromParts` | Create date | ✅ | ✅ |
+| `$dateToParts` | Extract parts | ✅ | ✅ |
+| `$toDate` | Convert to date (use `$convert` or `$dateFromString`) | ❌ | ❌ |
+| `$dateTrunc` | Truncate date | ✅ | ✅ |
 
 **Example:**
 
@@ -311,7 +311,7 @@ collection.find({
 | `$getField` | Get field value | ✅ | ✅ |
 | `$setField` | Set field value | ✅ | ✅ |
 | `$unsetField` | Remove field | ✅ | ✅ |
-| `$objectToArray` | Object to array | ❌ | ✅ |
+| `$objectToArray` | Object to array | ✅ | ✅ |
 
 **Example:**
 
@@ -383,12 +383,12 @@ COALESCE(({expr}), 0) != 0
 
 This ensures that strings, non-zero numbers, and objects are correctly treated as truthy in `find()` queries, while evaluating the expression only once.
 
-### Other Operators (1/2 - 50%)
+### Other Operators (2/2 - 100%) ✅
 
 | Operator | Description | SQL Support | Python Support |
 |----------|-------------|-------------|----------------|
-| `$literal` | Escape special chars | ❌ | ✅ |
-| `$let` | Define variables | ❌ | ❌ |
+| `$literal` | Escape special chars | ✅ | ✅ |
+| `$let` | Define variables | ✅ | ✅ |
 
 **Example:**
 
@@ -403,7 +403,7 @@ collection.find({
 
 ## Implementation Status Summary
 
-### As of v1.8.0+, NeoSQLite supports 119 out of 120 implementable $expr operators (99% coverage)
+### Overview
 
 | Category | Implemented | Coverage |
 |----------|-------------|----------|
@@ -411,24 +411,21 @@ collection.find({
 | Logical | 4/4 | 100% ✅ |
 | Arithmetic | 17/17 | 100% ✅ |
 | Conditional | 3/3 | 100% ✅ |
-| Array | 15/15 | 100% ✅ |
+| Array | 15/20 | 75% |
 | String | 18/18 | 100% ✅ |
-| Date/Time | 15/20 | 75% |
+| Date/Time | 19/20 | 95% |
 | Object | 5/5 | 100% ✅ |
 | Type Conversion | 11/11 | 100% ✅ |
 | Trigonometric | 13/13 | 100% ✅ |
 | Hyperbolic | 6/6 | 100% ✅ |
 | Exponential/Sigmoid | 2/2 | 100% ✅ |
-| Other | 1/2 | 50% |
-| **Total** | **119/120** | **99%** |
+| Other (`$literal`, `$let`) | 2/2 | 100% ✅ |
 
-*Note: Date/Time operators at 75% because 5 operators ($dateToString, $dateFromParts, $dateToParts, $toDate, $dateTrunc) are not yet implemented. The `$let` operator for variable scoping is also not implemented.*
+*Note: Only `$toDate` (`$convert: {to: "date"}` and `$dateFromString` are implemented instead) and five array-construction helpers (`$concatArrays`, `$reverseArray`, `$zip`, `$arrayToObject`, `$range`) remain unimplemented from the tables above. `$dateToString`, `$dateFromParts`, `$dateToParts`, `$dateTrunc`, and `$let` are implemented in both SQL and Python.*
 
 ## Missing Features Summary
 
-### 119 out of 120 operators implemented (99% coverage)
-
-*Note: This analysis focuses on operators implementable in NeoSQLite's 3-tier architecture (SQL, Temp Tables, Python). Excluded are server-specific features (e.g., $rand, $function, $meta), window functions ($denseRank, $rank, etc.), time series operators ($tsIncrement, $tsSecond), encryption features ($encStrContains, etc.), and other SQLite-irrelevant operators.*
+*Note: Window operators (`$denseRank`, `$rank`, etc.), `$function` (via sandboxed JS engine), `$meta`, and `$rand` are implemented separately; MongoDB server-specific/encryption operators (`$tsIncrement`, `$tsSecond`, `$encStrContains`, etc.) remain out of scope.*
 
 | Category | Implemented | Missing | Coverage |
 |----------|-------------|---------|----------|
@@ -436,18 +433,17 @@ collection.find({
 | Logical | 4 | **0** | 100% ✅ |
 | Arithmetic | 17 | **0** | 100% ✅ |
 | Conditional | 3 | **0** | 100% ✅ |
-| Array | 15 | **0** | 100% ✅ |
+| Array | 15 | **5** | 75% |
 | String | 18 | **0** | 100% ✅ |
-| Date/Time | 15 | **5** | 75% |
+| Date/Time | 19 | **1** | 95% |
 | Object | 5 | **0** | 100% ✅ |
 | Type Conversion | 11 | **0** | 100% ✅ |
 | Trigonometric | 13 | **0** | 100% ✅ |
 | Hyperbolic | 6 | **0** | 100% ✅ |
 | Exponential/Sigmoid | 2 | **0** | 100% ✅ |
-| Other | 1 | **1** | 50% |
-| **Total** | **119** | **6** | **95%** |
+| Other | 2 | **0** | 100% ✅ |
 
-*Note: The missing operators are 5 Date/Time formatting operators and the `$let` variable scoping operator.*
+*Note: Remaining gaps in the table above are `$toDate` (covered by `$convert` / `$dateFromString`) and `$concatArrays` / `$reverseArray` / `$zip` / `$arrayToObject` / `$range`.*
 
 ## Missing Features by Priority
 
@@ -508,7 +504,7 @@ collection.find({
 - ✅ `$convert` - General type conversion
 
 **Variables (1):**
-- ❌ `$let` - Define variables for expression (NOT IMPLEMENTED)
+- ✅ `$let` - Define variables for expression (SQL tier with aggregation context + Python tier)
 
 **Special (1):**
 - ✅ `$switch` - Multi-branch conditional (complex expressions)
@@ -534,15 +530,15 @@ collection.find({
 
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
-| `$setEquals` | ❌ (fallback) | ✅ | Check if two sets are equal |
-| `$setIntersection` | ❌ (fallback) | ✅ | Intersection of two sets |
-| `$setUnion` | ❌ (fallback) | ✅ | Union of two sets |
-| `$setDifference` | ❌ (fallback) | ✅ | Difference of two sets |
-| `$setIsSubset` | ❌ (fallback) | ✅ | Check if one set is subset of another |
-| `$anyElementTrue` | ❌ (fallback) | ✅ | Check if any element in array is true |
-| `$allElementsTrue` | ❌ (fallback) | ✅ | Check if all elements in array is true |
+| `$setEquals` | ✅ | ✅ | Check if two sets are equal |
+| `$setIntersection` | ✅ | ✅ | Intersection of two sets |
+| `$setUnion` | ✅ | ✅ | Union of two sets |
+| `$setDifference` | ✅ | ✅ | Difference of two sets |
+| `$setIsSubset` | ✅ | ✅ | Check if one set is subset of another |
+| `$anyElementTrue` | ✅ | ✅ | Check if any element in array is true |
+| `$allElementsTrue` | ✅ | ✅ | Check if all elements in array is true |
 
-**Note**: Set operations use Python fallback due to SQLite's limited set manipulation capabilities. They work correctly with the kill switch.
+**Note**: Set operations translate to `json_each()`/`jsonb_each()` SQL subqueries in `sql_converters/set.py` and fall back to Python when needed or when the kill switch is active.
 
 #### Trigonometric Functions (7 operators)
 
@@ -568,7 +564,7 @@ collection.find({
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$unsetField` | ✅ | ✅ | Remove field from object |
-| `$objectToArray` | ❌ (fallback) | ✅ | Convert object to key-value array |
+| `$objectToArray` | ✅ | ✅ | Convert object to key-value array |
 
 ### Low Priority Operators (22 operators) - ✅ COMPLETE
 
@@ -599,9 +595,9 @@ collection.find({
 | Operator | SQL Support | Python Support | Description |
 |----------|-------------|----------------|-------------|
 | `$strLenCP` | ✅ | ✅ | String length in code points |
-| `$substrCP` | ❌ (fallback) | ✅ | Substring by code points |
+| `$substrCP` | ✅ | ✅ | Substring by code points |
 | `$indexOfCP` | ✅ | ✅ | Find substring by code points |
-| `$replaceOne` | ❌ (fallback) | ✅ | Replace first occurrence |
+| `$replaceOne` | ✅ | ✅ | Replace first occurrence |
 
 #### Type Conversion (6 operators)
 
@@ -960,9 +956,9 @@ pytest tests/test_expr/test_high_priority_operators.py -v
 
 | File | Description | Lines |
 |------|-------------|-------|
-| `neosqlite/collection/expr_evaluator.py` | Tier 1 & Tier 3 evaluator | ~2500 (+600) |
+| `neosqlite/collection/expr_evaluator/` | Tier 1 & Tier 3 evaluator package (`sql_converters/`, `python_evaluators/`) | ~2500 (+600) |
 | `neosqlite/collection/expr_temp_table.py` | Tier 2 temp table evaluator | ~550 |
-| `neosqlite/collection/query_helper.py` | Tier selection logic | ~4000 (+50) |
+| `neosqlite/collection/query_helper/` | Query helper package (`__init__.py`, `_sql_query_builder.py`, etc.) | ~4000 (+50) |
 
 **Total Implementation:**
 - **~650 lines** of production code added
@@ -1008,11 +1004,10 @@ Use the kill switch to benchmark and compare performance between tiers.
 
 ## Future Enhancements
 
-1. **SQL Optimization for Set Operations**: Explore SQLite json_each() for set operations
-2. **$switch SQL Support**: Implement using CASE statements
-3. **Aggregation Expression Support**: Enable operators in $addFields, $project, $group (see `TODO/AGGREGATION_EXPRESSION_SUPPORT.md`)
-4. **Performance Benchmarks**: Add comprehensive benchmarks for all operators
-5. **Query Planning**: Optimize tier selection based on data characteristics
+1. **SQL Optimization for Remaining Array Builders**: Explore SQLite array builders (`$concatArrays`, `$reverseArray`, `$zip`)
+2. **Aggregation Expression Support**: Enable operators in `$addFields`, `$project`, `$group`
+3. **Performance Benchmarks**: Add comprehensive benchmarks for all operators
+4. **Query Planning**: Optimize tier selection based on data characteristics
 
 ### Recently Implemented (v1.4.0) ✅
 

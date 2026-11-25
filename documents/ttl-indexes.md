@@ -6,8 +6,8 @@ tags:
   - ttl
   - indexing
   - expiry
-timestamp: 2026-09-13T00:00:00Z
-version: "1.16.0"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -38,9 +38,10 @@ collection.create_indexes(
 
 - **Lazy + explicit (Phase 1):** `collection.purge_expired(now=None)` deletes
   documents where `now >= field_value + expireAfterSeconds` and returns the
-  count. `find()` / `find_one()` on a TTL collection auto-purge best-effort
-  before reading (never breaks reads). Pass an explicit `now` in tests instead
-  of sleeping.
+  count. On a TTL collection, `find()`, `find_raw_batches()`, `find_one()`,
+  `count_documents()`, `distinct()`, `aggregate()`, `aggregate_raw_batches()`,
+  and `find_one_and_*()` auto-purge best-effort before reading (never breaks
+  reads). Pass an explicit `now` in tests instead of sleeping.
 - **Background sweeper (Phase 2, opt-in):**
   `Connection(path, ttl_sweep_interval_s=60)` starts a daemon thread that
   sweeps all TTL collections each tick via a short-lived helper connection

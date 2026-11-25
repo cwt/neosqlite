@@ -7,8 +7,8 @@ tags:
   - text-search
   - aggregation
   - hybrid
-timestamp: 2026-03-12T03:42:00Z
-version: "1.15.1"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -20,7 +20,7 @@ This document provides a comprehensive specification for implementing hybrid tex
 
 ## Problem Statement
 
-Currently, when a NeoSQLite aggregation pipeline contains a `$text` operator without FTS indexes prepared beforehand, the entire pipeline falls back to slow Python processing. This negates the performance benefits of the temporary table aggregation processor for all stages, even those that could be efficiently processed with SQL.
+Previously, when a NeoSQLite aggregation pipeline contained a `$text` operator after SQL stages (such as `$unwind`), the entire pipeline could fall back to Python processing, negating the performance benefits of the temporary table aggregation processor for earlier and subsequent SQL stages.
 
 ## Solution
 
@@ -56,23 +56,21 @@ This approach maintains the performance benefits of SQL processing for compatibl
 
 #### Tasks
 1. **Modify Pipeline Validation**
-   - Update `can_process_with_temporary_tables()` in `temporary_table_aggregation.py`
-   - Remove the explicit rejection of pipelines containing `$text` operators
+   - Update `can_process_with_temporary_tables()` in `neosqlite/collection/temporary_table_aggregation/core.py`
+   - Allow pipelines containing `$text` operators to run in the temporary-table tier
    - Ensure proper error handling for edge cases
 
 2. **Add Helper Methods**
-   - Implement `_matches_text_search()` method for Python-based text matching
-   - Implement `_batch_insert_documents()` for efficient document insertion
+   - Implement `OperatorsTextMixin` in `neosqlite/collection/temporary_table_aggregation/operators_text.py` using transient FTS5 virtual tables (with collection tokenizer detection)
+   - Support BM25 relevance scoring (`-bm25(...)`) for `$meta: "textScore"` sorting and projection
    - Add proper error handling and validation
 
 3. **Enhance Match Stage Processing**
-   - Modify `_process_match_stage()` to delegate text search handling
+   - Modify `_process_match_stage()` in `neosqlite/collection/temporary_table_aggregation/operators_match.py` to delegate text search handling
    - Maintain backward compatibility with existing functionality
 
 #### Deliverables
-- Modified `temporary_table_aggregation.py` with updated validation
-- New helper methods for text search processing
-- Updated match stage processing logic
+- `neosqlite/collection/temporary_table_aggregation/` package with updated validation (`core.py`), match dispatch (`operators_match.py`), and FTS5 temporary text search (`operators_text.py`)
 
 ### Phase 2: Core Implementation (3-4 days)
 
@@ -147,115 +145,41 @@ This approach maintains the performance benefits of SQL processing for compatibl
 
 ### Core Implementation
 
-The implementation modifies the temporary table aggregation processor to handle `$text` operators:
+The implementation splits temporary-table text handling into `OperatorsMatchMixin` and `OperatorsTextMixin` inside `neosqlite/collection/temporary_table_aggregation/`:
 
 ```python
+# In operators_match.py:
+@python_hybrid_fallback("$match")
 def _process_match_stage(
     self,
     create_temp: Callable,
     current_table: str,
-    match_spec: Dict[str, Any],
+    match_spec: dict[str, Any],
 ) -> str:
     """Process a $match stage using temporary tables."""
-    # Check if text search is involved
     if _contains_text_search(match_spec):
-        return self._process_text_search_stage(create_temp, current_table, match_spec)
-    
-    # ... rest of existing implementation for regular matches
+        return self._process_text_search_stage(
+            create_temp, current_table, match_spec
+        )
+    # ... SQL WHERE compilation for regular matches ...
 
+# In operators_text.py:
 def _process_text_search_stage(
     self,
     create_temp: Callable,
     current_table: str,
-    match_spec: Dict[str, Any],
+    match_spec: dict[str, Any],
 ) -> str:
-    """
-    Process a $text search stage using Python-based filtering.
-    """
-    # Extract and validate search term
-    if "$text" not in match_spec or "$search" not in match_spec["$text"]:
-        raise ValueError("Invalid $text operator specification")
-    
-    search_term = match_spec["$text"]["$search"]
-    if not isinstance(search_term, str):
-        raise ValueError("$text search term must be a string")
-    
-    # Generate deterministic table name
-    text_stage = {"$text": {"$search": search_term}}
-    result_table_name = f"temp_text_filtered_{hashlib.sha256(str(match_spec).encode()).hexdigest()[:8]}"
-    
-    # Create result temporary table
-    self.db.execute(f"CREATE TEMP TABLE {result_table_name} (id INTEGER, data TEXT)")
-    
-    # Process documents with cursor
-    cursor = self.db.execute(f"SELECT id, data FROM {current_table}")
-    
-    # Batch insert for better performance
-    batch_inserts = []
-    batch_size = 1000
-    
-    for row_id, row_data in cursor:
-        # Load document
-        doc = self.collection._load(row_id, row_data)
-        
-        # Apply text search
-        if self._matches_text_search(doc, search_term):
-            batch_inserts.append((row_id, row_data))
-            
-            # Process batch inserts
-            if len(batch_inserts) >= batch_size:
-                self._batch_insert_documents(result_table_name, batch_inserts)
-                batch_inserts = []
-    
-    # Process remaining inserts
-    if batch_inserts:
-        self._batch_insert_documents(result_table_name, batch_inserts)
-    
-    return result_table_name
-
-def _matches_text_search(self, document: Dict[str, Any], search_term: str) -> bool:
-    """
-    Apply Python-based text search to a document.
-    """
-    from neosqlite.collection.text_search import unified_text_search
-    return unified_text_search(document, search_term)
-
-def _batch_insert_documents(self, table_name: str, documents: List[tuple]) -> None:
-    """Insert multiple documents into a temporary table efficiently."""
-    if not documents:
-        return
-        
-    placeholders = ",".join(["(?,?)"] * len(documents))
-    query = f"INSERT INTO {table_name} (id, data) VALUES {placeholders}"
-    flat_params = [item for doc_tuple in documents for item in doc_tuple]
-    self.db.execute(query, flat_params)
+    """Process a $text search stage using transient FTS5 over temp tables."""
+    # Validates $search, sanitizes FTS query via sanitize_fts_query(),
+    # detects any custom FTS tokenizer on the collection, indexes extracted
+    # strings into a transient FTS5 virtual table, and records _textScore
+    # via -bm25(...) in JSON data.
 ```
 
 ### Pipeline Validation
 
-Update `can_process_with_temporary_tables()` to allow pipelines with `$text` operators:
-
-```python
-def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
-    """Determine if a pipeline can be processed with temporary tables."""
-    supported_stages = {
-        "$match",
-        "$unwind",
-        "$sort",
-        "$skip",
-        "$limit",
-        "$lookup",
-        "$addFields",
-    }
-
-    for stage in pipeline:
-        stage_name = next(iter(stage.keys()))
-        if stage_name not in supported_stages:
-            return False
-        # Remove the $text rejection - we'll handle it in the processing
-
-    return True
-```
+`can_process_with_temporary_tables()` in `neosqlite/collection/temporary_table_aggregation/core.py` checks pipelines against `TEMPORARY_TABLE_SUPPORTED_STAGES` (which includes `$match`, `$unwind`, `$sort`, `$skip`, `$limit`, `$lookup`, `$addFields`, `$set`, `$unset`, `$project`, `$group`, `$count`, `$sample`, `$replaceRoot`, `$replaceWith`, `$bucket`, `$bucketAuto`, `$unionWith`, `$merge`, `$out`, `$redact`, `$densify`, `$fill`, `$setWindowFields`, `$graphLookup`, and `$facet`) without rejecting `$text` in `$match`.
 
 ## Example Pipeline Processing
 
@@ -419,7 +343,7 @@ def can_process_with_temporary_tables(pipeline: List[Dict[str, Any]]) -> bool:
 If issues are discovered during implementation or testing:
 
 1. **Immediate Rollback**
-   - Revert changes to `temporary_table_aggregation.py`
+   - Revert changes to `neosqlite/collection/temporary_table_aggregation/`
    - Restore previous pipeline validation logic
    - Maintain existing Python fallback behavior
 

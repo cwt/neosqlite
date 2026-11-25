@@ -7,8 +7,8 @@ tags:
   - bson
   - identity
   - compatibility
-timestamp: 2026-09-30T00:00:00Z
-version: "1.17.0"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -39,21 +39,21 @@ Located in `neosqlite/objectid.py`, the ObjectId class generates 12-byte values 
 
 ### Storage Schema
 
-Collections use a three-column schema: `(id INTEGER PRIMARY KEY AUTOINCREMENT, _id JSON UNIQUE, data JSON)`
+Collections use a three-column schema: `(id INTEGER PRIMARY KEY AUTOINCREMENT, _id BLOB UNIQUE, data JSON)` (or `JSONB` when supported; legacy pre-v1.18.1 non-JSONB databases used `_id TEXT`, which can be upgraded to `_id BLOB` via the `neosqlite-migration` CLI).
 
-- **Automatic Migration**: Existing collections get `_id` column added via `ALTER TABLE`
+- **Automatic Migration**: Existing collections get `_id` column added via `ALTER TABLE` when absent; legacy `_id TEXT` tables remain readable and can be converted with `neosqlite-migration`
 - **Indexing**: Unique index `idx_{collection_name}_id` on `_id` column
-- **Performance**: Uses JSONB when available for better query performance
+- **Performance**: Uses JSONB when available for better query performance, while `BLOB` affinity preserves distinct scalar `_id` types (`int`, `float`, `str`, `bytes`, `ObjectId`)
 
 ### CRUD Operations Integration
 
 #### Insertion
 - Documents without `_id`: Auto-generated ObjectId
 - Documents with `_id`: Preserved as-is
-- ObjectId hex stored in `_id` column, instance in document
+- ObjectId stored via hex representation in dedicated `_id` column with `BLOB` affinity, ObjectId instance in document
 
 #### Retrieval
-- Loads both integer `id` and ObjectId `_id` columns
+- Loads both integer `id` and stored `_id` columns via type-aware `_resolve_stored_id()` / `_parse_stored_id()` helpers
 - Automatic ObjectId reconstruction via `_load_with_stored_id()`
 - Legacy documents (before `_id` column existed) use the deprecated `id` column as the logical `_id`
 
@@ -62,7 +62,7 @@ Collections use a three-column schema: `(id INTEGER PRIMARY KEY AUTOINCREMENT, _
 - Integer `_id` values in queries match the `_id` column directly (not redirected to `id`)
 - String `_id` values are kept verbatim — no implicit conversion to integers
 - Operators `$eq`, `$in`, `$nin`, `$ne` use fast SQL lookups against the `_id` column
-- Range operators (`$gt`, `$gte`, `$lt`, `$lte`) fall back to Python evaluation to preserve correct cross-type comparison semantics (MongoDB BSON ordering)
+- Range operators (`$gt`, `$gte`, `$lt`, `$lte`) compile to native BSON-guarded SQL via `build_bson_range_sql()` when scalar/ObjectId BSON semantics match SQLite ordering, falling back to Python evaluation only for complex cross-type cases or when forced fallback is enabled
 - Legacy collections without a dedicated `_id` column fall back to the deprecated `id` column via a dynamic `_id_column_ref()` resolver
 
 #### Updates/Deletions
@@ -94,7 +94,7 @@ Collections use a three-column schema: `(id INTEGER PRIMARY KEY AUTOINCREMENT, _
 ### Key Differences
 
 - **Machine/Process Identifier**: MongoDB uses 3-byte machine hash + 2-byte process ID; NeoSQLite uses 5 bytes of random data for privacy
-- **Storage**: MongoDB uses BSON ObjectId type; NeoSQLite stores as JSON strings in dedicated column
+- **Storage**: MongoDB uses BSON ObjectId type; NeoSQLite stores 24-char hex / typed scalars in a dedicated `_id BLOB` column
 - **Counter**: Both thread-safe, but NeoSQLite uses Python-level locking and random initialization
 
 ### Performance Characteristics

@@ -7,8 +7,8 @@ tags:
   - api-comparison
   - compatibility
   - reference
-timestamp: 2026-10-14T00:00:00Z
-version: "1.17.2"
+timestamp: 2026-11-25T00:00:00Z
+version: "1.18.1"
 lifecycle: active
 ---
 
@@ -499,8 +499,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 
 | Operator | Description | Priority | Status | Notes |
 |----------|-------------|----------|--------|-------|
-| `$where` | JavaScript expression | Medium | ✅ **Implemented** | Sandboxed Node.js worker; requires patched Node >= 22.23.5 / 24.22.3 / 26.13.1 |
-| `$function` | Custom JavaScript function | Medium | ✅ **Implemented** | Aggregation expression via sandboxed Node.js worker (same version gate) |
+| `$where` | JavaScript expression | Medium | ✅ **Implemented** | Sandboxed QuickJS (`jsbox`, `neosqlite[js]`) or patched Node.js worker |
+| `$function` | Custom JavaScript function | Medium | ✅ **Implemented** | Aggregation expression via sandboxed `jsbox` (`neosqlite[js]`) or patched Node.js worker |
 | `$accumulator` | Custom accumulator | Medium | ❌ Not Supported | Raises NotImplementedError; use built-in accumulators or Python post-processing |
 | `$jsonSchema` | JSON Schema validation | Medium | ✅ **Implemented** | Query filtering and native SQL write validation |
 | `$vectorSearch` | Vector search | Medium | ❌ Missing | MongoDB Atlas feature |
@@ -567,18 +567,18 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | `$substr`, `$substrBytes`, `$substrCP` | Medium | ✅ **Implemented** |
 | `$regexFind`, `$regexFindAll`, `$regexMatch` | Medium | ✅ **Implemented** |
 
-#### Type Conversion Operators (ALL IMPLEMENTED)
+#### Type Conversion Operators
 
 | Operator | Priority | Status | Notes |
 |----------|----------|--------|-------|
-| `$convert` | Medium | ✅ **Implemented** | |
-| `$toBool`, `$toDate`, `$toString` | Medium | ✅ **Implemented** | |
-| `$toInt`, `$toLong`, `$toDouble`, `$toDecimal` | Medium | ✅ **Implemented** | Python tier (SQLite lacks Decimal128) |
-| `$toObjectId`, `$toUUID` | Medium | ✅ **Implemented** | |
+| `$convert` | Medium | ✅ **Implemented** | Supports `int`, `long`, `double`, `decimal`, `string`, `bool`, `objectId`, `binData`, `date`, `null`, regex |
+| `$toBool`, `$toString` | Medium | ✅ **Implemented** | Date conversion uses `$convert: {to: "date"}` or `$dateFromString` |
+| `$toInt`, `$toLong`, `$toDouble`, `$toDecimal` | Medium | ✅ **Implemented** | SQL & Python tiers (`$toDecimal` uses float approximation) |
+| `$toObjectId` | Medium | ✅ **Implemented** | SQL & Python tiers (UUID conversion uses `Binary.from_uuid()`) |
 | `$isNumber` | Medium | ✅ **Implemented** | |
 | `$type` | Medium | ✅ **Implemented** | |
 
-#### Date Operators (2 Missing)
+#### Date Operators
 
 | Operator | Priority | Status |
 |----------|----------|--------|
@@ -638,7 +638,8 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | Literal | `$literal` | Low | ✅ **Implemented** | |
 | Misc | `$getField`, `$rand`, `$sampleRate` | Low | ✅ **Implemented** | |
 | Timestamp | `$tsIncrement`, `$tsSecond` | Low | ❌ Missing (MongoDB-specific) | |
-| Custom | `$function`, `$accumulator` | Low | ❌ Not Supported | Raises NotImplementedError; use `$expr` or Python post-processing |
+| Custom | `$function` | Medium | ✅ **Implemented** | Sandboxed QuickJS (`jsbox`, `neosqlite[js]`) or patched Node.js worker |
+| Custom | `$accumulator` | Low | ❌ Not Supported | Raises NotImplementedError; use `$expr` or Python post-processing |
 
 ### 2.5 LOW PRIORITY - Specialized Features
 
@@ -650,18 +651,14 @@ These operators now provide clear error messages suggesting alternatives, matchi
 | `2dsphere` (geospatial) | Low | ❌ Missing | Requires spatial support |
 | `hashed` | Low | ❌ Missing | MongoDB-specific |
 
-#### Client/Connection Features (MongoDB-Specific)
+#### Client/Connection Features (Implemented vs MongoDB-Specific)
 
-| Feature | Priority | Status | Reason Not Applicable |
-|---------|----------|--------|----------------------|
-| `ClientSession` | Low | ❌ Missing | SQLite has different transaction model |
-| `Transaction` | Low | ❌ Missing | SQLite has transactions but different API |
-| `MongoClient` options | Low | ❌ Missing | Connection pooling is MongoDB-specific |
+| Feature | Priority | Status | Notes / Reason |
+|---------|----------|--------|----------------|
+| `ClientSession` / `Transaction` | High | ✅ **Implemented** | Native ACID transactions via SQLite `SAVEPOINT` |
+| `ReadPreference` / `ReadConcern` / `WriteConcern` / `CodecOptions` | High | ✅ **Implemented** | Options classes exposed for PyMongo parity |
+| `MongoClient` options | Low | ❌ Missing | Connection pooling options are MongoDB-specific |
 | `ServerApi` | Low | ❌ Missing | MongoDB API versioning |
-| `ReadPreference` | Low | ❌ Missing | No replica sets in SQLite |
-| `ReadConcern` | Low | ❌ Missing | MongoDB-specific |
-| `WriteConcern` | Low | ❌ Missing | MongoDB-specific |
-| `CodecOptions` | Low | ❌ Missing | BSON encoding (MongoDB-specific) |
 
 ---
 

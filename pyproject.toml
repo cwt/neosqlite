@@ -50,6 +50,7 @@ pytest-xdist = "^3.8.0"
 coverage = "^7.17.0"
 ruff = "^0.17.4"
 pymongo = "^4.19.0"
+black = "^26.10.1"
 
 [tool.ruff]
 target-version = "py312"
