@@ -2571,3 +2571,44 @@ class TestMetaTextScore:
         results = list(db.posts.aggregate(pipeline))
         assert len(results) == 2
         assert all("score" in r for r in results)
+
+
+def test_nested_fts_index_excludes_sibling_fields_and_preserves_dot_path():
+    """Nested FTS indexes match exact dot paths (even with prefix collections)."""
+    with Connection(":memory:") as conn:
+        books_author = conn.books_author
+        books_author.insert_one({"dummy": 1})
+
+        books = conn.books
+        books.insert_many(
+            [
+                {"_id": 1, "author": {"name": "Alice"}},
+                {"_id": 2, "publisher": {"name": "Alice"}},
+                {"_id": 3, "author": {"other": {"name": "Alice"}}},
+            ]
+        )
+        books.create_search_index("author.name")
+
+        # Post-index inserts via sync triggers also filter strictly by path
+        books.insert_one(
+            {
+                "_id": 4,
+                "author": [{"name": "Alice"}],
+                "publisher": {"name": "Ignore"},
+            }
+        )
+        books.insert_one({"_id": 5, "publisher": {"name": "Alice"}})
+
+        matched_ids = sorted(
+            d["_id"] for d in books.find({"$text": {"$search": "Alice"}})
+        )
+        assert matched_ids == [1, 4]
+        assert books.list_search_indexes() == ["author.name"]
+
+        # Update trigger keeps FTS synced on the exact path
+        books.update_one({"_id": 2}, {"$set": {"author": {"name": "Alice"}}})
+        books.update_one({"_id": 1}, {"$set": {"author": {"name": "Bob"}}})
+        updated_ids = sorted(
+            d["_id"] for d in books.find({"$text": {"$search": "Alice"}})
+        )
+        assert updated_ids == [2, 4]

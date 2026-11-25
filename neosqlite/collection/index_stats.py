@@ -12,6 +12,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from ..sql_utils import validate_identifier
+from .index_manager import _load_custom_index_name
+
 if TYPE_CHECKING:
     from .collection import Collection
 
@@ -19,7 +22,7 @@ _LOCAL_HOST = "neosqlite:27017"
 
 
 def _mongo_index_name(key: dict[str, Any]) -> str:
-    """Build MongoDB's default index name for an ascending key pattern."""
+    """Build MongoDB's default index name for a key pattern."""
     return "_".join(f"{field}_{direction}" for field, direction in key.items())
 
 
@@ -68,13 +71,22 @@ def build_index_stats_documents(collection: Collection) -> list[dict[str, Any]]:
         )
     ]
 
-    for info in collection.index_information().values():
+    coll_name = validate_identifier(collection.name)
+    auto_prefix = f"idx_{coll_name}_"
+    for idx_name, info in collection.index_information().items():
         key = info.get("key")
         if not isinstance(key, dict) or not key:
             continue
+        custom_name = _load_custom_index_name(collection.db, idx_name)
+        if custom_name:
+            stat_name = custom_name
+        elif not idx_name.startswith(auto_prefix):
+            stat_name = idx_name
+        else:
+            stat_name = _mongo_index_name(key)
         results.append(
             _stats_entry(
-                name=_mongo_index_name(key),
+                name=stat_name,
                 key=key,
                 since=since,
                 unique=bool(info.get("unique")),

@@ -181,48 +181,92 @@ def list_ttl_specs(db, collection_name: str | None = None) -> list[dict]:
 def _ensure_index_keys_table(db) -> None:
     """Create the index key specification table if it does not exist.
 
+    Ensures ``custom_name`` column exists on pre-existing tables as well.
+
     Args:
         db: SQLite database connection.
     """
     db.execute(
         f"CREATE TABLE IF NOT EXISTS {_INDEX_KEYS_TABLE} ("
-        "index_name TEXT PRIMARY KEY, keys_json TEXT NOT NULL)"
+        "index_name TEXT PRIMARY KEY, keys_json TEXT NOT NULL, custom_name TEXT)"
     )
+    try:
+        cols = {
+            row[1]
+            for row in db.execute(
+                f"PRAGMA table_info({_INDEX_KEYS_TABLE})"
+            ).fetchall()
+        }
+        if cols and "custom_name" not in cols:
+            db.execute(
+                f"ALTER TABLE {_INDEX_KEYS_TABLE} ADD COLUMN custom_name TEXT"
+            )
+    except Exception:
+        pass
 
 
-def _store_index_keys(db, index_name: str, keys: list[str]) -> None:
-    """Record the real key specification for an index (#158).
+def _normalize_direction(direction: Any) -> int:
+    """Normalize an index sort direction specification to ``1`` or ``-1``."""
+    if direction in (-1, "desc", "DESC"):
+        return -1
+    return 1
 
-    Index names lossily encode fields because dots become underscores, so
-    ``list_indexes(as_keys=True)`` and the query optimizer previously
-    reconstructed keys with ``.replace("_", ".")``, mangling compound indexes
-    and underscored field names alike.
+
+def _store_index_keys(
+    db,
+    index_name: str,
+    keys: list[str] | list[tuple[str, Any]],
+    custom_name: str | None = None,
+) -> None:
+    """Record the real key specification (with directions) for an index (#158, #189).
+
+    Stores JSON pairs ``[[field, direction], ...]`` so callers can recover both
+    unmangled dotted/underscored field names and ``ASC``/``DESC`` directions.
 
     Args:
         db: SQLite database connection.
         index_name: Generated SQLite index or FTS table name.
-        keys: Ordered list of indexed document field names.
+        keys: Ordered list of field names or ``(field, direction)`` tuples.
+        custom_name: Optional user-provided custom index name.
     """
+    encoded: list[list[Any]] = []
+    for item in keys:
+        if isinstance(item, tuple):
+            encoded.append([str(item[0]), _normalize_direction(item[1])])
+        else:
+            encoded.append([str(item), 1])
     _ensure_index_keys_table(db)
     db.execute(
         f"INSERT OR REPLACE INTO {_INDEX_KEYS_TABLE} "
-        f"(index_name, keys_json) VALUES (?, ?)",
-        (index_name, _json.dumps(keys)),
+        f"(index_name, keys_json, custom_name) VALUES (?, ?, ?)",
+        (index_name, _json.dumps(encoded), custom_name),
     )
 
 
-def _load_index_keys(db, index_name: str) -> list[str] | None:
-    """Load the stored field key list for ``index_name``.
+def _delete_index_keys(db, index_name: str) -> None:
+    """Remove any stored key specification row for ``index_name``."""
+    try:
+        db.execute(
+            f"DELETE FROM {_INDEX_KEYS_TABLE} WHERE index_name = ?",
+            (index_name,),
+        )
+    except Exception:
+        pass
 
-    Returns ``None`` if the metadata table does not exist, the index has no
-    entry, or the stored JSON is invalid or not a list.
+
+def _load_index_key_specs(db, index_name: str) -> list[tuple[str, int]] | None:
+    """Load stored ``(field, direction)`` key specifications for ``index_name``.
+
+    Supports both current ``[[field, direction], ...]`` entries and legacy
+    ``["field", ...]`` entries.
 
     Args:
         db: SQLite database connection.
         index_name: SQLite index name to look up.
 
     Returns:
-        list[str] | None: Stored list of indexed field names, or ``None``.
+        list[tuple[str, int]] | None: Ordered ``(field, direction)`` tuples, or
+        ``None`` when missing/invalid.
     """
     try:
         row = db.execute(
@@ -234,10 +278,157 @@ def _load_index_keys(db, index_name: str) -> list[str] | None:
     if row is None:
         return None
     try:
-        keys = _json.loads(row[0])
-        return keys if isinstance(keys, list) else None
+        raw = _json.loads(row[0])
     except Exception:
         return None
+    if not isinstance(raw, list):
+        return None
+    specs: list[tuple[str, int]] = []
+    for item in raw:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            specs.append((str(item[0]), _normalize_direction(item[1])))
+        elif isinstance(item, str):
+            specs.append((item, 1))
+    return specs or None
+
+
+def _load_index_keys(db, index_name: str) -> list[str] | None:
+    """Load the stored field key name list for ``index_name``.
+
+    Returns ``None`` if the metadata table does not exist, the index has no
+    entry, or the stored JSON is invalid or not a list.
+
+    Args:
+        db: SQLite database connection.
+        index_name: SQLite index name to look up.
+
+    Returns:
+        list[str] | None: Stored list of indexed field names, or ``None``.
+    """
+    specs = _load_index_key_specs(db, index_name)
+    if specs is None:
+        return None
+    return [field for field, _ in specs]
+
+
+def _load_custom_index_name(db, index_name: str) -> str | None:
+    """Load an optional custom index name recorded for ``index_name``."""
+    try:
+        row = db.execute(
+            f"SELECT custom_name FROM {_INDEX_KEYS_TABLE} WHERE index_name = ?",
+            (index_name,),
+        ).fetchone()
+    except Exception:
+        return None
+    if row is None or not isinstance(row[0], str) or not row[0]:
+        return None
+    return row[0]
+
+
+def _escape_glob(segment: str) -> str:
+    """Escape SQLite GLOB metacharacters in a JSON field segment."""
+    return segment.replace("[", "[[]").replace("*", "[*]").replace("?", "[?]")
+
+
+def _fts_fullkey_predicate(field: str) -> str:
+    """Build a SQLite built-in predicate matching nested ``t.fullkey`` paths.
+
+    Matches both nested object paths (``$.author.name``) and array-expanded
+    intermediate or terminal elements (``$.author[0].name``,
+    ``$.reviews[0].comments[1]``) without matching unrelated sibling paths.
+    """
+    parts = [_escape_glob(part).replace("'", "''") for part in field.split(".")]
+    dot_count = len(parts)
+    ordered_glob = "$." + "*.".join(parts) + "*"
+    clauses = [
+        f"(length(t.fullkey) - length(replace(t.fullkey, '.', '')) = {dot_count})",
+        f"(t.fullkey GLOB '$.{parts[0]}.*' OR t.fullkey GLOB '$.{parts[0]}[[][0-9]*[]].*')",
+        f"t.fullkey GLOB '{ordered_glob}'",
+    ]
+    clauses.extend(
+        f"(t.fullkey GLOB '*.{seg}.*' OR t.fullkey GLOB '*.{seg}[[][0-9]*[]].*')"
+        for seg in parts[1:-1]
+    )
+    last = parts[-1]
+    clauses.append(
+        f"(t.fullkey GLOB '*.{last}' OR t.fullkey GLOB '*.{last}[[][0-9]*[]]')"
+    )
+    return " AND ".join(clauses)
+
+
+def _extract_index_columns_clause(idx_sql: str) -> str:
+    """Extract the parenthesized column list from a ``CREATE INDEX`` DDL."""
+    on_match = re.search(r"\bON\b", idx_sql, re.IGNORECASE)
+    start_search = on_match.end() if on_match else 0
+    open_idx = idx_sql.find("(", start_search)
+    if open_idx < 0:
+        return ""
+    depth = 0
+    in_single = False
+    in_double = False
+    for idx in range(open_idx, len(idx_sql)):
+        ch = idx_sql[idx]
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif not in_single and not in_double:
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return idx_sql[open_idx + 1 : idx]
+    return ""
+
+
+def _split_top_level_commas(expr: str) -> list[str]:
+    """Split a SQL expression list by commas outside parentheses and quotes."""
+    parts: list[str] = []
+    depth = 0
+    in_single = False
+    in_double = False
+    start = 0
+    for idx, ch in enumerate(expr):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif not in_single and not in_double:
+            if ch == "(":
+                depth += 1
+            elif ch == ")" and depth > 0:
+                depth -= 1
+            elif ch == "," and depth == 0:
+                parts.append(expr[start:idx].strip())
+                start = idx + 1
+    tail = expr[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _parse_index_sql_keys(idx_sql: str) -> dict[str, int]:
+    """Fallback parser extracting key patterns and directions from ``idx_sql``."""
+    cols_clause = _extract_index_columns_clause(idx_sql)
+    if not cols_clause:
+        return {}
+    result: dict[str, int] = {}
+    for col_expr in _split_top_level_commas(cols_clause):
+        direction = (
+            -1 if re.search(r"\bDESC\s*$", col_expr, re.IGNORECASE) else 1
+        )
+        json_match = re.search(
+            r"(?:json|jsonb)_extract\(data,\s*'(\$\..*?)'\)", col_expr
+        )
+        if json_match:
+            field_path = json_match.group(1).removeprefix("$.")
+            if field_path.endswith(".$date"):
+                field_path = field_path.removesuffix(".$date")
+            result[field_path] = direction
+        elif re.search(r'(?:^|[(,\s])"?_id"?\b', col_expr):
+            result["_id"] = direction
+    return result
 
 
 class IndexManager:
@@ -332,10 +523,11 @@ class IndexManager:
         # For datetime fields, use special indexing.
         if datetime_field:
             if isinstance(key, str):
-                self._create_datetime_index(key, unique=unique)
-                index_name_full = (
-                    f"idx_{self.collection.name}_{key.replace('.', '_')}_utc"
+                self._create_datetime_index(
+                    key, unique=unique, sparse=sparse, custom_name=name
                 )
+                coll_name = validate_identifier(self.collection.name)
+                index_name_full = f"idx_{coll_name}_{key.replace('.', '_')}_utc"
                 return index_name_full
             else:
                 raise ValueError("Compound datetime indexes are not supported")
@@ -348,142 +540,122 @@ class IndexManager:
             )
         ):
             # Handle MongoDB text index format: [("field", "text"), ...]
+            coll_name = validate_identifier(self.collection.name)
             created_fts = []
             for item in key:
                 if isinstance(item, tuple):
                     field = str(item[0])
                     self._create_fts_index(field, tokenizer)
                     created_fts.append(
-                        f"{self.collection.name}_{field.replace('.', '_')}_fts"
+                        f"{coll_name}_{field.replace('.', '_')}_fts"
                     )
             return (
                 created_fts[0]
                 if len(created_fts) == 1
                 else "_".join(created_fts)
             )
-        elif (
-            isinstance(key, list)
-            and len(key) == 1
-            and isinstance(key[0], tuple)
-        ):
-            # Handle MongoDB tuple format: [("field", "type")]
-            field, index_type = key[0]
-            coll_name = validate_identifier(self.collection.name)
-            if index_type == "text":
-                self._create_fts_index(field, tokenizer)
-                return f"{coll_name}_{field.replace('.', '_')}_fts"
-            else:
-                # Create index name (replace dots with underscores for valid identifiers)
-                index_name = field.replace(".", "_")
-
-                # Determine which function to use based on JSONB support
-                func_prefix = self.jsonb.json_function_prefix
-                index_name_full = f"idx_{coll_name}_{index_name}"
-
-                # Create the index using appropriate JSON/JSONB function
-                self.collection.db.execute(
-                    f"CREATE {"UNIQUE " if unique else ""}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(index_name_full)} "
-                    f"ON {quote_table_name(coll_name)}({func_prefix}_extract(data, '{parse_json_path(field)}'))"
-                )
-                _store_index_keys(self.collection.db, index_name_full, [field])
-                if expire is not None:
-                    _store_ttl_option(
-                        self.collection.db,
-                        index_name_full,
-                        coll_name,
-                        field,
-                        expire,
-                    )
-                return index_name_full
         elif isinstance(key, str):
             coll_name = validate_identifier(self.collection.name)
             if fts:
                 # Create FTS index with optional tokenizer
                 self._create_fts_index(key, tokenizer)
                 return f"{coll_name}_{key.replace('.', '_')}_fts"
-            else:
-                # Create index name (replace dots with underscores for valid identifiers)
-                index_name = key.replace(".", "_")
-
-                # Determine which function to use based on JSONB support
-                func_prefix = self.jsonb.json_function_prefix
-
-                # Create the index using appropriate JSON/JSONB function
-                if key == "_id":
-                    # _id lives in a dedicated column, not inside data (#113)
-                    index_expr = quote_identifier("_id")
-                else:
-                    index_expr = (
-                        f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
-                    )
-                index_name_full = f"idx_{coll_name}_{index_name}"
-                # sparse -> partial index skipping docs missing the field (#146)
-                partial = ""
-                if sparse:
-                    partial = (
-                        f" WHERE {func_prefix}_extract(data, "
-                        f"'{parse_json_path(key)}') IS NOT NULL"
-                    )
-                self.collection.db.execute(
-                    f"CREATE {"UNIQUE " if unique else ""}INDEX "
-                    f"IF NOT EXISTS {quote_identifier(index_name_full)} "
-                    f"ON {quote_table_name(coll_name)}({index_expr}){partial}"
-                )
-                # Real key spec for as_keys=True / optimizer (#158)
-                _store_index_keys(self.collection.db, index_name_full, [key])
-                if expire is not None:
-                    _store_ttl_option(
-                        self.collection.db,
-                        index_name_full,
-                        coll_name,
-                        key,
-                        expire,
-                    )
-                return index_name_full
+            return self._create_btree_index(
+                [(key, 1)],
+                unique=unique,
+                sparse=sparse,
+                expire=expire,
+                custom_name=name,
+            )
         else:
-            # Compound indexes: must use PyMongo tuple format
-            # [("field1", 1), ("field2", -1)]
-            fields: list[str]
-            if isinstance(key, list) and key and isinstance(key[0], tuple):
-                fields = [k[0] for k in key]
-            elif (
-                isinstance(key, list)
-                and len(key) == 1
-                and isinstance(key[0], str)
-            ):
-                # Single-element list like ["field"] - treat as single-field index
-                fields = key  # type: ignore[assignment]
+            pairs: list[tuple[str, Any]]
+            if isinstance(key, list) and key:
+                if len(key) == 1 and isinstance(key[0], str):
+                    pairs = [(key[0], 1)]
+                elif all(isinstance(k, tuple) and len(k) == 2 for k in key):
+                    pairs = [(str(k[0]), k[1]) for k in key]
+                else:
+                    raise ValueError(
+                        "Compound indexes must use PyMongo tuple format: "
+                        f'[("field1", 1), ("field2", -1)]. Got: {key}'
+                    )
             else:
                 raise ValueError(
                     "Compound indexes must use PyMongo tuple format: "
                     f'[("field1", 1), ("field2", -1)]. Got: {key}'
                 )
 
-            if expire is not None:
+            if len(pairs) > 1 and expire is not None:
                 raise ValueError(
                     "expireAfterSeconds requires a single-field index; "
                     "compound indexes do not support TTL"
                 )
-            index_name = "_".join(fields).replace(".", "_")
-
-            # Determine which function to use based on JSONB support
-            func_prefix = self.jsonb.json_function_prefix
-
-            # Create the compound index using multiple JSON/JSONB extract calls
-            index_columns = ", ".join(
-                f"{func_prefix}_extract(data, '{parse_json_path(f)}')"
-                for f in fields
+            return self._create_btree_index(
+                pairs,
+                unique=unique,
+                sparse=sparse,
+                expire=expire,
+                custom_name=name,
             )
-            coll_name = validate_identifier(self.collection.name)
-            compound_full_name = f"idx_{coll_name}_{index_name}"
-            self.collection.db.execute(
-                f"CREATE {"UNIQUE " if unique else ""}INDEX "
-                f"IF NOT EXISTS {quote_identifier(compound_full_name)} "
-                f"ON {quote_table_name(coll_name)}({index_columns})"
+
+    def _index_column_expr(self, field: str) -> str:
+        """Return the SQLite column or JSON extract expression for ``field``."""
+        if field == "_id":
+            # _id lives in a dedicated column, not inside data (#113, #189)
+            return quote_identifier("_id")
+        func_prefix = self.jsonb.json_function_prefix
+        return f"{func_prefix}_extract(data, '{parse_json_path(field)}')"
+
+    def _index_column_sql(self, field: str, direction: Any) -> str:
+        """Return the SQLite index column definition with ASC/DESC ordering."""
+        order = "DESC" if _normalize_direction(direction) == -1 else "ASC"
+        return f"{self._index_column_expr(field)} {order}"
+
+    def _create_btree_index(
+        self,
+        pairs: list[tuple[str, Any]],
+        *,
+        unique: bool = False,
+        sparse: bool = False,
+        expire: int | None = None,
+        custom_name: str | None = None,
+    ) -> str:
+        """Create a single-field or compound B-tree index in SQLite."""
+        coll_name = validate_identifier(self.collection.name)
+        fields = [field for field, _ in pairs]
+        index_name = "_".join(fields).replace(".", "_")
+        index_name_full = f"idx_{coll_name}_{index_name}"
+        index_columns = ", ".join(
+            self._index_column_sql(field, direction)
+            for field, direction in pairs
+        )
+        partial = ""
+        if sparse:
+            non_null_terms = " OR ".join(
+                f"{self._index_column_expr(field)} IS NOT NULL"
+                for field, _ in pairs
             )
-            _store_index_keys(self.collection.db, compound_full_name, fields)
-            return compound_full_name
+            partial = f" WHERE {non_null_terms}"
+        self.collection.db.execute(
+            f"CREATE {'UNIQUE ' if unique else ''}INDEX "
+            f"IF NOT EXISTS {quote_identifier(index_name_full)} "
+            f"ON {quote_table_name(coll_name)}({index_columns}){partial}"
+        )
+        _store_index_keys(
+            self.collection.db,
+            index_name_full,
+            pairs,
+            custom_name=custom_name,
+        )
+        if expire is not None:
+            _store_ttl_option(
+                self.collection.db,
+                index_name_full,
+                coll_name,
+                fields[0],
+                expire,
+            )
+        return index_name_full
 
     @staticmethod
     def _validate_fts_tokenizer(tokenizer: str) -> str:
@@ -572,28 +744,22 @@ class IndexManager:
                 WHERE json_extract(data, '{json_path}') IS NOT NULL
                 """)
         else:
-            # Nested field - use json_tree/jsonb_tree to find all matching values including array elements
-            # Concatenate all text values with spaces for FTS indexing
+            # Nested field - match exact path via t.fullkey (supporting array elements)
             json_tree_func = self.jsonb.json_tree_function
-            last_key = field_parts[-1]
-            self.collection.db.execute(
-                f"""
+            fullkey_pred = _fts_fullkey_predicate(field)
+            self.collection.db.execute(f"""
                 INSERT INTO {fts_table_name}(rowid, {quoted_col})
                 SELECT
                     r.id,
                     group_concat(lower(t.value), ' ')
                 FROM {quoted_coll} r
                 JOIN {json_tree_func}(r.data) t
-                WHERE t.key = ? AND t.type = 'text'
+                WHERE {fullkey_pred} AND t.type = 'text'
                 GROUP BY r.id
-                """,
-                [last_key],
-            )
+                """)
 
         # Create triggers to keep FTS table in sync with main table
         # For array fields, we need to delete all entries for the rowid and re-insert all values
-        field_parts = field.split(".")
-        last_key_sql = field_parts[-1].replace("'", "''")
         trig_insert = quote_identifier(f"{coll_name}_{index_name}_fts_insert")
         trig_update = quote_identifier(f"{coll_name}_{index_name}_fts_update")
         trig_delete = quote_identifier(f"{coll_name}_{index_name}_fts_delete")
@@ -612,8 +778,9 @@ class IndexManager:
                 END
                 """)
         else:
-            # Nested field - use json_tree/jsonb_tree with GROUP BY
+            # Nested field - use json_tree/jsonb_tree with exact fullkey match
             json_tree_func = self.jsonb.json_tree_function
+            fullkey_pred = _fts_fullkey_predicate(field)
             self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {trig_insert}
                 AFTER INSERT ON {quoted_coll}
@@ -624,7 +791,7 @@ class IndexManager:
                         new.id,
                         group_concat(lower(t.value), ' ')
                     FROM {json_tree_func}(new.data) t
-                    WHERE t.key = '{last_key_sql}' AND t.type = 'text'
+                    WHERE {fullkey_pred} AND t.type = 'text'
                     GROUP BY new.id;
                 END
                 """)
@@ -643,8 +810,9 @@ class IndexManager:
                 END
                 """)
         else:
-            # Nested field - use json_tree/jsonb_tree with GROUP BY
+            # Nested field - use json_tree/jsonb_tree with exact fullkey match
             json_tree_func = self.jsonb.json_tree_function
+            fullkey_pred = _fts_fullkey_predicate(field)
             self.collection.db.execute(f"""
                 CREATE TRIGGER IF NOT EXISTS {trig_update}
                 AFTER UPDATE ON {quoted_coll}
@@ -655,7 +823,7 @@ class IndexManager:
                         new.id,
                         group_concat(lower(t.value), ' ')
                     FROM {json_tree_func}(new.data) t
-                    WHERE t.key = '{last_key_sql}' AND t.type = 'text'
+                    WHERE {fullkey_pred} AND t.type = 'text'
                     GROUP BY new.id;
                 END
                 """)
@@ -684,12 +852,11 @@ class IndexManager:
                 create.
 
         Returns:
-            list[str]: Names of the created indexes prefixed with the
-                collection name.
+            list[str]: Names of the created indexes.
 
         Raises:
-            ValueError: If an ``IndexModel`` contains an unsupported ``key``
-                specification.
+            ValueError: If an ``IndexModel`` contains an empty or unsupported
+                ``key`` specification.
         """
         created_indexes = []
         for index_model in indexes:
@@ -742,31 +909,30 @@ class IndexManager:
                 opts.update(extra)
                 return opts
 
-            # Convert key dict to the format expected by create_index
-            coll_name = validate_identifier(self.collection.name)
+            # Convert key specification to the format expected by create_index
             match key:
                 case dict():
-                    if len(key) == 1:
-                        field = list(key.keys())[0]
-                        returned = self.create_index(field, **_make_opts())
-                        index_name = returned[len(f"idx_{coll_name}_") :]
-                    else:
-                        tuple_key = [(f, d) for f, d in key.items()]
-                        returned = self.create_index(tuple_key, **_make_opts())
-                        index_name = returned[len(f"idx_{coll_name}_") :]
+                    if not key:
+                        raise ValueError("Index key cannot be empty")
+                    tuple_key = [(f, d) for f, d in key.items()]
+                    returned = self.create_index(tuple_key, **_make_opts())
                 case str():
+                    if not key:
+                        raise ValueError("Index key cannot be empty")
                     returned = self.create_index(key, **_make_opts())
-                    index_name = returned[len(f"idx_{coll_name}_") :]
                 case [str()]:
                     returned = self.create_index(key[0], **_make_opts())
-                    index_name = returned[len(f"idx_{coll_name}_") :]
-                case list() if isinstance(key[0], tuple):
-                    returned = self.create_index(key, **_make_opts())
-                    index_name = returned[len(f"idx_{coll_name}_") :]
+                case list():
+                    if not key:
+                        raise ValueError("Index key cannot be empty")
+                    if all(isinstance(k, tuple) and len(k) == 2 for k in key):
+                        returned = self.create_index(key, **_make_opts())
+                    else:
+                        raise ValueError(f"Invalid key specification: {key}")
                 case _:
                     raise ValueError(f"Invalid key specification: {key}")
 
-            created_indexes.append(f"idx_{coll_name}_{index_name}")
+            created_indexes.append(returned)
 
         return created_indexes
 
@@ -950,6 +1116,7 @@ class IndexManager:
             self.collection.db.execute(
                 f"DROP INDEX IF EXISTS {quote_identifier(index)}"
             )
+            _delete_index_keys(self.collection.db, index)
             _delete_ttl_option(self.collection.db, index)
 
     def index_information(self) -> dict[str, Any]:
@@ -957,7 +1124,7 @@ class IndexManager:
 
         Inspects ``sqlite_master`` for collection indexes (excluding the
         automatic ``_id`` index) and extracts version, uniqueness, key mapping
-        from ``json_extract`` / ``jsonb_extract`` clauses, and any stored
+        (preserving directions and explicit ``_id`` keys), and any stored
         ``expireAfterSeconds`` TTL option.
 
         Returns:
@@ -990,25 +1157,15 @@ class IndexManager:
                 else:
                     index_info["unique"] = False
 
-                # Try to extract key information from the SQL
-                if idx_sql:
-                    # Extract key information from json_extract or jsonb_extract expressions
-                    # Look for both json_extract and jsonb_extract
-                    json_extract_matches = re.findall(
-                        r"(?:json|jsonb)_extract\(data, '(\$..*?)'\)", idx_sql
-                    )
-                    if json_extract_matches:
-                        # Convert SQLite JSON paths back to dot notation
-                        keys = []
-                        for path in json_extract_matches:
-                            # Remove $ and leading dot
-                            path = path.removeprefix("$.")
-                            keys.append(path)
-
-                        if len(keys) == 1:
-                            index_info["key"] = {keys[0]: 1}
-                        else:
-                            index_info["key"] = {key: 1 for key in keys}
+                key_specs = _load_index_key_specs(self.collection.db, idx_name)
+                if key_specs:
+                    index_info["key"] = {
+                        field: direction for field, direction in key_specs
+                    }
+                elif idx_sql:
+                    parsed_keys = _parse_index_sql_keys(idx_sql)
+                    if parsed_keys:
+                        index_info["key"] = parsed_keys
 
                 expire_opt = _load_ttl_option(self.collection.db, idx_name)
                 if expire_opt is not None:
@@ -1079,52 +1236,50 @@ class IndexManager:
     def list_search_indexes(self) -> list[str]:
         """List all FTS5 search index field names for the collection.
 
-        Scans ``sqlite_master`` for ``{collection}_{field}_fts`` virtual tables
-        while filtering out tables belonging to other collections that share a
-        ``{collection}_`` name prefix.
+        Identifies FTS virtual tables belonging exclusively to this collection
+        via their ``ON <collection>`` synchronization triggers in
+        ``sqlite_master``, then resolves unmangled field paths via
+        ``_load_index_keys``.
 
         Returns:
-            list[str]: Extracted field portion of each search index name.
+            list[str]: Indexed field paths for each search index on this
+                collection.
         """
-        # Get all FTS tables from sqlite_master
-        # FTS tables have a specific naming pattern: {collection}_{field}_fts
         coll_name = validate_identifier(self.collection.name)
-        escaped_name = (
-            coll_name.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
-        )
-        fts_tables = self.collection.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE ? ESCAPE '\\'",
-            (f"{escaped_name}\\_%\\_fts",),
+        trig_rows = self.collection.db.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name = ? "
+            "AND name LIKE '%\\_fts\\_insert' ESCAPE '\\' ORDER BY rowid",
+            (coll_name,),
         ).fetchall()
+        if not trig_rows:
+            return []
 
-        # Get all table names to check for longer collection name prefixes
-        all_tables_cursor = self.collection.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
-        all_tables = {row[0] for row in all_tables_cursor.fetchall()}
+        existing_tables = {
+            row[0]
+            for row in self.collection.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
 
-        # Extract the field names from the FTS table names
-        search_indexes = []
-        prefix_len = len(f"{coll_name}_")
-        suffix_len = len("_fts")
-
-        for (table_name,) in fts_tables:
-            base_name = table_name[:-suffix_len]
-            is_longer_match = False
-            for tbl in all_tables:
-                if tbl != coll_name and tbl.startswith(coll_name + "_"):
-                    if base_name.startswith(tbl + "_"):
-                        is_longer_match = True
-                        break
-            if is_longer_match:
+        prefix = f"{coll_name}_"
+        suffix = "_fts"
+        search_indexes: list[str] = []
+        seen: set[str] = set()
+        for (trig_name,) in trig_rows:
+            fts_table_name = trig_name.removesuffix("_insert")
+            if fts_table_name not in existing_tables or fts_table_name in seen:
                 continue
-
-            # Extract field name from FTS table name
-            # Format: {collection}_{field}_fts
-            field_name = table_name[prefix_len:-suffix_len]
-            search_indexes.append(field_name)
+            seen.add(fts_table_name)
+            stored = _load_index_keys(self.collection.db, fts_table_name)
+            if stored:
+                search_indexes.append(stored[0])
+            elif fts_table_name.startswith(prefix) and fts_table_name.endswith(
+                suffix
+            ):
+                search_indexes.append(
+                    fts_table_name[len(prefix) : -len(suffix)]
+                )
 
         return search_indexes
 
@@ -1154,10 +1309,12 @@ class IndexManager:
         # FTS tables have a specific naming pattern: {collection}_{field}_fts
         coll_name = validate_identifier(self.collection.name)
         index_name = validate_identifier(index.replace(".", "_"))
-        fts_table_name = quote_identifier(f"{coll_name}_{index_name}_fts")
+        fts_raw_name = f"{coll_name}_{index_name}_fts"
+        fts_table_name = quote_identifier(fts_raw_name)
 
         # Drop the FTS table
         self.collection.db.execute(f"DROP TABLE IF EXISTS {fts_table_name}")
+        _delete_index_keys(self.collection.db, fts_raw_name)
 
         # Drop the triggers associated with the FTS table
         self.collection.db.execute(
@@ -1170,30 +1327,52 @@ class IndexManager:
             f"DROP TRIGGER IF EXISTS {quote_identifier(f'{coll_name}_{index_name}_fts_delete')}"
         )
 
-    def _create_datetime_index(self, key: str, unique: bool = False):
+    def _create_datetime_index(
+        self,
+        key: str,
+        unique: bool = False,
+        sparse: bool = False,
+        custom_name: str | None = None,
+    ):
         """Create a timezone-normalized UTC datetime index on ``key``.
 
-        Indexes ``datetime(json_extract(...))`` or
-        ``datetime(jsonb_extract(...))`` under ``idx_{collection}_{key}_utc``.
+        Indexes ``datetime(COALESCE(extract(..., '$.<path>.$date'),
+        extract(..., '$.<path>')))`` under ``idx_{collection}_{key}_utc`` so
+        both NeoSQLite ``{"$date": ...}`` objects and ISO strings evaluate
+        properly and preserve ``unique=True``.
 
         Args:
             key: Field path to index (for example, ``"timestamp"`` or
                 ``"user.created_at"``).
             unique: If True, enforce uniqueness on the normalized datetime
                 values.
+            sparse: If True, omit rows where the extracted datetime is ``NULL``.
+            custom_name: Optional custom index name recorded in key metadata.
         """
-        # Generate the column name by replacing dots with underscores and appending '_utc'
-        # This is just for naming consistency
         coll_name = validate_identifier(self.collection.name)
         column_name = f"{key.replace('.', '_')}_utc"
-        idx_name = quote_identifier(f"idx_{coll_name}_{column_name}")
+        idx_raw_name = f"idx_{coll_name}_{column_name}"
+        idx_name = quote_identifier(idx_raw_name)
 
-        # Determine which function to use based on JSONB support
         func_prefix = self.jsonb.json_function_prefix
+        json_path = parse_json_path(key)
+        date_path = f"{json_path}.$date"
+        dt_expr = (
+            f"datetime(COALESCE("
+            f"{func_prefix}_extract(data, '{date_path}'), "
+            f"{func_prefix}_extract(data, '{json_path}')"
+            f"))"
+        )
+        partial = f" WHERE {dt_expr} IS NOT NULL" if sparse else ""
 
-        index_sql = f"""
-        CREATE {"UNIQUE " if unique else ""}INDEX IF NOT EXISTS
-        {idx_name}
-        ON {quote_table_name(coll_name)}(datetime({func_prefix}_extract(data, '{parse_json_path(key)}')))
-        """
+        index_sql = (
+            f"CREATE {'UNIQUE ' if unique else ''}INDEX IF NOT EXISTS "
+            f"{idx_name} ON {quote_table_name(coll_name)}({dt_expr}){partial}"
+        )
         self.collection.db.execute(index_sql)
+        _store_index_keys(
+            self.collection.db,
+            idx_raw_name,
+            [(key, 1)],
+            custom_name=custom_name,
+        )

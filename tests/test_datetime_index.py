@@ -26,3 +26,23 @@ def test_datetime_index_creation():
             )
         )
         assert len(res) == 1
+
+
+def test_datetime_index_unique_enforces_uniqueness_and_lists_real_key():
+    import pytest
+
+    from neosqlite.collection import sqlite3
+
+    with neosqlite.Connection(":memory:") as conn:
+        ev = conn.ev
+        ev.create_index("created_at", datetime_field=True, unique=True)
+        t = datetime(2026, 1, 1, tzinfo=UTC)
+        ev.insert_one({"created_at": t})
+        with pytest.raises(sqlite3.IntegrityError):
+            ev.insert_one({"created_at": t})
+
+        assert ev.count_documents({}) == 1
+        assert ev.list_indexes(as_keys=True) == [["created_at"]]
+        assert ev.index_information()["idx_ev_created_at_utc"]["key"] == {
+            "created_at": 1
+        }

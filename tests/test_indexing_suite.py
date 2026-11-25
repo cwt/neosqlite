@@ -1085,5 +1085,101 @@ def test_search_index_functionality(collection):
     assert "title" in search_indexes
 
 
+def test_create_index_id_tuple_and_compound_do_not_break_inserts():
+    """create_index([('_id', 1)]) and compound _id indexes work on writes."""
+    with neosqlite.Connection(":memory:") as conn:
+        posts = conn.posts
+        idx_name = posts.create_index([("_id", 1)])
+        assert idx_name == "idx_posts__id"
+        posts.insert_one({"_id": 1, "title": "hello"})
+        posts.update_one({"_id": 1}, {"$set": {"title": "world"}})
+        assert posts.find_one({"_id": 1})["title"] == "world"
+        info = posts.index_information()
+        assert info["idx_posts__id"]["key"] == {"_id": 1}
+        assert posts.list_indexes(as_keys=True) == [["_id"]]
+
+        comp = conn.comp_posts
+        comp_name = comp.create_index([("_id", -1), ("a", -1)], sparse=True)
+        assert comp_name == "idx_comp_posts__id_a"
+        comp.insert_one({"_id": 10, "a": 20})
+        comp_info = comp.index_information()
+        assert comp_info[comp_name]["key"] == {"_id": -1, "a": -1}
+
+        str_id = conn.str_id_posts
+        str_id.create_index("_id", sparse=True)
+        str_id.insert_one({"_id": "k1", "v": 1})
+        assert str_id.index_information()["idx_str_id_posts__id"]["key"] == {
+            "_id": 1
+        }
+
+
+def test_create_index_single_tuple_respects_sparse_and_descending():
+    """Single-tuple index preserves DESC ordering and sparse partial filter."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.sparse_tuple
+        idx_name = coll.create_index([("x", -1)], sparse=True, unique=True)
+        assert idx_name == "idx_sparse_tuple_x"
+        coll.insert_one({})
+        coll.insert_one({})
+        coll.insert_one({"x": 5})
+        with pytest.raises(IntegrityError):
+            coll.insert_one({"x": 5})
+
+        assert coll.count_documents({}) == 3
+        assert coll.index_information()[idx_name]["key"] == {"x": -1}
+        assert coll.list_indexes(as_keys=True) == [["x"]]
+
+        idx_sql = conn.db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name=?",
+            (idx_name,),
+        ).fetchone()[0]
+        assert "DESC" in idx_sql.upper()
+        assert "WHERE" in idx_sql.upper()
+
+
+def test_create_indexes_single_and_multi_field_text_and_empty_key():
+    """IndexModel preserves single/multi-field FTS indexes and rejects empty key."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.articles
+        returned = coll.create_indexes(
+            [
+                neosqlite.IndexModel([("body", "text")]),
+                neosqlite.IndexModel([("a", "text"), ("b", "text")]),
+            ]
+        )
+        assert returned == [
+            "articles_body_fts",
+            "articles_a_fts_articles_b_fts",
+        ]
+        assert sorted(coll.list_search_indexes()) == ["a", "b", "body"]
+
+        coll.insert_one({"_id": 1, "body": "searchable prose"})
+        coll.insert_one({"_id": 2, "body": "other content"})
+        hits = list(coll.find({"$text": {"$search": "searchable"}}))
+        assert [d["_id"] for d in hits] == [1]
+
+        with pytest.raises(ValueError, match="empty"):
+            coll.create_indexes([neosqlite.IndexModel([])])
+        with pytest.raises(ValueError):
+            coll.create_index([])
+
+
+def test_legacy_neosqlite_index_keys_backwards_compatibility():
+    """Legacy ['field'] rows in neosqlite_index_keys still load cleanly."""
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.legacy_keys
+        coll.create_index([("a", 1), ("b", -1)])
+        conn.db.execute(
+            "INSERT OR REPLACE INTO neosqlite_index_keys (index_name, keys_json) "
+            "VALUES (?, ?)",
+            ("idx_legacy_keys_a_b", '["a", "b"]'),
+        )
+        assert coll.list_indexes(as_keys=True) == [["a", "b"]]
+        assert coll.index_information()["idx_legacy_keys_a_b"]["key"] == {
+            "a": 1,
+            "b": 1,
+        }
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

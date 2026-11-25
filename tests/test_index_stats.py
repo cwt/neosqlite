@@ -79,3 +79,20 @@ class TestIndexStats:
             [{"$indexStats": {}}]
         )
         assert plan["tier"] == 3
+
+    def test_index_stats_preserves_descending_explicit_id_and_custom_names(
+        self,
+    ):
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.docs_custom
+            coll.create_index("_id")
+            coll.create_index([("score", -1)])
+            coll.create_index("custom_field", name="my_custom_idx")
+
+            results = list(coll.aggregate([{"$indexStats": {}}]))
+            entries = [(doc["name"], doc["key"]) for doc in results]
+            assert ("_id_", {"_id": 1}) in entries
+            assert ("score_-1", {"score": -1}) in entries
+            assert ("my_custom_idx", {"custom_field": 1}) in entries
+            # Both automatic _id_ and explicit _id index are present
+            assert sum(1 for _, key in entries if key == {"_id": 1}) == 2
