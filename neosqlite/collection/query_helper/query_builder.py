@@ -334,6 +334,10 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                 case "$nor":
                     matches.append(not any(map(reapply, value)))
                 case "$not":
+                    if not isinstance(value, dict):
+                        raise MalformedQueryException(
+                            "$not requires a dictionary query expression"
+                        )
                     matches.append(not self._apply_query(value, document))
                 case "$jsonSchema":
                     from .schema_validator import matches_json_schema
@@ -378,6 +382,8 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                         else:
                             matches.append(True)
                     else:
+                        from ...query_operators import _bson_values_equal
+
                         doc_value: dict[str, Any] | None = document
                         if doc_value and field in doc_value:
                             doc_value = doc_value.get(field, None)
@@ -397,13 +403,13 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                                 document, field.split(".")
                             )
                             if candidates is None:
-                                if value != doc_value:
+                                if not _bson_values_equal(value, doc_value):
                                     matches.append(False)
                             elif isinstance(value, (list, dict, re.Pattern)):
-                                if value != doc_value:
+                                if not _bson_values_equal(value, doc_value):
                                     matches.append(False)
                             elif not any(
-                                cv == value
+                                _bson_values_equal(cv, value)
                                 for cv in candidates
                                 for cv in (cv if isinstance(cv, list) else [cv])
                             ):

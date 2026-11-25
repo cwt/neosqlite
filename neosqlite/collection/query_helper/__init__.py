@@ -78,6 +78,7 @@ class QueryHelper(
             collection: The collection instance this QueryHelper operates on.
         """
         self.collection = collection
+        self._disable_indexed_union: bool = False
         # Access debug flag from the database connection if available
         self.debug = (
             getattr(collection.database, "debug", False)

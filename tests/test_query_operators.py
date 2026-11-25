@@ -1,5 +1,6 @@
 """Unit tests for query operators."""
 
+from datetime import UTC
 from unittest.mock import patch
 
 import pytest
@@ -350,3 +351,34 @@ def test_bits_any_set():
             yield "not-a-number"
 
     assert _bits_any_set("val", BadIter(), doc) is False
+
+
+def test_array_range_string_mixed_types_and_bool_distinction():
+    """Verify array range ops support strings/mixed types and ops distinguish bool from int."""
+    from datetime import datetime
+
+    assert _gt("tags", "banana", {"tags": ["apple", "cherry"]}) is True
+    assert _lt("tags", "banana", {"tags": ["cherry"]}) is False
+    assert _gt("mixed", 5, {"mixed": ["hello", True, None]}) is False
+    assert _gt("mixed", 5, {"mixed": ["hello", 10]}) is True
+    dt1 = datetime(2026, 1, 1, tzinfo=UTC)
+    dt2 = datetime(2026, 2, 1, tzinfo=UTC)
+    assert _gt("dates", dt1, {"dates": [dt2]}) is True
+    # Naive vs aware datetime comparison must not crash
+    assert _gt("dates", datetime(2026, 1, 1), {"dates": [dt2]}) is False
+
+    # bool != int across _eq, _ne, _in, _nin, _all, _mod
+    assert _eq("v", 1, {"v": True}) is False
+    assert _eq("v", 1, {"v": [True]}) is False
+    assert _ne("v", 1, {"v": True}) is True
+    assert _in("v", [1, 2], {"v": True}) is False
+    assert _nin("v", [1, 2], {"v": True}) is True
+    assert _all("v", [1], {"v": [True]}) is False
+    assert _mod("v", [2, 1], {"v": True}) is False
+    assert _mod("v", [2, 1], {"v": [True]}) is False
+
+    # $all with dict / nested list elements
+    doc_dicts = {"items": [{"a": 1}, {"b": [2, 3]}]}
+    assert _all("items", [{"a": 1}], doc_dicts) is True
+    assert _all("items", [{"a": 1}, {"b": [2, 3]}], doc_dicts) is True
+    assert _all("items", [{"a": True}], doc_dicts) is False

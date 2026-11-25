@@ -17,12 +17,38 @@ from neosqlite.collection.json_helpers import (
 from ...sql_utils import quote_table_name
 from ..json_path_utils import parse_json_path
 from ..query_helper import get_force_fallback
-from ..type_utils import validate_session
+from ..type_utils import _hashable_group_key, validate_session
 from .base import QueryEngineProtocol
 
 
-def _collect_distinct_values(val: Any, results: set[Any]) -> None:
-    """Collect distinct scalar or canonical JSON values into a result set.
+def _distinct_dedup_key(val: Any) -> Any:
+    """Return a hashable BSON-type-safe deduplication key for ``distinct``."""
+    if isinstance(val, bool):
+        return ("b", val)
+    if isinstance(val, (int, float)):
+        return ("n", val)
+    return _hashable_group_key(val)
+
+
+def _add_distinct_value(val: Any, seen: set[Any], results: list[Any]) -> None:
+    """Append ``val`` (or canonical JSON for dict/list) to ``results`` if unseen."""
+    item = (
+        neosqlite_json_dumps(val, sort_keys=True)
+        if isinstance(val, (dict, list))
+        else val
+    )
+    key = _distinct_dedup_key(item)
+    if key not in seen:
+        seen.add(key)
+        results.append(item)
+
+
+def _collect_distinct_values(
+    val: Any,
+    results: set[Any] | list[Any],
+    seen: set[Any] | None = None,
+) -> None:
+    """Collect distinct scalar or canonical JSON values into ``results``.
 
     Ignores ``None``. Flattens top-level lists element-wise per MongoDB
     ``distinct`` semantics and canonicalizes nested dicts or lists with
@@ -30,23 +56,23 @@ def _collect_distinct_values(val: Any, results: set[Any]) -> None:
 
     Args:
         val: Extracted field value to add to ``results``.
-        results: Mutable set accumulating distinct values.
+        results: Mutable container accumulating distinct values.
+        seen: Optional set tracking ``_distinct_dedup_key`` values when
+            ``results`` is a ``list`` (preserving ``bool`` vs ``int``).
     """
     if val is None:
         return
-    match val:
-        case list():
-            # MongoDB distinct flattens arrays and returns each
-            # element (#165); documents canonicalize via JSON
-            for item in val:
-                if isinstance(item, (dict, list)):
-                    results.add(neosqlite_json_dumps(item, sort_keys=True))
-                else:
-                    results.add(item)
-        case dict():
-            results.add(neosqlite_json_dumps(val, sort_keys=True))
-        case _:
-            results.add(val)
+    items = val if isinstance(val, list) else [val]
+    if isinstance(results, list) and seen is not None:
+        for item in items:
+            _add_distinct_value(item, seen, results)
+    else:
+        assert isinstance(results, set)
+        for item in items:
+            if isinstance(item, (dict, list)):
+                results.add(neosqlite_json_dumps(item, sort_keys=True))
+            else:
+                results.add(item)
 
 
 def _extract_distinct_field_values(doc: Any, key: str) -> list[Any]:
@@ -178,7 +204,7 @@ class QueryMethodsMixin(QueryEngineProtocol):
         if filter is not None:
             filter = self.helpers._normalize_id_query(filter)
 
-        if get_force_fallback():
+        if get_force_fallback() or "." in key:
             return self._distinct_python(key, filter, session)
 
         params: list[Any] = []
@@ -204,30 +230,42 @@ class QueryMethodsMixin(QueryEngineProtocol):
                 f"CASE WHEN {func_prefix}_type(data, '$._id') IS NOT NULL "
                 f"THEN {func_prefix}_extract(data, '$._id') ELSE {id_col} END"
             )
+            type_expr = f"{func_prefix}_type(data, '$._id')"
         else:
-            select_expr = (
-                f"{func_prefix}_extract(data, '{parse_json_path(key)}')"
-            )
+            parsed_path = parse_json_path(key)
+            select_expr = f"{func_prefix}_extract(data, '{parsed_path}')"
+            type_expr = f"{func_prefix}_type(data, '{parsed_path}')"
 
-        cmd = f"SELECT DISTINCT {select_expr} FROM {table_name} {where_clause}"
+        cmd = f"SELECT DISTINCT {select_expr}, {type_expr} FROM {table_name} {where_clause}"
         cursor = self.collection.db.execute(cmd, params)
-        results: set[Any] = set()
+        seen: set[Any] = set()
+        results: list[Any] = []
         for row in cursor.fetchall():
-            if row[0] is None:
+            raw_val, row_type = row[0], row[1]
+            if raw_val is None or row_type == "null":
                 continue
-            raw_val = row[0]
-            if isinstance(raw_val, str) and (
-                (raw_val.startswith("{") and raw_val.endswith("}"))
-                or (raw_val.startswith("[") and raw_val.endswith("]"))
+            if row_type == "true":
+                _add_distinct_value(True, seen, results)
+                continue
+            if row_type == "false":
+                _add_distinct_value(False, seen, results)
+                continue
+            if row_type in ("object", "array") or (
+                row_type is None
+                and isinstance(raw_val, str)
+                and (
+                    (raw_val.startswith("{") and raw_val.endswith("}"))
+                    or (raw_val.startswith("[") and raw_val.endswith("]"))
+                )
             ):
                 try:
                     val = neosqlite_json_loads(raw_val)
-                    _collect_distinct_values(val, results)
+                    _collect_distinct_values(val, results, seen=seen)
                     continue
                 except (json.JSONDecodeError, TypeError):
                     pass
-            results.add(raw_val)
-        return list(results)
+            _add_distinct_value(raw_val, seen, results)
+        return results
 
     def _distinct_python(
         self,
@@ -250,9 +288,10 @@ class QueryMethodsMixin(QueryEngineProtocol):
         Returns:
             list[Any]: List of distinct values found for ``key``.
         """
-        results: set[Any] = set()
+        seen: set[Any] = set()
+        results: list[Any] = []
         for doc in self.find(filter or {}, session=session):
             for val in _extract_distinct_field_values(doc, key):
-                _collect_distinct_values(val, results)
+                _collect_distinct_values(val, results, seen=seen)
         self._notify_tier_change("tier3", [filter or {}])
-        return list(results)
+        return results

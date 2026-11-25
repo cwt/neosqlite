@@ -335,19 +335,19 @@ class TestSQLOperatorTranslator:
         """Test translation of $contains operator."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$contains", "test")
-        assert result == ("lower(field) LIKE ?", ["%test%"])
+        assert result == ("lower(field) LIKE ? ESCAPE '\\'", ["%test%"])
 
     def test_translate_operator_contains_case_insensitive(self):
         """Test translation of $contains operator with case conversion."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$contains", "TEST")
-        assert result == ("lower(field) LIKE ?", ["%test%"])
+        assert result == ("lower(field) LIKE ? ESCAPE '\\'", ["%test%"])
 
     def test_translate_operator_contains_non_string(self):
         """Test translation of $contains operator with non-string value."""
         translator = SQLOperatorTranslator()
         result = translator.translate_operator("field", "$contains", 123)
-        assert result == ("lower(field) LIKE ?", ["%123%"])
+        assert result == ("lower(field) LIKE ? ESCAPE '\\'", ["%123%"])
 
     def test_translate_operator_unsupported(self):
         """Test translation of unsupported operator."""
@@ -492,7 +492,10 @@ class TestSQLClauseBuilder:
         builder = SQLClauseBuilder()
         query = {"$not": "invalid"}
         result = builder.build_where_clause(query)
-        assert result == ("", [])  # Text search should fallback to empty result
+        assert result == (
+            None,
+            [],
+        )  # Malformed $not falls back safely instead of matching all rows
 
     def test_build_where_clause_nested_text_search(self):
         """Test building WHERE clause with nested text search (should fallback)."""

@@ -1,5 +1,7 @@
 import logging
+import operator
 import re
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -134,11 +136,97 @@ def _convert_to_bitmask(value: Any) -> int | None:
 
 
 # Query operators
+def _bson_values_equal(a: Any, b: Any) -> bool:
+    """Compare two BSON/Python values while keeping ``bool`` distinct from ``int``."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a is b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return len(a) == len(b) and all(
+            k in b and _bson_values_equal(v, b[k]) for k, v in a.items()
+        )
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(
+            _bson_values_equal(x, y) for x, y in zip(a, b)
+        )
+    return bool(a == b)
+
+
+def _bson_hashable_key(value: Any) -> Any:
+    """Return a hashable BSON-type-safe key for set membership (e.g. ``$all``)."""
+    if isinstance(value, bool):
+        return ("b", value)
+    if isinstance(value, (int, float)):
+        return ("n", value)
+    if value is None:
+        return ("z",)
+    if isinstance(value, dict):
+        return (
+            "d",
+            tuple(sorted((k, _bson_hashable_key(v)) for k, v in value.items())),
+        )
+    if isinstance(value, list):
+        return ("l", tuple(_bson_hashable_key(v) for v in value))
+    if isinstance(value, bytes):
+        return ("y", value)
+    try:
+        hash(value)
+        return ("o", type(value), value)
+    except TypeError:
+        return ("r", type(value).__name__, repr(value))
+
+
+def _range_element_matches(
+    lhs: Any, rhs: Any, comparator: Callable[[Any, Any], bool]
+) -> bool:
+    """Evaluate a range comparator against two values if BSON-compatible."""
+    if lhs is None or rhs is None:
+        return False
+    if isinstance(lhs, bool) or isinstance(rhs, bool):
+        if not (isinstance(lhs, bool) and isinstance(rhs, bool)):
+            return False
+    elif isinstance(lhs, (int, float)) and isinstance(rhs, (int, float)):
+        pass
+    elif isinstance(lhs, (bytes, bytearray)) and isinstance(
+        rhs, (bytes, bytearray)
+    ):
+        pass
+    elif type(lhs) is not type(rhs):
+        return False
+    try:
+        return comparator(lhs, rhs)
+    except TypeError:
+        return False
+
+
+def _evaluate_range(
+    field: str,
+    value: Any,
+    document: dict[str, Any],
+    comparator: Callable[[Any, Any], bool],
+    *,
+    allow_null: bool = False,
+) -> bool:
+    """Shared implementation for ``$gt``, ``$lt``, ``$gte``, and ``$lte``."""
+    try:
+        doc_value = _get_nested_field(field, document)
+        if value is None:
+            return doc_value is None if allow_null else False
+        if isinstance(doc_value, list):
+            return any(
+                _range_element_matches(x, value, comparator) for x in doc_value
+            )
+        return _range_element_matches(doc_value, value, comparator)
+    except TypeError as e:
+        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
+        return False
+
+
 def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
     """Compare a field value with a target value using ``$eq`` semantics.
 
     Matches when both values are lists and equal, when the field value is a
-    list containing ``value``, or when scalar equality holds.
+    list containing ``value``, or when scalar equality holds (distinguishing
+    ``bool`` from ``int``).
 
     Args:
         field: The document field path to compare.
@@ -152,12 +240,12 @@ def _eq(field: str, value: Any, document: dict[str, Any]) -> bool:
         doc_value = _get_nested_field(field, document)
         # Both are arrays: exact array equality
         if isinstance(doc_value, list) and isinstance(value, list):
-            return doc_value == value
+            return _bson_values_equal(doc_value, value)
         # Doc is array, value is scalar: check if value is in array
         if isinstance(doc_value, list):
-            return value in doc_value
+            return any(_bson_values_equal(item, value) for item in doc_value)
         # Scalar semantics: exact equality
-        return doc_value == value
+        return _bson_values_equal(doc_value, value)
     except (TypeError, AttributeError) as e:
         logger.debug(f"Equality comparison failed for field '{field}': {e}")
         return False
@@ -167,7 +255,7 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """Compare a field value against a target using ``$gt`` semantics.
 
     Returns False when ``value`` is None or on boolean/incompatible-type
-    mismatches. When the field is a list, matches if any non-boolean numeric
+    mismatches. When the field is a list, matches if any BSON-compatible
     element satisfies ``x > value``.
 
     Args:
@@ -179,31 +267,14 @@ def _gt(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field (or an array element) is greater than
             ``value``, False otherwise.
     """
-    try:
-        if value is None:
-            return False
-        doc_value = _get_nested_field(field, document)
-        # MongoDB array semantics: match if ANY element satisfies
-        if isinstance(doc_value, list):
-            return any(
-                isinstance(x, (int, float))
-                and not isinstance(x, bool)
-                and x > value
-                for x in doc_value
-            )
-        if isinstance(doc_value, bool) != isinstance(value, bool):
-            return False
-        return doc_value > value
-    except TypeError as e:
-        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
-        return False
+    return _evaluate_range(field, value, document, operator.gt)
 
 
 def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
     """Compare a field value against a target using ``$lt`` semantics.
 
     Returns False when ``value`` is None or on boolean/incompatible-type
-    mismatches. When the field is a list, matches if any non-boolean numeric
+    mismatches. When the field is a list, matches if any BSON-compatible
     element satisfies ``x < value``.
 
     Args:
@@ -215,32 +286,14 @@ def _lt(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field (or an array element) is less than ``value``,
             False otherwise.
     """
-    try:
-        if value is None:
-            return False
-        doc_value = _get_nested_field(field, document)
-        # MongoDB array semantics: match if ANY element satisfies
-        if isinstance(doc_value, list):
-            return any(
-                isinstance(x, (int, float))
-                and not isinstance(x, bool)
-                and x < value
-                for x in doc_value
-            )
-        if isinstance(doc_value, bool) != isinstance(value, bool):
-            return False
-        return doc_value < value
-    except TypeError as e:
-        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
-        return False
+    return _evaluate_range(field, value, document, operator.lt)
 
 
 def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """Compare a field value against a target using ``$gte`` semantics.
 
     When ``value`` is None, matches if the field value is None. When the field
-    is a list, matches if any non-boolean numeric element satisfies
-    ``x >= value``.
+    is a list, matches if any BSON-compatible element satisfies ``x >= value``.
 
     Args:
         field: The document field path to compare.
@@ -251,33 +304,14 @@ def _gte(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field (or an array element) is greater than or
             equal to ``value``, False otherwise.
     """
-    try:
-        if value is None:
-            doc_value = _get_nested_field(field, document)
-            return doc_value is None
-        doc_value = _get_nested_field(field, document)
-        # MongoDB array semantics: match if ANY element satisfies
-        if isinstance(doc_value, list):
-            return any(
-                isinstance(x, (int, float))
-                and not isinstance(x, bool)
-                and x >= value
-                for x in doc_value
-            )
-        if isinstance(doc_value, bool) != isinstance(value, bool):
-            return False
-        return doc_value >= value
-    except TypeError as e:
-        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
-        return False
+    return _evaluate_range(field, value, document, operator.ge, allow_null=True)
 
 
 def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
     """Compare a field value against a target using ``$lte`` semantics.
 
     When ``value`` is None, matches if the field value is None. When the field
-    is a list, matches if any non-boolean numeric element satisfies
-    ``x <= value``.
+    is a list, matches if any BSON-compatible element satisfies ``x <= value``.
 
     Args:
         field: The document field path to compare.
@@ -288,29 +322,13 @@ def _lte(field: str, value: Any, document: dict[str, Any]) -> bool:
         bool: True if the field (or an array element) is less than or equal to
             ``value``, False otherwise.
     """
-    try:
-        if value is None:
-            doc_value = _get_nested_field(field, document)
-            return doc_value is None
-        doc_value = _get_nested_field(field, document)
-        # MongoDB array semantics: match if ANY element satisfies
-        if isinstance(doc_value, list):
-            return any(
-                isinstance(x, (int, float))
-                and not isinstance(x, bool)
-                and x <= value
-                for x in doc_value
-            )
-        if isinstance(doc_value, bool) != isinstance(value, bool):
-            return False
-        return doc_value <= value
-    except TypeError as e:
-        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
-        return False
+    return _evaluate_range(field, value, document, operator.le, allow_null=True)
 
 
 def _all(field: str, value: list[Any], document: dict[str, Any]) -> bool:
     """Check if an array field contains all elements from ``value``.
+
+    Supports dict/list elements and distinguishes ``bool`` from ``int``.
 
     Args:
         field: The document field path to inspect.
@@ -325,20 +343,19 @@ def _all(field: str, value: list[Any], document: dict[str, Any]) -> bool:
         MalformedQueryException: If ``value`` is not iterable.
     """
     try:
-        a = set(value)
+        required_keys = {_bson_hashable_key(item) for item in value}
     except TypeError as e:
         logger.debug(
             f"Operator evaluation failed for '$all' field '{field}': {e}"
         )
         raise MalformedQueryException("'$all' must accept an iterable")
-    try:
-        doc_value = _get_nested_field(field, document)
-        b = set(doc_value if isinstance(doc_value, list) else [])
-    except TypeError as e:
-        logger.debug(f"Operator evaluation failed due to TypeError: {e}")
-        return False
-    else:
-        return a.issubset(b)
+    doc_value = _get_nested_field(field, document)
+    doc_keys = (
+        {_bson_hashable_key(item) for item in doc_value}
+        if isinstance(doc_value, list)
+        else set()
+    )
+    return required_keys.issubset(doc_keys)
 
 
 def _in(field: str, value: list[Any], document: dict[str, Any]) -> bool:
@@ -363,10 +380,13 @@ def _in(field: str, value: list[Any], document: dict[str, Any]) -> bool:
 
     # If the field value is a list, check if any element is in the provided list
     if isinstance(doc_value, list):
-        return any(item in value for item in doc_value)
-    else:
-        # If the field value is not a list, check if it's in the provided list
-        return doc_value in value
+        return any(
+            _bson_values_equal(item, cand)
+            for item in doc_value
+            for cand in value
+        )
+    # If the field value is not a list, check if it's in the provided list
+    return any(_bson_values_equal(doc_value, cand) for cand in value)
 
 
 def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
@@ -374,7 +394,7 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
 
     Missing fields match ``$ne`` unless ``value`` is None. For array fields,
     matches when ``value`` is not contained in the array; for scalars, matches
-    when ``doc_value != value``.
+    when ``not _bson_values_equal(doc_value, value)``.
 
     Args:
         field: The document field path to compare.
@@ -392,9 +412,9 @@ def _ne(field: str, value: Any, document: dict[str, Any]) -> bool:
     doc_value = _get_nested_field(field, document)
     # MongoDB array semantics: check if value is NOT in array
     if isinstance(doc_value, list):
-        return value not in doc_value
+        return not any(_bson_values_equal(item, value) for item in doc_value)
     # Scalar semantics: not equal
-    return doc_value != value
+    return not _bson_values_equal(doc_value, value)
 
 
 def _nin(field: str, value: list[Any], document: dict[str, Any]) -> bool:
@@ -413,7 +433,7 @@ def _nin(field: str, value: list[Any], document: dict[str, Any]) -> bool:
         MalformedQueryException: If ``value`` is not iterable.
     """
     try:
-        values = iter(value)
+        disallowed = list(value)
     except TypeError as e:
         logger.debug(
             f"Operator evaluation failed for '$nin' field '{field}': {e}"
@@ -423,18 +443,21 @@ def _nin(field: str, value: list[Any], document: dict[str, Any]) -> bool:
 
     # If the field value is a list, check if none of the elements are in the provided list
     if isinstance(doc_value, list):
-        return not any(item in value for item in doc_value)
-    else:
-        # If the field value is not a list, check if it's not in the provided list
-        return doc_value not in values
+        return not any(
+            _bson_values_equal(item, cand)
+            for item in doc_value
+            for cand in disallowed
+        )
+    # If the field value is not a list, check if it's not in the provided list
+    return not any(_bson_values_equal(doc_value, cand) for cand in disallowed)
 
 
 def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
     """Evaluate the modulo operator ``$mod`` against a numeric or array field.
 
     Coerces ``value`` into ``[divisor, remainder]`` integers and checks whether
-    ``int(doc_value) % divisor == remainder`` (or any numeric element when the
-    field is an array).
+    ``int(doc_value) % divisor == remainder`` (or any non-boolean numeric
+    element when the field is an array).
 
     Args:
         field: The document field path to inspect.
@@ -462,14 +485,15 @@ def _mod(field: str, value: list[int], document: dict[str, Any]) -> bool:
         raise MalformedQueryException("'$mod' divisor must not be 0")
     try:
         doc_value = _get_nested_field(field, document)
-        # $mod only works on scalar values, not arrays
         if isinstance(doc_value, list):
-            # MongoDB: $mod on arrays matches if ANY element satisfies
+            # MongoDB: $mod on arrays matches if ANY non-bool numeric element satisfies
             return any(
-                isinstance(x, (int, float)) and int(x) % divisor == remainder
+                isinstance(x, (int, float))
+                and not isinstance(x, bool)
+                and int(x) % divisor == remainder
                 for x in doc_value
             )
-        if doc_value is None:
+        if doc_value is None or isinstance(doc_value, bool):
             return False
         return int(doc_value) % divisor == remainder
     except (TypeError, ValueError) as e:

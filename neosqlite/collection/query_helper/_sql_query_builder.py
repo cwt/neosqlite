@@ -568,11 +568,12 @@ class SqlQueryBuilderMixin:
     def _build_containment_clause(
         self, field: str, extract_expr: str, value: Any
     ) -> tuple[str, list[Any]]:
-        """Build an array-containment OR predicate for plain equality (#99).
+        """Build an array-containment predicate for plain equality (#99).
 
-        Delegates to :func:`build_json_containment_clause` so path quoting,
-        JSONB parameter binding, and ``json_each`` / ``jsonb_each`` array
-        traversal share one implementation.
+        When the field is indexed, splits the scalar and array arms via an
+        ``id IN (SELECT id ... UNION SELECT id ...)`` subquery so SQLite keeps
+        using the scalar expression index while still matching array elements
+        (#193). Otherwise uses a direct parenthesized ``OR`` predicate.
 
         Args:
             field: Dotted MongoDB field path.
@@ -580,19 +581,34 @@ class SqlQueryBuilderMixin:
             value: Scalar target value to match directly or inside arrays.
 
         Returns:
-            tuple[str, list[Any]]: Parenthesized SQL ``OR`` predicate and its
-            corresponding parameter list.
+            tuple[str, list[Any]]: SQL predicate and its corresponding
+            parameter list.
         """
-        from ..type_utils import build_json_containment_clause
+        from ..type_utils import build_json_containment_parts
 
-        return build_json_containment_clause(
-            "data",
-            field,
-            extract_expr,
-            value,
-            self.jsonb.json_each_function,
-            jsonb_supported=self.jsonb.jsonb_supported,
+        scalar_sql, scalar_params, arr_sql, arr_params = (
+            build_json_containment_parts(
+                "data",
+                field,
+                extract_expr,
+                value,
+                self.jsonb.json_each_function,
+                jsonb_supported=self.jsonb.jsonb_supported,
+            )
         )
+        table_name = getattr(self.collection, "name", None)
+        if (
+            not getattr(self, "_disable_indexed_union", False)
+            and isinstance(table_name, str)
+            and self._field_has_index(field)
+        ):
+            table_ref = quote_table_name(table_name)
+            return (
+                f"id IN (SELECT id FROM {table_ref} WHERE {scalar_sql} "
+                f"UNION SELECT id FROM {table_ref} WHERE {arr_sql})",
+                scalar_params + arr_params,
+            )
+        return f"({scalar_sql} OR {arr_sql})", scalar_params + arr_params
 
     def _field_has_index(self, field: str) -> bool:
         """Return whether an index exists whose name encodes ``field`` (#99).
@@ -703,18 +719,10 @@ class SqlQueryBuilderMixin:
                 if isinstance(value, (dict, list)):
                     return f"{extract_expr} = ?", [value]
                 # MongoDB: {arr: v} also matches when the array CONTAINS
-                # v at any depth (#99). Skipped for indexed fields so the
-                # OR-form cannot disable the expression index.
-                if not self._field_has_index(field):
-                    return self._build_containment_clause(
-                        field, extract_expr, value
-                    )
-                from ..type_utils import serialize_sql_query_value
-
-                param_val, ph = serialize_sql_query_value(
-                    value, self.jsonb.jsonb_supported
+                # v at any depth (#99), even when the field is indexed (#193).
+                return self._build_containment_clause(
+                    field, extract_expr, value
                 )
-                return f"{extract_expr} = {ph}", [param_val]
 
     def _build_simple_where_clause(
         self,
@@ -1103,6 +1111,55 @@ class SqlQueryBuilderMixin:
 
         return json_type_list_sql(value)
 
+    def _build_range_clause(
+        self,
+        op_sql: str,
+        json_path: str,
+        op_val: Any,
+        *,
+        is_datetime_indexed: bool,
+        allow_array_existential: bool,
+        allow_null: bool = False,
+    ) -> str | None:
+        """Build a type-guarded SQL predicate for ``$gt``, ``$lt``, ``$gte``, and ``$lte``."""
+        from ..type_utils import is_encoded_json_value
+
+        if isinstance(op_val, (list, tuple, dict)) or is_encoded_json_value(
+            op_val
+        ):
+            return None
+        if op_val is None:
+            if allow_null:
+                return f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
+            return "0"
+        if is_datetime_indexed:
+            return f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) {op_sql} datetime(?)"
+        extract_expr = (
+            f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+        )
+        if allow_array_existential and json_path.startswith("'"):
+            json_each_func = self.jsonb.json_each_function
+            return (
+                f"((json_type(data, {json_path}) != 'array' AND "
+                f"{self._json_type_guard_sql(json_path, op_val)} AND "
+                f"{extract_expr} {op_sql} ?) OR "
+                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                f"WHERE json_each.type IN {self._json_type_list_sql(op_val)} "
+                f"AND json_each.value {op_sql} ?)))"
+            )
+        if json_path == "value":
+            return (
+                f"(json_each.type IN {self._json_type_list_sql(op_val)} AND "
+                f"{extract_expr} {op_sql} ?)"
+            )
+        if json_path.startswith("'"):
+            return (
+                f"({self._json_type_guard_sql(json_path, op_val)} AND "
+                f"{extract_expr} {op_sql} ?)"
+            )
+        return f"{extract_expr} {op_sql} ?"
+
     def _build_operator_clause(
         self,
         json_path: str,
@@ -1145,8 +1202,38 @@ class SqlQueryBuilderMixin:
 
         clauses = []
         params = []
+        range_ops = {
+            "$gt": (">", False),
+            "$lt": ("<", False),
+            "$gte": (">=", True),
+            "$lte": ("<=", True),
+        }
 
         for op, op_val in operators.items():
+            if op in range_ops:
+                op_sql, allow_null = range_ops[op]
+                range_clause = self._build_range_clause(
+                    op_sql,
+                    json_path,
+                    op_val,
+                    is_datetime_indexed=is_datetime_indexed,
+                    allow_array_existential=allow_array_existential,
+                    allow_null=allow_null,
+                )
+                if range_clause is None:
+                    return None, []
+                clauses.append(range_clause)
+                if op_val is not None:
+                    if (
+                        not is_datetime_indexed
+                        and allow_array_existential
+                        and json_path.startswith("'")
+                    ):
+                        params.extend([op_val, op_val])
+                    else:
+                        params.append(op_val)
+                continue
+
             match op:
                 case "$eq":
                     # Array values and regex patterns need Python for correct semantics
@@ -1174,12 +1261,13 @@ class SqlQueryBuilderMixin:
                             "'"
                         ):
                             guard = self._json_type_guard_sql(json_path, op_val)
+                            each_types = self._json_type_list_sql(op_val)
                             clauses.append(
-                                f"({guard} AND "
+                                f"(({guard} AND "
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = {scalar_ph}) OR "
                                 f"(json_type(data, {json_path}) = 'array' AND EXISTS "
                                 f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
-                                f"WHERE json_each.value = {each_ph}))"
+                                f"WHERE json_each.type IN {each_types} AND json_each.value = {each_ph})))"
                             )
                             params.extend([param_val, each_val])
                         elif json_path == "value":
@@ -1187,151 +1275,16 @@ class SqlQueryBuilderMixin:
                             # array values are TEXT unless jsonb_each() is in use,
                             # so serialize accordingly (SQLite 3.45-3.50 has JSONB
                             # but not jsonb_each()).
-                            clauses.append(f"value = {each_ph}")
+                            each_types = self._json_type_list_sql(op_val)
+                            clauses.append(
+                                f"(json_each.type IN {each_types} AND value = {each_ph})"
+                            )
                             params.append(each_val)
                         else:
                             clauses.append(
                                 f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) = {scalar_ph}"
                             )
                             params.append(param_val)
-                case "$gt":
-                    # Array and ObjectId/Binary values need Python for correct semantics
-                    if isinstance(
-                        op_val, (list, tuple)
-                    ) or is_encoded_json_value(op_val):
-                        return None, []
-                    if op_val is None:
-                        # MongoDB: nothing is greater than null.
-                        clauses.append("0")
-                        continue
-                    if is_datetime_indexed:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > datetime(?)"
-                        )
-                        params.append(op_val)
-                    else:
-                        json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith(
-                            "'"
-                        ):
-                            clauses.append(
-                                f"((json_type(data, {json_path}) != 'array' AND "
-                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?) OR "
-                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
-                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
-                                f"WHERE json_each.value > ?)))"
-                            )
-                            params.extend([op_val, op_val])
-                        else:
-                            clauses.append(
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) > ?"
-                            )
-                            params.append(op_val)
-                case "$lt":
-                    # Array and ObjectId/Binary values need Python for correct semantics
-                    if isinstance(
-                        op_val, (list, tuple)
-                    ) or is_encoded_json_value(op_val):
-                        return None, []
-                    if op_val is None:
-                        # MongoDB: nothing is less than null.
-                        clauses.append("0")
-                        continue
-                    if is_datetime_indexed:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < datetime(?)"
-                        )
-                        params.append(op_val)
-                    else:
-                        json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith(
-                            "'"
-                        ):
-                            clauses.append(
-                                f"((json_type(data, {json_path}) != 'array' AND "
-                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?) OR "
-                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
-                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
-                                f"WHERE json_each.value < ?)))"
-                            )
-                            params.extend([op_val, op_val])
-                        else:
-                            clauses.append(
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) < ?"
-                            )
-                            params.append(op_val)
-                case "$gte":
-                    if isinstance(
-                        op_val, (list, tuple)
-                    ) or is_encoded_json_value(op_val):
-                        return None, []
-                    if op_val is None:
-                        # MongoDB: only null/missing values are >= null.
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
-                        )
-                        continue
-                    if is_datetime_indexed:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= datetime(?)"
-                        )
-                        params.append(op_val)
-                    else:
-                        json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith(
-                            "'"
-                        ):
-                            clauses.append(
-                                f"((json_type(data, {json_path}) != 'array' AND "
-                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?) OR "
-                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
-                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
-                                f"WHERE json_each.value >= ?)))"
-                            )
-                            params.extend([op_val, op_val])
-                        else:
-                            clauses.append(
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) >= ?"
-                            )
-                            params.append(op_val)
-                case "$lte":
-                    if isinstance(
-                        op_val, (list, tuple)
-                    ) or is_encoded_json_value(op_val):
-                        return None, []
-                    if op_val is None:
-                        # MongoDB: only null/missing values are <= null.
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) IS NULL"
-                        )
-                        continue
-                    if is_datetime_indexed:
-                        clauses.append(
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= datetime(?)"
-                        )
-                        params.append(op_val)
-                    else:
-                        json_each_func = self.jsonb.json_each_function
-                        if allow_array_existential and json_path.startswith(
-                            "'"
-                        ):
-                            clauses.append(
-                                f"((json_type(data, {json_path}) != 'array' AND "
-                                f"{self._json_type_guard_sql(json_path, op_val)} AND "
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?) OR "
-                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
-                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
-                                f"WHERE json_each.value <= ?)))"
-                            )
-                            params.extend([op_val, op_val])
-                        else:
-                            clauses.append(
-                                f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) <= ?"
-                            )
-                            params.append(op_val)
                 case "$ne":
                     # Array values and regex patterns need Python for correct semantics
                     if isinstance(op_val, (list, tuple, re.Pattern)):
@@ -1419,6 +1372,11 @@ class SqlQueryBuilderMixin:
                                 clauses.append(
                                     f"EXISTS (SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each WHERE json_each.value IS NULL)"
                                 )
+                            elif isinstance(v, (list, tuple)) or (
+                                isinstance(v, dict)
+                                and not is_encoded_json_value(v)
+                            ):
+                                return None, []
                             else:
                                 p_val, ph = serialize_sql_query_value(
                                     v, json_each_func == "jsonb_each"
@@ -1450,15 +1408,39 @@ class SqlQueryBuilderMixin:
                     # Handle [divisor, remainder] array
                     if isinstance(op_val, (list, tuple)) and len(op_val) == 2:
                         divisor, remainder = op_val
+                        if (
+                            isinstance(divisor, bool)
+                            or isinstance(remainder, bool)
+                            or not isinstance(divisor, (int, float))
+                            or not isinstance(remainder, (int, float))
+                        ):
+                            return None, []
                         if divisor == 0:
                             # Zero divisor: let the Python tier raise
                             # MalformedQueryException (#160)
                             return None, []
-                        clauses.append(
-                            f"json_type(data, {json_path}) IN ('integer', 'real') AND "
-                            f"{self.jsonb.json_function_prefix}_extract(data, {json_path}) % ? = ?"
-                        )
-                        params.extend([divisor, remainder])
+                        div_int = int(divisor)
+                        rem_int = int(remainder)
+                        extract_expr = f"{self.jsonb.json_function_prefix}_extract(data, {json_path})"
+                        if allow_array_existential and json_path.startswith(
+                            "'"
+                        ):
+                            json_each_func = self.jsonb.json_each_function
+                            clauses.append(
+                                f"((json_type(data, {json_path}) IN ('integer', 'real') AND "
+                                f"{extract_expr} % ? = ?) OR "
+                                f"(json_type(data, {json_path}) = 'array' AND EXISTS "
+                                f"(SELECT 1 FROM {json_each_func}(data, {json_path}) AS json_each "
+                                f"WHERE json_each.type IN ('integer', 'real') AND "
+                                f"json_each.value % ? = ?)))"
+                            )
+                            params.extend([div_int, rem_int, div_int, rem_int])
+                        else:
+                            clauses.append(
+                                f"json_type(data, {json_path}) IN ('integer', 'real') AND "
+                                f"{extract_expr} % ? = ?"
+                            )
+                            params.extend([div_int, rem_int])
                     else:
                         # Invalid format for $mod, fallback to Python
                         return None, []
@@ -1512,10 +1494,16 @@ class SqlQueryBuilderMixin:
                 case "$contains":
                     # Handle case-insensitive substring search
                     if isinstance(op_val, str):
-                        clauses.append(
-                            f"lower({self.jsonb.json_function_prefix}_extract(data, {json_path})) LIKE ?"
+                        escaped = (
+                            op_val.lower()
+                            .replace("\\", "\\\\")
+                            .replace("%", "\\%")
+                            .replace("_", "\\_")
                         )
-                        params.append(f"%{op_val.lower()}%")
+                        clauses.append(
+                            f"lower({self.jsonb.json_function_prefix}_extract(data, {json_path})) LIKE ? ESCAPE '\\'"
+                        )
+                        params.append(f"%{escaped}%")
                     else:
                         # Invalid value for $contains, fallback to Python
                         return None, []

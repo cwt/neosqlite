@@ -299,34 +299,56 @@ class SQLOperatorTranslator:
                     params = [to_iso(value)]
                 case "$in":
                     if isinstance(value, (list, tuple)):
+                        iso_vals = [to_iso(v) for v in value]
+                        placeholders = ", ".join("datetime(?)" for _ in value)
                         if field_access == "_id":
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
                             sql = f"{datetime_field_access} IN ({placeholders})"
-                            params = [to_iso(v) for v in value]
-                        else:
-                            # For array fields with datetime values, use json_each
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
+                            params = iso_vals
+                        elif extracted is not None:
+                            _, data_expr, json_path, _ = extracted
+                            scalar_in = (
+                                f"(json_type({data_expr}, {json_path}) != 'array' AND "
+                                f"{datetime_field_access} IN ({placeholders}))"
                             )
-                            sql = f"EXISTS (SELECT 1 FROM {self._json_each_function}({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
-                            params = [to_iso(v) for v in value]
+                            array_in = (
+                                f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+                                f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
+                                f"WHERE datetime(COALESCE("
+                                f"CASE WHEN json_each.type = 'object' THEN json_extract(json_each.value, '$.\"$date\"') END, "
+                                f"CASE WHEN json_each.type = 'text' THEN json_each.value END"
+                                f")) IN ({placeholders})))"
+                            )
+                            sql = f"({scalar_in} OR {array_in})"
+                            params = iso_vals + iso_vals
+                        else:
+                            return None, []
                 case "$nin":
                     if isinstance(value, (list, tuple)):
+                        iso_vals = [to_iso(v) for v in value]
+                        placeholders = ", ".join("datetime(?)" for _ in value)
                         if field_access == "_id":
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
-                            )
                             sql = f"{datetime_field_access} NOT IN ({placeholders})"
-                            params = [to_iso(v) for v in value]
-                        else:
-                            # For array fields with datetime values, use json_each
-                            placeholders = ", ".join(
-                                "datetime(?)" for _ in value
+                            params = iso_vals
+                        elif extracted is not None:
+                            _, data_expr, json_path, _ = extracted
+                            scalar_in = (
+                                f"(json_type({data_expr}, {json_path}) != 'array' AND "
+                                f"{datetime_field_access} IN ({placeholders}))"
                             )
-                            sql = f"NOT EXISTS (SELECT 1 FROM {self._json_each_function}({datetime_field_access}) WHERE json_each.value IN ({placeholders}))"
-                            params = [to_iso(v) for v in value]
+                            array_in = (
+                                f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
+                                f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
+                                f"WHERE datetime(COALESCE("
+                                f"CASE WHEN json_each.type = 'object' THEN json_extract(json_each.value, '$.\"$date\"') END, "
+                                f"CASE WHEN json_each.type = 'text' THEN json_each.value END"
+                                f")) IN ({placeholders})))"
+                            )
+                            sql = (
+                                f"NOT COALESCE(({scalar_in} OR {array_in}), 0)"
+                            )
+                            params = iso_vals + iso_vals
+                        else:
+                            return None, []
                 case _:
                     # For unsupported operators with datetime values, fall back to regular processing
                     is_datetime_comparison = False
@@ -547,11 +569,18 @@ class SQLOperatorTranslator:
                             f"json_type({data_expr}, {json_path}) = 'array'"
                         ]
                         all_params: list[Any] = []
+                        fallback_all = False
                         for item in value:
                             if item is None:
                                 all_clauses.append(
                                     f"EXISTS (SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each WHERE json_each.value IS NULL)"
                                 )
+                            elif isinstance(item, (list, tuple)) or (
+                                isinstance(item, dict)
+                                and not is_encoded_json_value(item)
+                            ):
+                                fallback_all = True
+                                break
                             else:
                                 p_val, ph = serialize_sql_query_value(
                                     item, each_is_jsonb
@@ -561,6 +590,8 @@ class SQLOperatorTranslator:
                                     f"EXISTS (SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each WHERE json_each.value = {ph} AND json_each.type IN {elem_types})"
                                 )
                                 all_params.append(p_val)
+                        if fallback_all:
+                            return None, []
                         sql = "(" + " AND ".join(all_clauses) + ")"
                         params = all_params
                     else:
@@ -615,9 +646,15 @@ class SQLOperatorTranslator:
                 case "$contains":
                     # Handle case-insensitive substring search
                     # Convert value to string to match Python implementation behavior
-                    str_value = str(value)
-                    sql = f"lower({field_access}) LIKE ?"
-                    params = [f"%{str_value.lower()}%"]
+                    escaped_contains = (
+                        str(value)
+                        .lower()
+                        .replace("\\", "\\\\")
+                        .replace("%", "\\%")
+                        .replace("_", "\\_")
+                    )
+                    sql = f"lower({field_access}) LIKE ? ESCAPE '\\'"
+                    params = [f"%{escaped_contains}%"]
                 case "$bitsAllClear":
                     # Handle bitwise all clear operator
                     # Check if all specified bits are clear (0)
@@ -1143,9 +1180,12 @@ class SQLClauseBuilder:
                         clauses.append(f"NOT COALESCE(({not_clause}), 0)")
                         params.extend(not_params)
                     else:
-                        return _empty_result()  # Empty condition
+                        return (
+                            None,
+                            [],
+                        )  # Empty $not condition must not match all rows
                 else:
-                    return _empty_result()  # Invalid format for $not
+                    return None, []  # Invalid format for $not
             else:
                 # Regular field condition
                 # Get field access expression

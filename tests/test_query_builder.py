@@ -167,7 +167,7 @@ class TestBuildOperatorClause:
         )
         assert "json_type(data, '$.age')" in clause
         assert "extract(data, '$.age') % ? = ?" in clause
-        assert params == [5, 0]
+        assert params == [5, 0, 5, 0]
 
     def test_mod_invalid_format(self, query_helper):
         """Test $mod with invalid format falls back."""

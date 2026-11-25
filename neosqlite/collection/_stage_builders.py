@@ -236,6 +236,7 @@ def build_graph_lookup_parts(
 
         target_coll = collection.database.get_collection(from_collection)
         helper = QueryHelper(target_coll)
+        helper._disable_indexed_union = True
         query_result = helper._build_simple_where_clause(restrict_search)
         if not query_result:
             return None

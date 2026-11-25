@@ -1033,7 +1033,7 @@ def test_query_helper_edge_cases():
             "'$.field'", {"$mod": [2, 0]}
         )
         assert "%" in clause
-        assert params == [2, 0]
+        assert params == [2, 0, 2, 0]
 
         # Test _build_operator_clause with $size operator
         clause, params = helper._build_operator_clause(

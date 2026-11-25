@@ -33,6 +33,8 @@ except ImportError:
     OperationalError = (sqlite3.OperationalError,)
     Error = (sqlite3.Error,)
 
+from datetime import UTC
+
 from neosqlite import MalformedDocument
 from neosqlite.query_operators import _eq, _gt, _in, _lt, _lte
 
@@ -2012,3 +2014,116 @@ def test_drop_and_rename_do_not_destroy_sibling_prefix_fts_tables():
             ).fetchall()
         ]
         assert after_drop == ["user_profile_bio_fts"]
+
+
+def test_query_translator_and_distinct_parity_regressions():
+    """Regression tests for #193 across SQL Tier-1 and Python Tier-3 modes."""
+    from datetime import datetime
+
+    from neosqlite.collection.query_helper import set_force_fallback
+    from neosqlite.exceptions import MalformedQueryException
+
+    dt1 = datetime(2026, 1, 1, tzinfo=UTC)
+    dt2 = datetime(2026, 2, 1, tzinfo=UTC)
+
+    try:
+        for fallback in (False, True):
+            with neosqlite.Connection(":memory:") as conn:
+                set_force_fallback(False)
+                coll = conn.t
+                coll.create_index("tags")
+                coll.insert_many(
+                    [
+                        {
+                            "_id": 1,
+                            "tags": ["a", "b"],
+                            "n": 5,
+                            "s": "axb",
+                            "active": True,
+                            "flag_arr": [True],
+                            "nums": [3, 10],
+                            "words": ["cherry"],
+                            "ts": dt1,
+                            "ts_arr": [dt1, dt2],
+                            "items": [{"name": "pen"}, {"name": "book"}],
+                        },
+                        {
+                            "_id": 2,
+                            "tags": 5,
+                            "s": "foo_bar%baz",
+                            "active": False,
+                            "words": ["apple"],
+                            "mixed_words": ["hello"],
+                            "nums": [7],
+                            "items": [{"name": "eraser"}],
+                        },
+                    ]
+                )
+                set_force_fallback(fallback)
+
+                # 1. Indexed array field scalar equality find() == count_documents()
+                assert [d["_id"] for d in coll.find({"tags": "a"})] == [1]
+                assert coll.count_documents({"tags": "a"}) == 1
+
+                # 2. $eq OR precedence when combined with $size
+                assert list(coll.find({"tags": {"$eq": 5, "$size": 99}})) == []
+
+                # 3. Datetime $in and $nin
+                assert coll.count_documents({"ts": {"$in": [dt1]}}) == 1
+                assert [
+                    d["_id"] for d in coll.find({"ts": {"$in": [dt1]}})
+                ] == [1]
+                assert coll.count_documents({"ts_arr": {"$in": [dt2]}}) == 1
+                assert coll.count_documents({"ts": {"$nin": [dt1]}}) == 1
+
+                # 4. Invalid / empty top-level $not must never match or delete all docs
+                with pytest.raises(MalformedQueryException):
+                    coll.count_documents({"$not": "invalid"})
+                with pytest.raises(MalformedQueryException):
+                    coll.delete_many({"$not": "invalid"})
+                assert coll.count_documents({"$not": {}}) == 0
+                assert coll.count_documents({}) == 2
+
+                # 5. $contains escapes SQL LIKE wildcards _ and %
+                assert list(coll.find({"s": {"$contains": "a_b"}})) == []
+                assert coll.count_documents({"s": {"$contains": "a_b"}}) == 0
+                assert [
+                    d["_id"] for d in coll.find({"s": {"$contains": "_bar%"}})
+                ] == [2]
+                assert coll.count_documents({"s": {"$contains": "_bar%"}}) == 1
+
+                # 6. Array $gt/$lt type guards, $mod on arrays, $all with dicts, bool != int
+                assert list(coll.find({"words": {"$gt": 5}})) == []
+                assert [
+                    d["_id"] for d in coll.find({"words": {"$gt": "banana"}})
+                ] == [1]
+                assert [
+                    d["_id"] for d in coll.find({"nums": {"$mod": [5, 0]}})
+                ] == [1]
+                assert [
+                    d["_id"]
+                    for d in coll.find({"items": {"$all": [{"name": "pen"}]}})
+                ] == [1]
+                assert (
+                    coll.count_documents({"items": {"$all": [{"name": "pen"}]}})
+                    == 1
+                )
+                assert list(coll.find({"active": 1})) == []
+                assert coll.count_documents({"active": 1}) == 0
+                assert list(coll.find({"active": {"$eq": 1}})) == []
+                assert list(coll.find({"flag_arr": {"$eq": 1}})) == []
+                assert list(coll.find({"flag_arr": {"$in": [1]}})) == []
+                assert list(coll.find({"flag_arr": {"$all": [1]}})) == []
+
+                # 7. distinct() on subdoc arrays and booleans
+                assert sorted(coll.distinct("items.name")) == [
+                    "book",
+                    "eraser",
+                    "pen",
+                ]
+                active_vals = coll.distinct("active")
+                assert len(active_vals) == 2
+                assert all(isinstance(v, bool) for v in active_vals)
+                assert set(active_vals) == {True, False}
+    finally:
+        set_force_fallback(False)

@@ -543,25 +543,28 @@ def _bson_json_types(value: Any) -> list[str]:
     return []
 
 
-def json_type_guard_sql(json_path: str, value: Any) -> str:
+def json_type_guard_sql(
+    json_path: str, value: Any, data_expr: str = "data"
+) -> str:
     """Return a SQL predicate restricting ``json_type`` to a value's BSON type.
 
     Args:
         json_path: Quoted SQL JSON path expression (e.g. ``"'$.a'"``).
         value: Python value whose SQLite JSON type should be matched.
+        data_expr: SQL expression yielding the JSON column. Defaults to ``"data"``.
 
     Returns:
-        str: SQL predicate guarding ``json_type(data, json_path)``.
+        str: SQL predicate guarding ``json_type(data_expr, json_path)``.
     """
     if value is None:
-        return f"json_type(data, {json_path}) IS NULL"
+        return f"json_type({data_expr}, {json_path}) IS NULL"
     types = _bson_json_types(value)
     if not types:
         return "1"
     if len(types) == 1:
-        return f"json_type(data, {json_path}) = '{types[0]}'"
+        return f"json_type({data_expr}, {json_path}) = '{types[0]}'"
     joined = ", ".join(repr(t) for t in types)
-    return f"json_type(data, {json_path}) IN ({joined})"
+    return f"json_type({data_expr}, {json_path}) IN ({joined})"
 
 
 def json_types_for_values(values: list[Any] | tuple[Any, ...]) -> list[str]:
@@ -900,6 +903,93 @@ def expr_truthiness_sql(sql_expr: str) -> str:
     return f"(COALESCE(({sql_expr}), 0) != 0)"
 
 
+def build_json_containment_parts(
+    data_expr: str,
+    field: str,
+    field_access: str,
+    value: Any,
+    json_each_function: str,
+    *,
+    jsonb_supported: bool | None = None,
+) -> tuple[str, list[Any], str, list[Any]]:
+    """Split scalar equality and array containment SQL arms for a field.
+
+    Returns separate ``(scalar_sql, scalar_params, array_sql, array_params)``
+    components so callers can combine them with ``OR`` or indexed ``UNION``.
+
+    Args:
+        data_expr: SQL expression yielding the JSON/JSONB document column.
+        field: Dotted MongoDB field path (e.g., ``"items.tag"``).
+        field_access: SQL expression extracting the field directly.
+        value: Target scalar or encoded JSON value to match.
+        json_each_function: Table-valued function name (``"json_each"`` or
+            ``"jsonb_each"``).
+        jsonb_supported: Optional explicit JSONB flag for scalar comparison
+            encoding; inferred from ``field_access`` when omitted.
+
+    Returns:
+        tuple[str, list[Any], str, list[Any]]: Tuple of
+        ``(scalar_sql, scalar_params, array_sql, array_params)``.
+    """
+    from .json_path_utils import parse_json_path
+
+    is_field_jsonb = (
+        jsonb_supported
+        if jsonb_supported is not None
+        else field_access.startswith("jsonb_extract(")
+    )
+    each_is_jsonb = json_each_function == "jsonb_each"
+    scalar_val, scalar_ph = serialize_sql_query_value(value, is_field_jsonb)
+    each_val, each_ph = serialize_sql_query_value(value, each_is_jsonb)
+    text_val, _ = serialize_sql_query_value(value, False)
+
+    segs = field.split(".")
+    scalar_cmp = f"{field_access} = {scalar_ph}"
+    if isinstance(value, (bool, int, float)):
+        full_path = f"'{parse_json_path(field, preserve_id=False)}'"
+        scalar_guard = json_type_guard_sql(
+            full_path, value, data_expr=data_expr
+        )
+        scalar_cmp = f"({scalar_guard} AND {scalar_cmp})"
+    arr_arms: list[str] = []
+    arr_params: list[Any] = []
+    for k in range(1, len(segs) + 1):
+        arr_path = f"'{parse_json_path('.'.join(segs[:k]), preserve_id=False)}'"
+        arr_expr = "json_extract(" + data_expr + ", " + arr_path + ")"
+        rest = segs[k:]
+        if rest:
+            leaf_path = parse_json_path(".".join(rest), preserve_id=False)
+            elem_cmp = f"json_extract(value, '{leaf_path}') = ?"
+            if isinstance(value, (bool, int, float)):
+                elem_cmp = f"(json_type(value, '{leaf_path}') IN {json_type_list_sql(value)} AND {elem_cmp})"
+            elem_pred = f"CASE WHEN type = 'object' THEN {elem_cmp} ELSE 0 END"
+            arm_param = text_val
+        else:
+            if isinstance(value, (bool, int, float)):
+                elem_pred = (
+                    f"value = {each_ph} AND type IN {json_type_list_sql(value)}"
+                )
+            else:
+                elem_pred = f"value = {each_ph}"
+            arm_param = each_val
+        arr_arms.append(
+            "EXISTS (SELECT 1 FROM "
+            + json_each_function
+            + "(CASE WHEN "
+            + "json_type("
+            + data_expr
+            + ", "
+            + arr_path
+            + ") = 'array' THEN "
+            + arr_expr
+            + " END) WHERE "
+            + elem_pred
+            + ")"
+        )
+        arr_params.append(arm_param)
+    return scalar_cmp, [scalar_val], " OR ".join(arr_arms), arr_params
+
+
 def build_json_containment_clause(
     data_expr: str,
     field: str,
@@ -928,51 +1018,17 @@ def build_json_containment_clause(
     Returns:
         tuple[str, list[Any]]: Tuple of ``(sql_clause, params)``.
     """
-    from .json_path_utils import parse_json_path
-
-    is_field_jsonb = (
-        jsonb_supported
-        if jsonb_supported is not None
-        else field_access.startswith("jsonb_extract(")
-    )
-    each_is_jsonb = json_each_function == "jsonb_each"
-    scalar_val, scalar_ph = serialize_sql_query_value(value, is_field_jsonb)
-    each_val, each_ph = serialize_sql_query_value(value, each_is_jsonb)
-    text_val, _ = serialize_sql_query_value(value, False)
-
-    segs = field.split(".")
-    arms = [f"{field_access} = {scalar_ph}"]
-    params: list[Any] = [scalar_val]
-    for k in range(1, len(segs) + 1):
-        arr_path = f"'{parse_json_path('.'.join(segs[:k]), preserve_id=False)}'"
-        arr_expr = "json_extract(" + data_expr + ", " + arr_path + ")"
-        rest = segs[k:]
-        if rest:
-            leaf_path = parse_json_path(".".join(rest), preserve_id=False)
-            elem_pred = (
-                "CASE WHEN type = 'object' THEN "
-                "json_extract(value, '" + leaf_path + "') = ? ELSE 0 END"
-            )
-            arm_param = text_val
-        else:
-            elem_pred = f"value = {each_ph}"
-            arm_param = each_val
-        arms.append(
-            "EXISTS (SELECT 1 FROM "
-            + json_each_function
-            + "(CASE WHEN "
-            + "json_type("
-            + data_expr
-            + ", "
-            + arr_path
-            + ") = 'array' THEN "
-            + arr_expr
-            + " END) WHERE "
-            + elem_pred
-            + ")"
+    scalar_sql, scalar_params, arr_sql, arr_params = (
+        build_json_containment_parts(
+            data_expr,
+            field,
+            field_access,
+            value,
+            json_each_function,
+            jsonb_supported=jsonb_supported,
         )
-        params.append(arm_param)
-    return "(" + " OR ".join(arms) + ")", params
+    )
+    return f"({scalar_sql} OR {arr_sql})", scalar_params + arr_params
 
 
 def _hashable_group_key(value: Any) -> tuple:
