@@ -9,23 +9,19 @@ from typing import Any
 from ..jsonb_support import json_function
 
 
-def compile_schema_to_sql(
-    schema: dict[str, Any], data_column: str = "data", jsonb: bool = False
-) -> str:
-    """Compile a JSON Schema into a SQLite ``CHECK`` constraint expression.
+def _format_schema_segment(part: str) -> str:
+    """Format one schema property key segment safely as a SQLite JSON path part."""
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", part):
+        return part
+    escaped = part.replace("\\", "\\\\").replace('"', '\\"').replace("'", "''")
+    return f'"{escaped}"'
 
-    Args:
-        schema: JSON Schema dictionary describing validation rules.
-        data_column: Name of the SQLite JSON column to validate. Defaults to
-            ``"data"``.
-        jsonb: Whether to emit ``jsonb_extract`` instead of ``json_extract``.
-            Defaults to ``False``.
 
-    Returns:
-        str: SQL boolean expression (or ``"1"`` when unconstrained).
-    """
-    json_func = json_function("extract", jsonb)
-    return _compile_node(schema, data_column, json_func)
+def _schema_path_from_parts(parts: tuple[str, ...]) -> str:
+    """Build a SQLite JSON path string from literal property path segments."""
+    if not parts:
+        return "$"
+    return "$." + ".".join(_format_schema_segment(p) for p in parts)
 
 
 def _safe_json_path(path: str) -> str:
@@ -66,135 +62,390 @@ def _numeric_literal(value: Any, name: str) -> str:
     return repr(float(value))
 
 
+def compile_schema_to_sql(
+    schema: dict[str, Any], data_column: str = "data", jsonb: bool = False
+) -> str:
+    """Compile a JSON Schema into a SQLite ``CHECK`` constraint expression.
+
+    Args:
+        schema: JSON Schema dictionary describing validation rules.
+        data_column: Name of the SQLite JSON column to validate. Defaults to
+            ``"data"``.
+        jsonb: Whether to emit ``jsonb_extract`` instead of ``json_extract``.
+            Defaults to ``False``.
+
+    Returns:
+        str: SQL boolean expression (or ``"1"`` when unconstrained).
+    """
+    json_func = json_function("extract", jsonb)
+    sql_expr, _ = _compile_node_with_status(
+        schema, data_column, json_func, path_parts=(), is_root=True
+    )
+    return sql_expr
+
+
+def schema_needs_python_validation(schema: Any) -> bool:
+    """Return True if ``schema`` contains constraints SQLite ``CHECK`` cannot enforce."""
+    if not isinstance(schema, dict) or not schema:
+        return False
+    _, complete = _compile_node_with_status(
+        schema, "data", "json_extract", path_parts=(), is_root=True
+    )
+    return not complete
+
+
+def _compile_check_enum_literal(
+    enum_vals: Any,
+    type_expr: str,
+    val_expr: str,
+) -> str | None:
+    """Compile scalar ``enum`` items into SQL literal predicates for ``CHECK`` constraints."""
+    if not isinstance(enum_vals, list):
+        return None
+    if not enum_vals:
+        return "0"
+
+    arms: list[str] = []
+    for item in enum_vals:
+        if isinstance(item, bool):
+            arms.append(f"{type_expr} = '{'true' if item else 'false'}'")
+        elif isinstance(item, (int, float)):
+            arms.append(
+                f"({type_expr} IN ('integer', 'real') AND {val_expr} = {repr(item)})"
+            )
+        elif isinstance(item, str):
+            if "\x00" in item:
+                return None
+            escaped = item.replace("'", "''")
+            arms.append(f"({type_expr} = 'text' AND {val_expr} = '{escaped}')")
+        elif item is None:
+            arms.append(f"{type_expr} = 'null'")
+        else:
+            return None
+
+    return "(" + " OR ".join(arms) + ")"
+
+
 def _compile_node(
     schema: Any, data_column: str, json_func: str, path: str = "$"
 ) -> str:
+    """Compile a ``CHECK``-constraint schema node into SQL."""
+    rel = path.removeprefix("$.")
+    parts = tuple(rel.split(".")) if rel and rel != "$" else ()
+    sql_expr, _ = _compile_node_with_status(
+        schema, data_column, json_func, path_parts=parts, is_root=(not parts)
+    )
+    return sql_expr
+
+
+_CHECK_COMPILABLE_KEYS = frozenset(
+    {
+        "bsonType",
+        "type",
+        "required",
+        "properties",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "minLength",
+        "maxLength",
+        "minItems",
+        "maxItems",
+        "enum",
+        "anyOf",
+        "allOf",
+        "oneOf",
+        "not",
+        "title",
+        "description",
+    }
+)
+
+
+def _compile_node_with_status(
+    schema: Any,
+    data_column: str,
+    json_func: str,
+    path_parts: tuple[str, ...] = (),
+    is_root: bool = True,
+) -> tuple[str, bool]:
     """Recursively compile a ``CHECK``-constraint schema node into SQL.
 
-    Supports ``required``, ``properties``, ``bsonType``/``type``, and numeric
-    bounds (``minimum``, ``maximum``, ``exclusiveMinimum``,
-    ``exclusiveMaximum``).
-
-    Args:
-        schema: Schema dictionary (non-dicts return ``"1"``).
-        data_column: SQLite column or expression holding the JSON document.
-        json_func: SQLite JSON extract function name.
-        path: Current JSON path relative to root. Defaults to ``"$"``.
-
-    Returns:
-        str: ``AND``-joined SQL expression, or ``"1"`` if no clauses apply.
+    Returns ``(sql_expr, is_complete)`` where ``is_complete`` is ``False`` if
+    any keyword or constraint could not be faithfully expressed in SQLite
+    ``CHECK`` (such as ``pattern``, ``items``, ``objectId``, or non-scalar
+    ``enum`` values).
     """
     if not isinstance(schema, dict):
-        return "1"  # Always true
+        return "1", True
 
-    clauses = []
+    complete = not any(k not in _CHECK_COMPILABLE_KEYS for k in schema)
+    safe_path = _schema_path_from_parts(path_parts)
+    type_expr = f"json_type({data_column}, '{safe_path}')"
+    val_expr = f"{json_func}({data_column}, '{safe_path}')"
+    clauses: list[str] = []
 
-    # 1. Handle required fields
+    # 1. Handle required fields (json_type IS NOT NULL distinguishes present null from missing)
     if "required" in schema:
         req_fields = schema["required"]
-        for field in req_fields:
-            field_path = f"{path}.{field}"
-            clauses.append(
-                f"{json_func}({data_column}, "
-                f"'{_safe_json_path(field_path)}') IS NOT NULL"
-            )
-
-    # 2. Handle properties
-    if "properties" in schema:
-        for field, prop_schema in schema["properties"].items():
-            field_path = f"{path}.{field}"
-            # Only validate if the field exists (JSON Schema standard behavior)
-            prop_sql = _compile_node(
-                prop_schema, data_column, json_func, field_path
-            )
-            if prop_sql != "1":
-                clauses.append(
-                    f"({json_func}({data_column}, "
-                    f"'{_safe_json_path(field_path)}') IS NULL OR ({prop_sql}))"
+        if not isinstance(req_fields, list) or not all(
+            isinstance(f, str) for f in req_fields
+        ):
+            complete = False
+        elif req_fields:
+            req_parts = []
+            for field in req_fields:
+                if is_root and field == "_id":
+                    complete = False
+                field_safe = _schema_path_from_parts((*path_parts, field))
+                req_parts.append(
+                    f"json_type({data_column}, '{field_safe}') IS NOT NULL"
                 )
+            req_sql = " AND ".join(req_parts)
+            if is_root:
+                clauses.append(req_sql)
+            else:
+                clauses.append(f"({type_expr} != 'object' OR ({req_sql}))")
+
+    # 2. Handle properties (presence checked via json_type so explicit null validates against schema)
+    if "properties" in schema:
+        props = schema["properties"]
+        if not isinstance(props, dict):
+            complete = False
+        elif props:
+            prop_clauses: list[str] = []
+            for field, prop_schema in props.items():
+                if not isinstance(field, str):
+                    complete = False
+                    continue
+                if is_root and field == "_id":
+                    complete = False
+                field_parts = (*path_parts, field)
+                field_safe = _schema_path_from_parts(field_parts)
+                prop_sql, prop_complete = _compile_node_with_status(
+                    prop_schema,
+                    data_column,
+                    json_func,
+                    path_parts=field_parts,
+                    is_root=False,
+                )
+                if not prop_complete:
+                    complete = False
+                if prop_sql != "1":
+                    prop_clauses.append(
+                        f"(json_type({data_column}, '{field_safe}') IS NULL OR ({prop_sql}))"
+                    )
+            if prop_clauses:
+                all_props_sql = " AND ".join(prop_clauses)
+                if is_root:
+                    clauses.append(all_props_sql)
+                else:
+                    clauses.append(
+                        f"({type_expr} != 'object' OR ({all_props_sql}))"
+                    )
 
     # 3. Handle type/bsonType
-    # SQLite json_type returns: 'null', 'integer', 'real', 'text', 'array', 'object'
-    target_type = schema.get("bsonType") or schema.get("type")
-    if target_type:
+    if "bsonType" in schema:
+        target_type = schema["bsonType"]
+    elif "type" in schema:
+        target_type = schema["type"]
+    else:
+        target_type = None
+    if target_type is not None:
         type_clause = _compile_type_check(
-            data_column, path, target_type, json_func
+            data_column, safe_path, target_type, json_func
         )
-        if type_clause:
+        if type_clause is not None:
             clauses.append(type_clause)
+        else:
+            complete = False
 
-    # 4. Handle numeric constraints
-    val_expr = f"{json_func}({data_column}, '{_safe_json_path(path)}')"
-    if "minimum" in schema:
-        clauses.append(
-            f"{val_expr} >= {_numeric_literal(schema['minimum'], 'minimum')}"
+    # 4. Handle numeric constraints (guarded so strings/bools are not coerced)
+    for kw, sql_op in (
+        ("minimum", ">="),
+        ("maximum", "<="),
+        ("exclusiveMinimum", ">"),
+        ("exclusiveMaximum", "<"),
+    ):
+        if kw in schema:
+            lit = _numeric_literal(schema[kw], kw)
+            clauses.append(
+                f"({type_expr} NOT IN ('integer', 'real') OR {val_expr} {sql_op} {lit})"
+            )
+
+    # 5. Handle string length constraints (guarded to text values)
+    for kw, sql_op in (("minLength", ">="), ("maxLength", "<=")):
+        if kw in schema:
+            bound = schema[kw]
+            if isinstance(bound, bool) or not isinstance(bound, int):
+                complete = False
+            else:
+                clauses.append(
+                    f"({type_expr} != 'text' OR length({val_expr}) {sql_op} {bound})"
+                )
+
+    # 6. Handle array length constraints (guarded to array values)
+    for kw, sql_op in (("minItems", ">="), ("maxItems", "<=")):
+        if kw in schema:
+            bound = schema[kw]
+            if isinstance(bound, bool) or not isinstance(bound, int):
+                complete = False
+            else:
+                clauses.append(
+                    f"({type_expr} != 'array' OR json_array_length(CASE WHEN {type_expr} = 'array' THEN {val_expr} ELSE NULL END) {sql_op} {bound})"
+                )
+
+    # 7. Handle scalar enum constraints
+    if "enum" in schema:
+        enum_sql = _compile_check_enum_literal(
+            schema["enum"], type_expr, val_expr
         )
-    if "maximum" in schema:
-        clauses.append(
-            f"{val_expr} <= {_numeric_literal(schema['maximum'], 'maximum')}"
+        if enum_sql is not None:
+            clauses.append(enum_sql)
+        else:
+            complete = False
+
+    # 8. Handle logical combinators
+    if "allOf" in schema:
+        subs = schema["allOf"]
+        if not isinstance(subs, list):
+            complete = False
+        else:
+            for sub in subs:
+                sub_sql, sub_complete = _compile_node_with_status(
+                    sub,
+                    data_column,
+                    json_func,
+                    path_parts=path_parts,
+                    is_root=is_root,
+                )
+                if not sub_complete:
+                    complete = False
+                if sub_sql != "1":
+                    clauses.append(f"({sub_sql})")
+
+    if "anyOf" in schema:
+        subs = schema["anyOf"]
+        if not isinstance(subs, list):
+            complete = False
+        elif not subs:
+            clauses.append("0")
+        else:
+            sub_sqls: list[str] = []
+            all_ok = True
+            for sub in subs:
+                s_sql, s_comp = _compile_node_with_status(
+                    sub,
+                    data_column,
+                    json_func,
+                    path_parts=path_parts,
+                    is_root=is_root,
+                )
+                if not s_comp:
+                    all_ok = False
+                sub_sqls.append(f"({s_sql})")
+            if all_ok:
+                clauses.append("(" + " OR ".join(sub_sqls) + ")")
+            else:
+                complete = False
+
+    if "oneOf" in schema:
+        subs = schema["oneOf"]
+        if not isinstance(subs, list):
+            complete = False
+        elif not subs:
+            clauses.append("0")
+        else:
+            sum_terms: list[str] = []
+            all_ok = True
+            for sub in subs:
+                s_sql, s_comp = _compile_node_with_status(
+                    sub,
+                    data_column,
+                    json_func,
+                    path_parts=path_parts,
+                    is_root=is_root,
+                )
+                if not s_comp:
+                    all_ok = False
+                sum_terms.append(f"(CASE WHEN ({s_sql}) THEN 1 ELSE 0 END)")
+            if all_ok:
+                clauses.append("(" + " + ".join(sum_terms) + ") = 1")
+            else:
+                complete = False
+
+    if "not" in schema:
+        n_sql, n_comp = _compile_node_with_status(
+            schema["not"],
+            data_column,
+            json_func,
+            path_parts=path_parts,
+            is_root=is_root,
         )
-    if "exclusiveMinimum" in schema:
-        clauses.append(
-            f"{val_expr} > {_numeric_literal(schema['exclusiveMinimum'], 'exclusiveMinimum')}"
-        )
-    if "exclusiveMaximum" in schema:
-        clauses.append(
-            f"{val_expr} < {_numeric_literal(schema['exclusiveMaximum'], 'exclusiveMaximum')}"
-        )
+        if n_comp:
+            clauses.append(f"NOT COALESCE(({n_sql}), 0)")
+        else:
+            complete = False
 
     if not clauses:
-        return "1"
+        return "1", complete
 
-    return " AND ".join(clauses)
+    return " AND ".join(clauses), complete
 
 
 def _compile_type_check(
     data_column: str, path: str, target_type: Any, json_func: str
 ) -> str | None:
-    """Compile a legacy ``CHECK``-constraint type check using ``json_type``.
-
-    Args:
-        data_column: SQLite column or expression holding the JSON document.
-        path: JSON path at which to inspect the value type.
-        target_type: Schema ``type`` or ``bsonType`` string or list of strings.
-        json_func: Unused JSON extract function name kept for signature
-            compatibility.
-
-    Returns:
-        str | None: SQL ``IN (...)`` predicate on ``json_type(...)``, or
-            ``None`` if no supported SQLite types are matched.
-    """
-    # json_type(data, path)
-    type_expr = f"json_type({data_column}, '{_safe_json_path(path)}')"
+    """Compile a ``CHECK``-constraint type check using ``json_type``."""
+    safe_path = path if path.startswith("$") else _safe_json_path(path)
+    type_expr = f"json_type({data_column}, '{safe_path}')"
 
     types = target_type if isinstance(target_type, list) else [target_type]
-    sql_types = []
+    if not types:
+        return "0"
 
+    arms: list[str] = []
     for t in types:
         match t:
             case "string":
-                sql_types.append("'text'")
+                arms.append(f"{type_expr} = 'text'")
             case "number":
-                sql_types.extend(["'integer'", "'real'"])
+                arms.append(f"{type_expr} IN ('integer', 'real')")
             case "integer" | "int" | "long":
-                sql_types.append("'integer'")
+                arms.append(f"{type_expr} = 'integer'")
             case "double" | "decimal":
-                sql_types.append("'real'")
+                arms.append(f"{type_expr} IN ('integer', 'real')")
             case "object":
-                sql_types.append("'object'")
+                oid_ext = f"{json_func}({data_column}, '{safe_path}.__neosqlite_objectid__')"
+                bin_ext = f"{json_func}({data_column}, '{safe_path}.__neosqlite_binary__')"
+                date_tp = f"json_type({data_column}, '{safe_path}.$date')"
+                arms.append(
+                    f"(CASE WHEN {type_expr} = 'object' THEN "
+                    f"(COALESCE({oid_ext}, 0) != 1 AND "
+                    f"COALESCE({bin_ext}, 0) != 1 AND "
+                    f"{date_tp} IS NULL) ELSE 0 END)"
+                )
             case "array":
-                sql_types.append("'array'")
+                arms.append(f"{type_expr} = 'array'")
             case "bool" | "boolean":
-                # SQLite stores bools as 0/1, json_type might not distinguish well
-                # but usually it's handled.
-                pass
+                arms.append(f"{type_expr} IN ('true', 'false')")
             case "null":
-                sql_types.append("'null'")
+                arms.append(f"{type_expr} = 'null'")
+            case "binData":
+                bin_ext = f"{json_func}({data_column}, '{safe_path}.__neosqlite_binary__')"
+                arms.append(
+                    f"(CASE WHEN {type_expr} = 'object' THEN COALESCE({bin_ext}, 0) = 1 ELSE 0 END)"
+                )
+            case "date":
+                date_tp = f"json_type({data_column}, '{safe_path}.$date')"
+                arms.append(
+                    f"(CASE WHEN {type_expr} = 'object' THEN {date_tp} IS NOT NULL ELSE 0 END)"
+                )
+            case _:
+                return None
 
-    if not sql_types:
-        return None
-
-    return f"{type_expr} IN ({', '.join(sql_types)})"
+    return "(" + " OR ".join(arms) + ")" if len(arms) > 1 else arms[0]
 
 
 _SUPPORTED_QUERY_SCHEMA_KEYS = frozenset(
@@ -260,7 +511,7 @@ def compile_query_schema_to_sql(
     compiled = _compile_query_node(
         schema,
         data_column,
-        "$",
+        (),
         json_func,
         each_func,
         is_root=True,
@@ -437,7 +688,7 @@ def _compile_query_enum_check(
 def _compile_query_node(
     schema: Any,
     data_expr: str,
-    path: str,
+    path_parts: tuple[str, ...],
     json_func: str,
     each_func: str,
     is_root: bool,
@@ -454,16 +705,16 @@ def _compile_query_node(
     Args:
         schema: Current ``$jsonSchema`` sub-schema object.
         data_expr: SQL expression producing the JSON document or element.
-        path: JSON path relative to ``data_expr``.
+        path_parts: Tuple of property segments relative to ``data_expr``.
         json_func: SQLite JSON extract function name.
         each_func: Table-valued JSON iteration function name.
         is_root: Whether ``schema`` sits at the document root.
         aux_counter: Single-element mutable list used to allocate unique
             table aliases for nested ``items`` subqueries.
         type_override: Optional SQL expression supplying the node's JSON type
-            when ``path == "$"`` (used for ``items`` element checks).
+            when at root (used for ``items`` element checks).
         val_override: Optional SQL expression supplying the node's value when
-            ``path == "$"`` (used for ``items`` element checks).
+            at root (used for ``items`` element checks).
 
     Returns:
         tuple[str, list[Any]] | None: Parameterized ``(sql, params)`` pair
@@ -475,15 +726,16 @@ def _compile_query_node(
     if any(k not in _SUPPORTED_QUERY_SCHEMA_KEYS for k in schema):
         return None
 
-    safe_path = _safe_json_path(path)
+    at_self = not path_parts
+    safe_path = _schema_path_from_parts(path_parts)
     type_expr = (
         type_override
-        if (type_override is not None and path == "$")
+        if (type_override is not None and at_self)
         else f"json_type({data_expr}, '{safe_path}')"
     )
     val_expr = (
         val_override
-        if (val_override is not None and path == "$")
+        if (val_override is not None and at_self)
         else f"{json_func}({data_expr}, '{safe_path}')"
     )
 
@@ -500,7 +752,7 @@ def _compile_query_node(
             target_type,
             type_expr_override=type_expr,
             val_expr_override=(
-                val_expr if (val_override and path == "$") else None
+                val_expr if (val_override and at_self) else None
             ),
         )
         if type_sql is None:
@@ -518,7 +770,7 @@ def _compile_query_node(
             for req_field in req_fields:
                 if is_root and req_field == "_id":
                     return None
-                req_safe = _safe_json_path(f"{path}.{req_field}")
+                req_safe = _schema_path_from_parts((*path_parts, req_field))
                 req_parts.append(
                     f"json_type({data_expr}, '{req_safe}') IS NOT NULL"
                 )
@@ -538,12 +790,12 @@ def _compile_query_node(
             for field, prop_schema in props.items():
                 if not isinstance(field, str) or (is_root and field == "_id"):
                     return None
-                field_path = f"{path}.{field}"
-                field_safe = _safe_json_path(field_path)
+                field_parts = (*path_parts, field)
+                field_safe = _schema_path_from_parts(field_parts)
                 compiled_prop = _compile_query_node(
                     prop_schema,
                     data_expr,
-                    field_path,
+                    field_parts,
                     json_func,
                     each_func,
                     is_root=False,
@@ -625,7 +877,7 @@ def _compile_query_node(
             compiled_item = _compile_query_node(
                 items_schema,
                 f"(CASE WHEN {alias}.type IN ('object', 'array') THEN {alias}.value ELSE NULL END)",
-                "$",
+                (),
                 "json_extract",
                 each_func,
                 is_root=False,
@@ -639,7 +891,7 @@ def _compile_query_node(
             if item_sql != "1":
                 each_source = (
                     f"{each_func}((CASE WHEN {type_expr} = 'array' THEN {val_override} ELSE '[]' END))"
-                    if (val_override is not None and path == "$")
+                    if (val_override is not None and at_self)
                     else f"{each_func}({data_expr}, '{safe_path}')"
                 )
                 clauses.append(
@@ -671,7 +923,7 @@ def _compile_query_node(
                 compiled_sub = _compile_query_node(
                     sub,
                     data_expr,
-                    path,
+                    path_parts,
                     json_func,
                     each_func,
                     is_root=is_root,
@@ -694,7 +946,7 @@ def _compile_query_node(
             compiled_sub = _compile_query_node(
                 sub,
                 data_expr,
-                path,
+                path_parts,
                 json_func,
                 each_func,
                 is_root=is_root,
@@ -721,7 +973,7 @@ def _compile_query_node(
                 compiled_sub = _compile_query_node(
                     sub,
                     data_expr,
-                    path,
+                    path_parts,
                     json_func,
                     each_func,
                     is_root=is_root,
@@ -740,7 +992,7 @@ def _compile_query_node(
         compiled_not = _compile_query_node(
             schema["not"],
             data_expr,
-            path,
+            path_parts,
             json_func,
             each_func,
             is_root=is_root,

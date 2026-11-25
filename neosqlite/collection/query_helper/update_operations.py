@@ -221,8 +221,14 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
             elif op == "$push":
                 _validate_push_spec(value)
 
-        # Respect the kill switch - force Python fallback if enabled
-        if get_force_fallback():
+        from .schema_compiler import schema_needs_python_validation
+
+        needs_py_schema = schema_needs_python_validation(
+            getattr(self.collection, "_validator_schema", None)
+        )
+
+        # Respect the kill switch or Python-enforced schema validation
+        if get_force_fallback() or needs_py_schema:
             return self._perform_python_update(
                 doc_id, update_spec, original_doc, array_filters, query_filter
             )
@@ -669,6 +675,9 @@ class UpdateOperationsMixin(SqlUpdatesMixin):
         # If this is an upsert (doc_id == 0), we don't update the database
         # We just return the updated document for insertion by the caller
         if doc_id != 0:
+            from .schema_validator import validate_document_for_collection
+
+            validate_document_for_collection(self.collection, doc_to_update)
             # Convert the doc_id to integer ID for internal operations
             int_doc_id = self._get_integer_id_for_oid(doc_id)
             self.collection.db.execute(

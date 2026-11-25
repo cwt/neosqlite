@@ -138,6 +138,12 @@ class Collection:
         self.query_engine = QueryEngine(self)
         self._options = kwargs
         self._ttl_specs_cache: list[dict[str, Any]] | None = None
+        validator = kwargs.get("validator")
+        self._validator_schema: dict[str, Any] | None = (
+            validator["$jsonSchema"]
+            if isinstance(validator, dict) and "$jsonSchema" in validator
+            else None
+        )
 
         if create:
             self.create(**kwargs)
@@ -405,9 +411,10 @@ class Collection:
         validator = kwargs.get("validator")
         check_clause = ""
 
-        if validator and "$jsonSchema" in validator:
+        if isinstance(validator, dict) and "$jsonSchema" in validator:
             from .query_helper.schema_compiler import compile_schema_to_sql
 
+            self._validator_schema = validator["$jsonSchema"]
             schema_sql = compile_schema_to_sql(
                 validator["$jsonSchema"],
                 jsonb=self.query_engine.jsonb.jsonb_supported,
@@ -439,6 +446,14 @@ class Collection:
 
         # Add the _id column if it doesn't exist (for backward compatibility)
         self._ensure_id_column_exists()
+
+    def _validate_document_schema(self, document: dict[str, Any]) -> None:
+        """Validate ``document`` against the collection's ``$jsonSchema`` validator."""
+        from .query_helper.schema_validator import (
+            validate_document_for_collection,
+        )
+
+        validate_document_for_collection(self, document)
 
     def _ensure_id_column_exists(self):
         """Ensure the ``_id`` column exists on the backing table.

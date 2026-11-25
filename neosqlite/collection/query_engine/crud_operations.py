@@ -135,8 +135,19 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
 
+        from ..query_helper.schema_compiler import (
+            schema_needs_python_validation,
+        )
+
+        needs_py_schema = schema_needs_python_validation(
+            getattr(self.collection, "_validator_schema", None)
+        )
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause is not None and not get_force_fallback():
+        if (
+            where_clause is not None
+            and not get_force_fallback()
+            and not needs_py_schema
+        ):
             sql_expr_res = self.helpers._build_set_data_expression(
                 update, array_filters
             )
@@ -636,8 +647,19 @@ class CRUDOperationsMixin(QueryEngineProtocol):
         # Apply ID type normalization to handle cases where users query 'id' with ObjectId
         filter = self.helpers._normalize_id_query(filter)
         # Find the document using the filter, but get the integer ID for internal operations
+        from ..query_helper.schema_compiler import (
+            schema_needs_python_validation,
+        )
+
+        needs_py_schema = schema_needs_python_validation(
+            getattr(self.collection, "_validator_schema", None)
+        )
         where_clause, params = self.sql_translator.translate_match(filter)
-        if where_clause is not None and not get_force_fallback():
+        if (
+            where_clause is not None
+            and not get_force_fallback()
+            and not needs_py_schema
+        ):
             data_col = self.jsonb.data_column()
             cmd = f"SELECT id, _id, {data_col} as data FROM {quote_table_name(self.collection.name)} {where_clause} LIMIT 1"
             cursor = self.collection.db.execute(cmd, params)

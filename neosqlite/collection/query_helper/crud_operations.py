@@ -58,6 +58,7 @@ class CRUDOperationsMixin:
         # Imported locally so tests and embedders can monkeypatch the
         # serialization hook on the json_helpers module.
         from ..json_helpers import neosqlite_json_dumps
+        from .schema_validator import validate_document_for_collection
         from .utils import _convert_bytes_to_binary
 
         if not isinstance(document, dict):
@@ -77,6 +78,7 @@ class CRUDOperationsMixin:
             generated_id = document["_id"]
 
         doc_to_insert["_id"] = generated_id
+        validate_document_for_collection(self.collection, doc_to_insert)
 
         # Convert any bytes objects to Binary objects for proper JSON serialization
         doc_to_insert = _convert_bytes_to_binary(doc_to_insert)
@@ -133,6 +135,7 @@ class CRUDOperationsMixin:
         from ...exceptions import MalformedDocument
         from ...query_operators import _bson_values_equal
         from ..json_helpers import neosqlite_json_loads
+        from .schema_validator import validate_document_for_collection
         from .utils import _convert_bytes_to_binary
 
         if not isinstance(replacement, dict):
@@ -173,6 +176,7 @@ class CRUDOperationsMixin:
         elif has_existing_id:
             replacement_copy["_id"] = existing_id
 
+        validate_document_for_collection(self.collection, replacement_copy)
         replacement_copy = _convert_bytes_to_binary(replacement_copy)
 
         self.collection.db.execute(

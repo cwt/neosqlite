@@ -409,13 +409,15 @@ class TestSchemaCompiler:
         """Test compile_schema_to_sql with bool type."""
         schema = {"type": "bool"}
         result = compile_schema_to_sql(schema)
-        assert result == "1"
+        assert "'true'" in result
+        assert "'false'" in result
 
     def test_compile_schema_type_boolean(self):
         """Test compile_schema_to_sql with boolean type."""
         schema = {"type": "boolean"}
         result = compile_schema_to_sql(schema)
-        assert result == "1"
+        assert "'true'" in result
+        assert "'false'" in result
 
     def test_compile_schema_type_null(self):
         """Test compile_schema_to_sql with null type."""
@@ -456,8 +458,9 @@ class TestSchemaCompiler:
 
     def test_compile_schema_jsonb(self):
         """Test compile_schema_to_sql with jsonb=True."""
-        schema = {"required": ["name"]}
+        schema = {"required": ["name"], "properties": {"age": {"minimum": 10}}}
         result = compile_schema_to_sql(schema, jsonb=True)
+        assert "json_type" in result
         assert "jsonb_extract" in result
 
     def test_compile_query_schema_items_honors_json_each_function(self):
@@ -497,3 +500,161 @@ class TestSchemaCompiler:
         result = compile_schema_to_sql(schema)
         assert "profile" in result
         assert "name" in result
+
+
+class TestIssue195JsonSchemaValidatorFixes:
+    """Regression tests for GitHub issue #195 $jsonSchema bugs."""
+
+    def test_required_allows_explicit_null_when_type_permits(self):
+        """required uses json_type IS NOT NULL so explicit None passes when nullable."""
+        import neosqlite
+        from neosqlite._sqlite import sqlite3
+
+        schema = {
+            "$jsonSchema": {
+                "required": ["x"],
+                "properties": {"x": {"type": ["string", "null"]}},
+            }
+        }
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn.create_collection("nullable_req", validator=schema)
+            c.insert_one({"x": None})
+            c.insert_one({"x": "ok"})
+            assert c.count_documents({}) == 2
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"y": 1})
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"x": 123})
+
+    def test_numeric_bounds_do_not_reject_non_numeric_or_bool(self):
+        """minimum/maximum only constrain numeric values, not strings or bools."""
+        import neosqlite
+        from neosqlite._sqlite import sqlite3
+
+        schema = {
+            "$jsonSchema": {"properties": {"v": {"minimum": 1, "maximum": 100}}}
+        }
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn.create_collection("bounds", validator=schema)
+            c.insert_one({"v": "hello"})
+            c.insert_one({"v": False})
+            c.insert_one({"v": 50})
+            assert c.count_documents({}) == 3
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"v": 0})
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"v": 101})
+
+    def test_collection_validator_enforces_bool_enum_pattern_items_combinators(
+        self,
+    ):
+        """Collection validator enforces bool, enum, lengths, pattern, items, and combinators."""
+        import neosqlite
+        from neosqlite._sqlite import sqlite3
+
+        schema = {
+            "$jsonSchema": {
+                "properties": {
+                    "flag": {"bsonType": "bool"},
+                    "role": {"enum": ["admin", "user"]},
+                    "code": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 5,
+                        "pattern": r"^[A-Z]+\d+$",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 3,
+                        "items": {"type": "string"},
+                    },
+                },
+                "anyOf": [{"required": ["flag"]}, {"required": ["role"]}],
+            }
+        }
+        with neosqlite.Connection(":memory:") as conn:
+            c = conn.create_collection("strict_docs", validator=schema)
+            c.insert_one(
+                {
+                    "_id": 1,
+                    "flag": True,
+                    "role": "admin",
+                    "code": "A12",
+                    "tags": ["ok"],
+                }
+            )
+
+            # Invalid bool
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"flag": "yes", "role": "admin"})
+            # Invalid enum
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"flag": True, "role": "guest"})
+            # Invalid pattern on insert
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"flag": True, "code": "bad!"})
+            # Invalid items element on insert
+            with pytest.raises(sqlite3.IntegrityError):
+                c.insert_one({"flag": True, "tags": [123]})
+            # Invalid pattern and items on update_one (without mutating row)
+            with pytest.raises(sqlite3.IntegrityError):
+                c.update_one({"_id": 1}, {"$set": {"code": "bad!"}})
+            with pytest.raises(sqlite3.IntegrityError):
+                c.update_one({"_id": 1}, {"$push": {"tags": 999}})
+            with pytest.raises(sqlite3.IntegrityError):
+                c.replace_one({"_id": 1}, {"role": "user", "tags": [123]})
+            doc = c.find_one({"_id": 1})
+            assert doc["code"] == "A12"
+            assert doc["tags"] == ["ok"]
+
+    def test_enum_bool_vs_int_and_dotted_properties_parity(self):
+        """enum rejects True for [1, 2] and dotted properties match literal keys in SQL and Python."""
+        import neosqlite
+        from neosqlite.collection.query_helper import (
+            get_force_fallback,
+            set_force_fallback,
+        )
+
+        assert (
+            matches_json_schema(
+                {"v": True}, {"properties": {"v": {"enum": [1, 2]}}}
+            )
+            is False
+        )
+        assert (
+            matches_json_schema(
+                {"v": False}, {"properties": {"v": {"enum": [0]}}}
+            )
+            is False
+        )
+        assert (
+            matches_json_schema(
+                {"v": 1}, {"properties": {"v": {"enum": [1, 2]}}}
+            )
+            is True
+        )
+
+        with neosqlite.Connection(":memory:") as conn:
+            coll = conn.enum_dot
+            coll.insert_many(
+                [
+                    {"_id": 1, "v": True, "a.b": "lit"},
+                    {"_id": 2, "v": 1, "a": {"b": "nested"}},
+                ]
+            )
+            q_enum = {"$jsonSchema": {"properties": {"v": {"enum": [1, 2]}}}}
+            q_dot = {
+                "$jsonSchema": {
+                    "required": ["a.b"],
+                    "properties": {"a.b": {"type": "string"}},
+                }
+            }
+            orig = get_force_fallback()
+            try:
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    assert [d["_id"] for d in coll.find(q_enum)] == [2]
+                    assert [d["_id"] for d in coll.find(q_dot)] == [1]
+            finally:
+                set_force_fallback(orig)

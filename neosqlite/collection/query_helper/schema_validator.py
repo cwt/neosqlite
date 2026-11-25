@@ -10,8 +10,18 @@ from typing import Any
 
 from ...binary import Binary
 from ...objectid import ObjectId
+from ...query_operators import _bson_values_equal
 
 logger = logging.getLogger(__name__)
+
+
+def _bson_enum_contains(enum_list: list[Any], value: Any) -> bool:
+    """Return True if ``value`` equals an item in ``enum_list`` under BSON rules.
+
+    Distinguishes booleans from integers (``True != 1``, ``False != 0``) while
+    preserving numeric int/float equality and recursive container matching.
+    """
+    return any(_bson_values_equal(item, value) for item in enum_list)
 
 
 def matches_json_schema(
@@ -27,6 +37,22 @@ def matches_json_schema(
         bool: True if the document matches the schema, False otherwise.
     """
     return _validate_node(document, schema)
+
+
+def validate_document_for_collection(
+    collection: Any, document: dict[str, Any]
+) -> None:
+    """Validate ``document`` against ``collection._validator_schema`` if present."""
+    validator_schema = getattr(collection, "_validator_schema", None)
+    if not isinstance(validator_schema, dict):
+        return
+    if not matches_json_schema(document, validator_schema):
+        from ..._sqlite import sqlite3
+
+        name = getattr(collection, "name", "<unknown>")
+        raise sqlite3.IntegrityError(
+            f"CHECK constraint failed: document failed $jsonSchema validation on '{name}'"
+        )
 
 
 def _validate_node(data: Any, schema: Any) -> bool:
@@ -106,7 +132,9 @@ def _validate_node(data: Any, schema: Any) -> bool:
 
     # Check enum
     if "enum" in schema:
-        if data not in schema["enum"]:
+        if not isinstance(schema["enum"], list) or not _bson_enum_contains(
+            schema["enum"], data
+        ):
             return False
 
     # Check logical combinations
@@ -196,7 +224,9 @@ def _check_single_type(data: Any, t: str) -> bool:
         case "binData":
             return isinstance(data, (Binary, bytes))
         case "date":
-            # We handle datetime objects in NeoSQLite
-            return isinstance(data, datetime)
+            # We handle datetime objects and $date dicts in NeoSQLite
+            return isinstance(data, datetime) or (
+                isinstance(data, dict) and "$date" in data
+            )
         case _:
             return True  # Unknown type, default to True or handle more?

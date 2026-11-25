@@ -342,8 +342,12 @@ class FindOperationsMixin(QueryEngineProtocol):
                 from ...exceptions import MalformedDocument
                 from ...query_operators import _bson_values_equal
 
-                replacement_copy = _convert_bytes_to_binary(dict(replacement))
-                if "_id" in replacement_copy:
+                replacement_raw = dict(replacement)
+                if (
+                    "_id" in replacement_raw
+                    or getattr(self.collection, "_validator_schema", None)
+                    is not None
+                ):
                     existing_row = self.collection.db.execute(
                         f"SELECT id, _id, {data_col} as data FROM {tbl} {where_clause} {order_by} LIMIT 1",
                         params,
@@ -352,12 +356,24 @@ class FindOperationsMixin(QueryEngineProtocol):
                         existing_doc = self.collection._load_with_stored_id(
                             existing_row[0], existing_row[2], existing_row[1]
                         )
-                        if not _bson_values_equal(
-                            replacement_copy["_id"], existing_doc.get("_id")
-                        ):
-                            raise MalformedDocument(
-                                "Performing an update on the path '_id' would modify the immutable field '_id'"
-                            )
+                        existing_id = existing_doc.get("_id")
+                        if "_id" in replacement_raw:
+                            if not _bson_values_equal(
+                                replacement_raw["_id"], existing_id
+                            ):
+                                raise MalformedDocument(
+                                    "Performing an update on the path '_id' would modify the immutable field '_id'"
+                                )
+                        else:
+                            replacement_raw["_id"] = existing_id
+                        from ..query_helper.schema_validator import (
+                            validate_document_for_collection,
+                        )
+
+                        validate_document_for_collection(
+                            self.collection, replacement_raw
+                        )
+                replacement_copy = _convert_bytes_to_binary(replacement_raw)
                 repl_json = neosqlite_json_dumps(replacement_copy)
                 json_val_expr = self.jsonb.json_placeholder(wrap_text=True)
                 if "_id" in replacement_copy:
@@ -547,11 +563,22 @@ class FindOperationsMixin(QueryEngineProtocol):
             return None
 
         if use_returning:
+            from ..query_helper.schema_compiler import (
+                schema_needs_python_validation,
+            )
+
             # Atomic single-statement RETURNING when returning AFTER doc and SQL-capable
             tbl = quote_table_name(self.collection.name)
             data_col = self.jsonb.data_column()
-            sql_expr_res = self.helpers._build_set_data_expression(
-                update, array_filters
+            needs_py_schema = schema_needs_python_validation(
+                getattr(self.collection, "_validator_schema", None)
+            )
+            sql_expr_res = (
+                None
+                if needs_py_schema
+                else self.helpers._build_set_data_expression(
+                    update, array_filters
+                )
             )
             inc_mul_ok = (
                 sql_expr_res is not None
