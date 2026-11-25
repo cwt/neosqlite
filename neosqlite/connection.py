@@ -15,7 +15,7 @@ from typing import Any, Literal, Self
 
 from ._sqlite import sqlite3
 from .client_session import ClientSession
-from .collection import Collection
+from .collection import Collection, cleanup_dropped_collection
 from .collection.aggregation_cursor import AggregationCursor
 from .exceptions import CollectionInvalid
 from .migration import migrate_autovacuum, needs_migration, should_migrate
@@ -749,50 +749,19 @@ class Connection:
         """Drop a collection table and its associated metadata.
 
         Drops the SQLite table if it exists, evicts any cached ``Collection``
-        object, removes matching rows from ``_neosqlite_ttl_indexes``, and
-        drops any FTS5 virtual and shadow tables for ``name``.
+        object, removes matching rows from ``_neosqlite_ttl_indexes`` and
+        ``neosqlite_index_keys``, invalidates cached schema metadata, and drops
+        only FTS5 virtual and shadow tables owned by ``name``.
 
         Args:
             name: The name of the collection to drop.
         """
-        self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(name)}")
+        cleanup_dropped_collection(self.db, name)
         # Evict the cached Collection so later access doesn't resurrect a
         # table-less object (#132)
-        self._collections.pop(name, None)
-        try:
-            self.db.execute(
-                "DELETE FROM _neosqlite_ttl_indexes WHERE collection_name = ?",
-                (name,),
-            )
-        except Exception:
-            pass
-        # Drop FTS5 virtual tables and their shadow tables, which are
-        # separate schema objects that would otherwise outlive the
-        # collection forever (#132)
-        try:
-            all_tables = {
-                r[0]
-                for r in self.db.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table'"
-                ).fetchall()
-            }
-            prefix = name + "_"
-            fts_tables = [
-                t
-                for t in all_tables
-                if t.startswith(prefix) and t.endswith("_fts")
-            ]
-        except Exception:
-            fts_tables = []
-        for fts_table in fts_tables:
-            self.db.execute(
-                f"DROP TABLE IF EXISTS {quote_table_name(fts_table)}"
-            )
-            for suffix in ("_data", "_idx", "_content", "_docsize", "_config"):
-                self.db.execute(
-                    f"DROP TABLE IF EXISTS "
-                    f"{quote_table_name(fts_table + suffix)}"
-                )
+        dropped = self._collections.pop(name, None)
+        if dropped is not None:
+            dropped._invalidate_ttl_cache()
 
     def create_collection(self, name: str, **kwargs) -> Collection:
         """Create a new collection with specific options.

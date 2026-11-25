@@ -188,3 +188,137 @@ def test_sweeper_thread_deletes_expired(tmp_path):
             checker.close()
     finally:
         conn.close()
+
+
+def test_collection_drop_clears_ttl_fts_and_index_keys(connection):
+    from neosqlite.collection import Collection
+
+    connection.cache.create_index("date", expireAfterSeconds=10)
+    connection.cache.create_search_index("title")
+    connection.cache.drop()
+
+    # Recreated collection without TTL must not auto-purge old or epoch docs
+    connection.cache.insert_one({"_id": "fresh", "date": 100})
+    connection.cache.insert_one(
+        {"_id": "past_dt", "date": datetime(2000, 1, 1, tzinfo=UTC)}
+    )
+    assert [d["_id"] for d in connection.cache.find({})] == ["fresh", "past_dt"]
+    assert connection.cache.get_ttl_specs() == []
+    assert (
+        connection.db.execute(
+            "SELECT name FROM sqlite_master WHERE name LIKE 'cache_%_fts'"
+        ).fetchall()
+        == []
+    )
+
+    # Standalone Collection without _database ref also cleans metadata on drop()
+    standalone = Collection(connection.db, "standalone")
+    standalone.create_index("date", expireAfterSeconds=10)
+    standalone.drop()
+    assert (
+        connection.db.execute(
+            "SELECT COUNT(*) FROM _neosqlite_ttl_indexes "
+            "WHERE collection_name = 'standalone'"
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_rename_and_rename_collection_preserve_ttl_and_drop_index(connection):
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    connection.old_c.create_index("ts", expireAfterSeconds=60)
+    connection.rename_collection("old_c", "new_c")
+
+    info = connection.new_c.index_information()
+    assert info["idx_new_c_ts"]["expireAfterSeconds"] == 60
+    connection.new_c.insert_one({"_id": 1, "ts": t0})
+    assert connection.new_c.purge_expired(now=t0 + timedelta(seconds=120)) == 1
+
+    connection.new_c.drop_index("idx_new_c_ts")
+    connection.new_c.insert_one({"_id": 2, "ts": t0})
+    assert connection.new_c.purge_expired(now=t0 + timedelta(seconds=120)) == 0
+
+    direct = connection.direct_old
+    direct.create_index("ts", expireAfterSeconds=60)
+    direct.rename("direct_new")
+    assert connection._collections.get("direct_new") is direct
+    assert "direct_old" not in connection._collections
+    assert (
+        direct.index_information()["idx_direct_new_ts"]["expireAfterSeconds"]
+        == 60
+    )
+    direct.drop_index("idx_direct_new_ts")
+    direct.insert_one({"_id": 3, "ts": t0})
+    assert direct.purge_expired(now=t0 + timedelta(seconds=120)) == 0
+
+
+def test_purge_expired_exact_cutoff_and_ignores_booleans(connection):
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    connection.ttl.create_index("date", expireAfterSeconds=0)
+    connection.ttl.insert_many(
+        [
+            {"_id": "exact_dt", "date": t0},
+            {"_id": "exact_epoch", "date": t0.timestamp()},
+            {"_id": "future_dt", "date": t0 + timedelta(seconds=1)},
+            {"_id": "flag_false", "date": False},
+            {"_id": "flag_true", "date": True},
+        ]
+    )
+    deleted = connection.ttl.purge_expired(now=t0)
+    assert deleted == 2
+    remaining = {
+        row[0]
+        for row in connection.db.execute("SELECT _id FROM ttl").fetchall()
+    }
+    assert remaining == {"future_dt", "flag_false", "flag_true"}
+
+
+def test_auto_purge_ttl_on_find_one_and_modify_and_raw_batches(connection):
+    import json
+
+    old_ts = _utc_now() - timedelta(hours=2)
+    fresh_ts = _utc_now() + timedelta(hours=1)
+
+    for method in ("delete", "replace", "update"):
+        coll = connection[f"ttl_{method}"]
+        coll.create_index("date", expireAfterSeconds=60)
+        coll.insert_one({"_id": "expired", "date": old_ts, "v": 1})
+        if method == "delete":
+            assert coll.find_one_and_delete({"_id": "expired"}) is None
+        elif method == "replace":
+            assert (
+                coll.find_one_and_replace(
+                    {"_id": "expired"}, {"_id": "expired", "v": 2}
+                )
+                is None
+            )
+        else:
+            assert (
+                coll.find_one_and_update({"_id": "expired"}, {"$set": {"v": 2}})
+                is None
+            )
+
+    raw_coll = connection["ttl_raw"]
+    raw_coll.create_index("date", expireAfterSeconds=60)
+    raw_coll.insert_many(
+        [
+            {"_id": "old", "date": old_ts},
+            {"_id": "fresh", "date": fresh_ts},
+        ]
+    )
+    raw_ids = [
+        json.loads(line)["_id"]
+        for batch in raw_coll.find_raw_batches()
+        for line in batch.decode("utf-8").splitlines()
+        if line.strip()
+    ]
+    assert raw_ids == ["fresh"]
+
+    raw_coll.insert_one({"_id": "old2", "date": old_ts})
+    agg_ids = [
+        json.loads(line)["_id"]
+        for batch in raw_coll.aggregate_raw_batches([{"$match": {}}])
+        for line in batch.decode("utf-8").splitlines()
+        if line.strip()
+    ]
+    assert agg_ids == ["fresh"]

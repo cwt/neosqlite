@@ -1966,3 +1966,49 @@ def test_drop_then_recreate_collection(tmp_path):
         assert "items" in conn.list_collection_names()
         conn["items"].insert_one({"x": 2})
         assert conn["items"].count_documents({}) == 1
+
+
+def test_drop_and_rename_do_not_destroy_sibling_prefix_fts_tables():
+    import neosqlite
+
+    with neosqlite.Connection(":memory:") as db:
+        db["user"].insert_one({"name": "Alice"})
+        db["user"].create_index("name", fts=True)
+        db["user_profile"].insert_one({"bio": "hello world"})
+        db["user_profile"].create_index([("bio", "text")])
+
+        db["user"].rename("account")
+        # Post-rename insert keeps triggers pointing to account_name_fts
+        db["account"].insert_one({"name": "Bob"})
+        assert [
+            d["name"] for d in db["account"].find({"$text": {"$search": "Bob"}})
+        ] == ["Bob"]
+
+        # Sibling user_profile FTS table must remain untouched
+        fts_tables = [
+            r[0]
+            for r in db.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_fts'"
+            ).fetchall()
+        ]
+        assert "user_profile_bio_fts" in fts_tables
+        assert "account_name_fts" in fts_tables
+
+        db["account"].drop()
+        remaining_fts = [
+            r[0]
+            for r in db.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_fts'"
+            ).fetchall()
+        ]
+        assert remaining_fts == ["user_profile_bio_fts"]
+
+        db["user"].insert_one({"name": "Charlie"})
+        db.drop_collection("user")
+        after_drop = [
+            r[0]
+            for r in db.db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%_fts'"
+            ).fetchall()
+        ]
+        assert after_drop == ["user_profile_bio_fts"]

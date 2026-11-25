@@ -29,6 +29,7 @@ from .raw_batch_cursor import RawBatchCursor
 from .schema_utils import (
     create_unique_index_on_id,
     get_table_info,
+    invalidate_table_columns_cache,
 )
 from .type_utils import validate_session
 
@@ -37,6 +38,61 @@ if TYPE_CHECKING:
     from ..connection import Connection
 
 logger = logging.getLogger(__name__)
+
+
+def cleanup_dropped_collection(db: sqlite3.Connection, name: str) -> None:
+    """Drop a collection table and remove all FTS5, TTL, index-key, and schema caches."""
+    # Query FTS sync triggers and index names BEFORE dropping the table, since
+    # DROP TABLE removes triggers and indexes from sqlite_master automatically.
+    try:
+        trig_rows = db.execute(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='trigger' AND tbl_name = ? "
+            "AND name LIKE '%\\_fts\\_insert' ESCAPE '\\'",
+            (name,),
+        ).fetchall()
+        fts_tables = [r[0].removesuffix("_insert") for r in trig_rows]
+    except Exception:
+        fts_tables = []
+
+    try:
+        idx_names = [
+            r[0]
+            for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
+                (name,),
+            ).fetchall()
+        ]
+    except Exception:
+        idx_names = []
+
+    db.execute(f"DROP TABLE IF EXISTS {quote_table_name(name)}")
+
+    try:
+        db.execute(
+            "DELETE FROM _neosqlite_ttl_indexes WHERE collection_name = ?",
+            (name,),
+        )
+    except Exception:
+        pass
+
+    for key_name in idx_names + fts_tables:
+        try:
+            db.execute(
+                "DELETE FROM neosqlite_index_keys WHERE index_name = ?",
+                (key_name,),
+            )
+        except Exception:
+            pass
+
+    for fts_table in fts_tables:
+        db.execute(f"DROP TABLE IF EXISTS {quote_table_name(fts_table)}")
+        for suffix in ("_data", "_idx", "_content", "_docsize", "_config"):
+            db.execute(
+                f"DROP TABLE IF EXISTS {quote_table_name(fts_table + suffix)}"
+            )
+
+    invalidate_table_columns_cache(db, name)
 
 
 class Collection:
@@ -458,32 +514,44 @@ class Collection:
 
         # Rename the table
         old_name = self.name
+        try:
+            trig_fts_rows = self.db.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='trigger' AND tbl_name = ? "
+                "AND name LIKE '%\\_fts\\_insert' ESCAPE '\\'",
+                (old_name,),
+            ).fetchall()
+            owned_fts_tables = [
+                r[0].removesuffix("_insert") for r in trig_fts_rows
+            ]
+        except Exception:
+            owned_fts_tables = []
+
         self.db.execute(
             f"ALTER TABLE {quote_table_name(old_name)} RENAME TO {quote_table_name(new_name)}"
         )
+        invalidate_table_columns_cache(self.db, old_name)
+        invalidate_table_columns_cache(self.db, new_name)
 
-        # Carry FTS5 virtual tables along; otherwise text indexes are lost
-        # and stale shadow tables accumulate under the old name (#134)
-        all_tables = {
-            r[0]
-            for r in self.db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
+        # Carry FTS5 virtual tables owned exclusively by this collection (#134, #184)
+        fts_renames: list[tuple[str, str]] = []
         prefix = old_name + "_"
-        fts_rows = [
-            (t,)
-            for t in all_tables
-            if t.startswith(prefix) and t.endswith("_fts")
-        ]
-        for (fts_name,) in fts_rows:
-            if not fts_name.startswith(f"{old_name}_"):
+        for fts_name in owned_fts_tables:
+            if not fts_name.startswith(prefix):
                 continue
-            new_fts = f"{new_name}_{fts_name[len(old_name) + 1 :]}"
+            new_fts = f"{new_name}_{fts_name[len(prefix) :]}"
             self.db.execute(
                 f"ALTER TABLE {quote_table_name(fts_name)} "
                 f"RENAME TO {quote_table_name(new_fts)}"
             )
+            fts_renames.append((fts_name, new_fts))
+            try:
+                self.db.execute(
+                    "UPDATE neosqlite_index_keys SET index_name = ? WHERE index_name = ?",
+                    (new_fts, fts_name),
+                )
+            except Exception:
+                pass
 
         # Rename regular indexes so list_indexes() continues to find them
         rows = self.db.execute(
@@ -507,6 +575,24 @@ class Collection:
                     )
                 except Exception:
                     pass
+                try:
+                    self.db.execute(
+                        "UPDATE _neosqlite_ttl_indexes "
+                        "SET index_name = ?, collection_name = ? "
+                        "WHERE index_name = ? AND collection_name = ?",
+                        (new_idx_name, new_name, idx_name, old_name),
+                    )
+                except Exception:
+                    pass
+
+        try:
+            self.db.execute(
+                "UPDATE _neosqlite_ttl_indexes SET collection_name = ? "
+                "WHERE collection_name = ?",
+                (new_name, old_name),
+            )
+        except Exception:
+            pass
 
         # Rename triggers on the table (such as FTS sync triggers)
         trig_rows = self.db.execute(
@@ -522,10 +608,22 @@ class Collection:
                     f"DROP TRIGGER IF EXISTS {quote_table_name(trig_name)}"
                 )
                 new_trig_sql = trig_sql.replace(trig_name, new_trig_name, 1)
+                for old_fts, new_fts in fts_renames:
+                    new_trig_sql = new_trig_sql.replace(old_fts, new_fts)
                 self.db.execute(new_trig_sql)
 
-        # Update the collection name
+        # Update the collection name and Connection registry
         self.name = new_name
+        try:
+            database = self.__dict__.get("_database")
+            if (
+                database is not None
+                and database._collections.get(old_name) is self
+            ):
+                database._collections.pop(old_name, None)
+                database._collections[new_name] = self
+        except Exception:
+            pass
         self._invalidate_ttl_cache()
 
     def options(self) -> dict[str, Any]:
@@ -1164,6 +1262,7 @@ class Collection:
         Returns:
             RawBatchCursor: Cursor yielding raw JSON document batches.
         """
+        self._auto_purge_ttl()
         return self.query_engine.find_raw_batches(
             filter, projection, hint, batch_size, session=session
         )
@@ -1275,6 +1374,7 @@ class Collection:
             dict[str, Any] | None: The deleted document before removal, or
             ``None`` if no document matched.
         """
+        self._auto_purge_ttl()
         return self.query_engine.find_one_and_delete(
             filter, projection=projection, sort=sort, session=session, **kwargs
         )
@@ -1313,6 +1413,7 @@ class Collection:
             dict[str, Any] | None: Document before or after replacement, or
             ``None`` if no document matched (and not returned on upsert).
         """
+        self._auto_purge_ttl()
         return self.query_engine.find_one_and_replace(
             filter,
             replacement,
@@ -1361,6 +1462,7 @@ class Collection:
             dict[str, Any] | None: Document before or after update, or
             ``None`` if no document matched.
         """
+        self._auto_purge_ttl()
         return self.query_engine.find_one_and_update(
             filter,
             update,
@@ -1427,6 +1529,7 @@ class Collection:
         Returns:
             RawBatchCursor: Cursor yielding raw JSON document batches.
         """
+        self._auto_purge_ttl()
         return self.query_engine.aggregate_raw_batches(
             pipeline, batch_size, session=session
         )
@@ -1813,12 +1916,26 @@ class Collection:
             expire = int(spec["expireAfterSeconds"])
             cutoff = ref - timedelta(seconds=expire)
             try:
-                result = self.delete_many({field: {"$lt": cutoff}})
+                result = self.delete_many(
+                    {
+                        "$and": [
+                            {field: {"$type": "date"}},
+                            {field: {"$lte": cutoff}},
+                        ]
+                    }
+                )
                 total += result.deleted_count
             except Exception as exc:
                 logger.debug("TTL datetime purge skipped: %s", exc)
             try:
-                result = self.delete_many({field: {"$lt": cutoff.timestamp()}})
+                result = self.delete_many(
+                    {
+                        "$and": [
+                            {field: {"$type": "number"}},
+                            {field: {"$lte": cutoff.timestamp()}},
+                        ]
+                    }
+                )
                 total += result.deleted_count
             except Exception as exc:
                 logger.debug("TTL epoch purge skipped: %s", exc)
@@ -2012,23 +2129,18 @@ class Collection:
                 return False
 
     def drop(self):
-        """Drop the collection table and clear related caches.
+        """Drop the collection table, its FTS/TTL/index metadata, and caches.
 
-        Executes ``DROP TABLE IF EXISTS`` on the backing table, invalidates
-        the TTL specification cache, and evicts this collection from its
-        parent database cache if present.
+        Delegates to ``Connection.drop_collection()`` when bound to a parent
+        database connection, or runs ``cleanup_dropped_collection()`` directly
+        for standalone collections, then invalidates this instance's TTL cache.
         """
-        self.db.execute(f"DROP TABLE IF EXISTS {quote_table_name(self.name)}")
+        database = self.__dict__.get("_database")
+        if database is not None:
+            database.drop_collection(self.name)
+        else:
+            cleanup_dropped_collection(self.db, self.name)
         self._invalidate_ttl_cache()
-        # Evict the cached Collection so a later create_collection() really
-        # recreates the table instead of reusing this table-less object
-        # (same hazard as Connection.drop_collection, cf. #132).
-        try:
-            database = self.__dict__.get("_database")
-            if database is not None:
-                database._collections.pop(self.name, None)
-        except Exception:
-            pass
 
     def watch(
         self,

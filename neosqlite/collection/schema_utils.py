@@ -59,6 +59,25 @@ def get_table_columns_cached(db_connection: Any, table_name: str) -> set[str]:
     return set(cols)
 
 
+def invalidate_table_columns_cache(
+    db_connection: Any, table_name: str | None = None
+) -> None:
+    """Invalidate cached table column entries for ``db_connection``.
+
+    Args:
+        db_connection: SQLite database connection whose entries should clear.
+        table_name: Specific table name to invalidate, or ``None`` to clear
+            all entries associated with ``db_connection``.
+    """
+    conn_id = id(db_connection)
+    if table_name is not None:
+        _table_columns_cache.pop((conn_id, table_name), None)
+        return
+    keys_to_remove = [key for key in _table_columns_cache if key[0] == conn_id]
+    for key in keys_to_remove:
+        _table_columns_cache.pop(key, None)
+
+
 def column_exists(
     db_connection: Any,
     table_name: str,
@@ -177,6 +196,8 @@ def get_table_info(db_connection: Any, table_name: str) -> dict[str, Any]:
 
 __all__ = [
     "get_table_columns",
+    "get_table_columns_cached",
+    "invalidate_table_columns_cache",
     "column_exists",
     "create_unique_index_on_id",
     "get_table_info",
