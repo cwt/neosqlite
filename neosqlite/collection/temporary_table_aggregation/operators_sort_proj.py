@@ -865,7 +865,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 replace_stage,
                 f"SELECT _rr.id, "
                 f"CASE WHEN json_type(_rr._new_data, '$._id') IS NOT NULL "
-                f"THEN json_extract(_rr._new_data, '$._id') ELSE _rr._id END AS _id, "
+                f"THEN {self.jsonb.json_function_prefix}_extract(_rr._new_data, '$._id') ELSE _rr._id END AS _id, "
                 f"{self.jsonb.data_column(f'CASE WHEN json_type(_rr._new_data, \'$._id\') IS NOT NULL OR _rr._id IS NULL THEN _rr._new_data ELSE {json_set_func}(_rr._new_data, \'$._id\', _rr._id) END')} AS data "
                 f"FROM (SELECT id, _id, {extract_expr} AS _new_data FROM {current_table}) AS _rr",
             )
