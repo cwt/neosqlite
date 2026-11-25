@@ -179,15 +179,6 @@ class ReadConcern:
         return self._level
 
     @property
-    def ok_for_legacy(self) -> bool:
-        """Return whether this read concern is valid for legacy reads.
-
-        Returns:
-            bool: True when ``level`` is None or ``"local"``.
-        """
-        return self._level is None or self._level == "local"
-
-    @property
     def document(self) -> dict[str, Any]:
         """Return the read concern options as a dictionary.
 

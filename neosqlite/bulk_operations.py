@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from abc import ABC
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
@@ -258,7 +257,7 @@ class BulkOperationExecutor:
         """Initialize the BulkOperationExecutor.
 
         Creates an executor bound to ``collection`` with either ordered or
-        unordered execution semantics and an isolated savepoint identifier.
+        unordered execution semantics.
 
         Args:
             collection: Target collection on which operations are executed.
@@ -267,9 +266,6 @@ class BulkOperationExecutor:
         """
         self._collection = collection
         self._ordered = ordered
-        # Unique per executor so interleaved executors cannot pop each
-        # other's savepoint off the shared connection's stack (#138)
-        self._savepoint_name = f"bulk_ops_{uuid.uuid4().hex[:12]}"
         self._operations: list[BulkOperation] = []
 
     def add(self, operation: Any) -> Self:

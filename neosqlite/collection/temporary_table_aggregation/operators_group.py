@@ -651,32 +651,6 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             f"FROM {current_table}) WHERE __cnt > 0"
         )
 
-    def _id_to_json_object_args(self, select_parts: list[str]) -> str:
-        """Convert ``SELECT`` fragments to ``json_object`` arguments.
-
-        Parses ``"expr AS alias"`` fragments into ``"'alias', expr"`` pairs,
-        defaulting the key to ``'column'`` if ``" AS "`` is absent.
-
-        Args:
-            select_parts: List of ``SELECT`` column expressions such as
-                ``["expr1 AS field1", "expr2 AS field2"]``.
-
-        Returns:
-            str: Comma-separated ``'key', expr`` pairs for ``json_object``.
-        """
-        args = []
-        for part in select_parts:
-            # Parse "expression AS alias"
-            if " AS " in part:
-                expr, alias = part.rsplit(" AS ", 1)
-                expr = expr.strip()
-                alias = alias.strip().strip('"').strip("'")
-                args.append(f"'{alias}', {expr}")
-            else:
-                # No alias, use the expression as-is (shouldn't happen normally)
-                args.append(f"'column', {part}")
-        return ", ".join(args)
-
     def _get_results_from_table(
         self,
         table_name: str,

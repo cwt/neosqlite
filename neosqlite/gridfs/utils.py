@@ -13,10 +13,7 @@ import re
 from typing import Any
 
 from ..collection.json_helpers import neosqlite_json_dumps, neosqlite_json_loads
-from ..collection.schema_utils import (
-    get_table_columns_cached,
-    invalidate_table_columns_cache,
-)
+from ..collection.schema_utils import invalidate_table_columns_cache
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +170,6 @@ __all__ = [
     "serialize_aliases",
     "deserialize_aliases",
     "force_sync_if_needed",
-    "get_table_columns_cached",
     "invalidate_table_columns_cache",
     "sql_regexp",
 ]

@@ -1536,16 +1536,3 @@ class TestProcessorInitialization:
             assert processor.collection == coll
             assert processor.db == coll.db
             assert processor.sql_translator is not None
-
-    def test_processor_has_sort_stage_tracking(self):
-        """Test processor tracks sort stages."""
-        from neosqlite.collection.temporary_table_aggregation import (
-            TemporaryTableAggregationProcessor,
-        )
-
-        with neosqlite.Connection(":memory:") as conn:
-            coll = conn.test_proc_sort
-            processor = TemporaryTableAggregationProcessor(coll)
-
-            # Initially should be False
-            assert processor._has_sort_stage is False

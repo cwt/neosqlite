@@ -64,10 +64,6 @@ class GridFS:
             key: value for key, value in kwargs.items() if key != "encoding"
         }
 
-        # If filename is provided in kwargs, use it
-        if filename is None and "filename" in kwargs:
-            filename = kwargs["filename"]
-
         # Default filename if none provided
         if filename is None:
             filename = "file"

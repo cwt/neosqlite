@@ -1978,7 +1978,6 @@ def _command_dbstats(
 
     fs_total = 0
     fs_used = 0
-    db_file_size = 0
 
     if self._db_path and self._db_path != ":memory:":
         try:
@@ -1986,13 +1985,6 @@ def _command_dbstats(
             fs_usage = shutil.disk_usage(db_dir)
             fs_total = fs_usage.total
             fs_used = fs_usage.used
-            db_file_size = os.path.getsize(self._db_path)
-            wal_path = self._db_path + "-wal"
-            if os.path.exists(wal_path):
-                db_file_size += os.path.getsize(wal_path)
-            shm_path = self._db_path + "-shm"
-            if os.path.exists(shm_path):
-                db_file_size += os.path.getsize(shm_path)
         except OSError as e:
             logger.debug(f"{e=}")
 

@@ -24,7 +24,7 @@ from ..sql_utils import quote_table_name
 logger = logging.getLogger(__name__)
 from .jsonb_support import JSONBContext
 from .query_helper import QueryHelper
-from .sql_translator_unified import SQLFieldAccessor, SQLTranslator
+from .sql_translator_unified import SQLFieldAccessor
 from .temporary_table_aggregation import (
     aggregation_pipeline_context,
 )
@@ -63,13 +63,6 @@ class DateTimeQueryProcessor:
         )
         # Initialize JSONB capabilities
         self.jsonb = JSONBContext.from_db(self.db)
-        self.sql_translator = SQLTranslator(
-            collection.name,
-            "data",
-            "id",
-            db_connection=collection.db,
-            jsonb_context=self.jsonb,
-        )
         # Configuration for kill switch behavior - DEFAULT TO LOCAL for better isolation
         self._use_global_kill_switch = use_global_kill_switch
         # Local kill switch state (isolated to this instance)

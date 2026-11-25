@@ -9,14 +9,6 @@ from ..._sqlite import sqlite3
 from ...binary import Binary
 from ...exceptions import MalformedQueryException
 
-# Import JSON function helpers from shared module to avoid duplication
-from ..jsonb_support import (
-    _get_json_function_prefix as _get_json_function_prefix,
-)
-from ..jsonb_support import (
-    json_function as _json_function,
-)
-
 # Import type checking helpers from shared module to avoid duplication
 from ..type_utils import _is_numeric_value as _is_numeric_value
 
@@ -125,19 +117,6 @@ def _supports_returning_clause() -> bool:
             val = False
         _SQLITE_FEATURES["returning_clause"] = val
     return val
-
-
-def _get_json_function(name: str, jsonb_supported: bool) -> str:
-    """Get the appropriate JSON function name based on JSONB support.
-
-    Args:
-        name: Base function name without the ``json_`` or ``jsonb_`` prefix.
-        jsonb_supported: Whether JSONB functions are supported.
-
-    Returns:
-        str: Full SQLite function name with the appropriate prefix.
-    """
-    return _json_function(name, jsonb_supported)
 
 
 # Global flag to force fallback - for benchmarking and debugging

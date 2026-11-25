@@ -739,7 +739,6 @@ class StageBuildersMixin:
                 all_params.extend(expr_params)
             json_set_args.append(f"'{parse_json_path(field)}'")
             json_set_args.append(expr_sql)
-            context.add_computed_field(field, expr_sql)
 
         json_set_func = self._get_json_set()
         if json_set_args:
@@ -811,8 +810,6 @@ class StageBuildersMixin:
                 all_params.extend(e_params)
                 parts.append(f"'{escaped}'")
                 parts.append(e_sql)
-                if field_name != "_id":
-                    context.add_computed_field(field_name, e_sql)
                 return True, e_sql
             if val in ("$$ROOT", "$$CURRENT"):
                 src_col = (

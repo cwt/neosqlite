@@ -140,8 +140,6 @@ class MathTrigMixin(BaseSqlMixin):
                         sql = f"ceil({value_sql})"
                     case "$floor":
                         sql = f"floor({value_sql})"
-                    case "$round":
-                        sql = f"round({value_sql})"
                     case "$trunc":
                         sql = f"cast({value_sql} as integer)"
                     case "$sqrt":

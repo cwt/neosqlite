@@ -142,29 +142,6 @@ class ComparisonMixin(BaseSqlMixin):
             # from present null value (returns 'null').
             # Only do this for simple $field references where the SQL
             # is a json/jsonb_extract call.
-            both_fields = (
-                isinstance(operands[0], str)
-                and operands[0].startswith("$")
-                and isinstance(field_op, str)
-                and field_op.startswith("$")
-            )
-            if both_fields and operator == "$eq":
-                # Both operands are fields: missing-vs-missing compares as
-                # equal (both absent) — Python tier semantics (#121). Escape
-                # the path via parse_json_path instead of raw concatenation.
-                from ...json_path_utils import parse_json_path
-
-                p1 = "'" + parse_json_path(field_op[1:]) + "'"
-                p2 = "'" + parse_json_path(operands[0][1:]) + "'"
-                t1 = f"json_type({self.data_column}, {p1})"
-                t2 = f"json_type({self.data_column}, {p2})"
-                sql = (
-                    f"(CASE WHEN {t1} IS NULL AND {t2} IS NULL THEN 1"
-                    f" WHEN {t1} IS NOT NULL AND {t2} IS NOT NULL"
-                    f" THEN CASE WHEN {field_sql} IS {right_sql} THEN 1 ELSE 0 END"
-                    f" ELSE 0 END)"
-                )
-                return sql, field_params
             if (
                 isinstance(field_op, str)
                 and field_op.startswith("$")

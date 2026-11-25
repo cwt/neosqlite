@@ -26,20 +26,6 @@ COMPILED_DATETIME_PATTERNS = [
     re.compile(pattern) for pattern in DATETIME_PATTERNS
 ]
 
-# Pre-compile the datetime indicators for regex checking - these handle regex string patterns
-# When regex patterns are passed as strings, they appear as '\\d{4}-\\d{2}-\\d{2}' in memory
-DATETIME_INDICATORS = [
-    r"\\d\{4\}-\\d\{2\}-\\d\{2\}",  # This matches '\\d{4}-\\d{2}-\\d{2}' in a string
-    r"\\d\{2\}/\\d\{2\}/\\d\{4\}",
-    r"\\d\{4\}/\\d\{2\}/\\d\{2\}",
-    r"\\d\{2\}-\\d\{2\}-\\d\{4\}",
-    r"\\d\{4\}-\\d\{2\}-\\d\{2\}T\\d\{2\}:\\d\{2\}:\\d\{2\}",
-]
-
-COMPILED_DATETIME_INDICATORS = [
-    re.compile(indicator) for indicator in DATETIME_INDICATORS
-]
-
 
 def is_datetime_value(value: Any) -> bool:
     """Check if a value is a datetime object or datetime string.
@@ -168,6 +154,4 @@ __all__ = [
     "contains_datetime_operations",
     "DATETIME_PATTERNS",
     "COMPILED_DATETIME_PATTERNS",
-    "DATETIME_INDICATORS",
-    "COMPILED_DATETIME_INDICATORS",
 ]

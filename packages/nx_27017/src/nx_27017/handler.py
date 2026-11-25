@@ -308,40 +308,6 @@ class NeoSQLiteHandler:
     legacy ``OP_QUERY`` wire commands.
     """
 
-    KNOWN_COMMANDS = frozenset(
-        {
-            "ping",
-            "ismaster",
-            "isMaster",
-            "hello",
-            "Hello",
-            "listDatabases",
-            "listdatabases",
-            "endSessions",
-            "buildinfo",
-            "buildInfo",
-            "whatsmyuri",
-            "serverStatus",
-            "dbStats",
-            "dbstats",
-            "insert",
-            "find",
-            "update",
-            "delete",
-            "count",
-            "distinct",
-            "aggregate",
-            "create",
-            "drop",
-            "collStats",
-            "collstats",
-            "listCollections",
-            "listcollections",
-            "renameCollection",
-            "renamecollection",
-        }
-    )
-
     def __init__(
         self,
         db_path: str = ":memory:",

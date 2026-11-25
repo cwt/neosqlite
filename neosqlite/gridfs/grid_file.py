@@ -94,14 +94,6 @@ class GridIn:
         self._md5_hasher = None if disable_md5 else hashlib.md5()
         self._file_document_created = False
 
-    def _serialize_aliases(self) -> str | None:
-        """Serialize file aliases to a JSON string.
-
-        Returns:
-            str | None: JSON-encoded aliases string, or None if unset.
-        """
-        return serialize_aliases(self._aliases)
-
     def _serialize_metadata(
         self, metadata: dict[str, Any] | None
     ) -> str | None:
@@ -127,17 +119,6 @@ class GridIn:
             dict[str, Any] | None: Deserialized metadata dictionary, or None.
         """
         return deserialize_metadata(metadata_str)
-
-    def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
-        """Deserialize aliases from a JSON string.
-
-        Args:
-            aliases_str: JSON string representation of aliases.
-
-        Returns:
-            list[str] | None: List of alias strings, or None.
-        """
-        return deserialize_aliases(aliases_str)
 
     def _force_sync_if_needed(self):
         """Force database synchronization if write concern requires it."""
@@ -644,17 +625,6 @@ class GridOut:
             dict[str, Any] | None: Deserialized metadata dictionary, or None.
         """
         return deserialize_metadata(metadata_str)
-
-    def _deserialize_aliases(self, aliases_str: str | None) -> list[str] | None:
-        """Deserialize aliases from a JSON string.
-
-        Args:
-            aliases_str: JSON string representation of aliases.
-
-        Returns:
-            list[str] | None: List of alias strings, or None.
-        """
-        return deserialize_aliases(aliases_str)
 
     def read(self, size: int = -1) -> bytes:
         """Read bytes from the ``GridOut`` stream.

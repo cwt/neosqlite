@@ -27,9 +27,6 @@ from .utils import (
     _convert_bytes_to_binary as _convert_bytes_to_binary,
 )
 from .utils import (
-    _get_json_function as _get_json_function,
-)
-from .utils import (
     _is_numeric_value as _is_numeric_value,
 )
 from .utils import (

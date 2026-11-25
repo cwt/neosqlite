@@ -13,7 +13,7 @@ conversion operators (plus NeoSQLite's ``$log2`` extension).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..json_path_utils import (
     build_json_extract_expression as build_json_extract_expression,
@@ -24,7 +24,6 @@ from ..json_path_utils import (
 from ..jsonb_support import (
     JSONBContext,
     _get_json_each_function,
-    _get_json_function_prefix,
     _get_json_group_array_function,
     supports_jsonb,
     supports_jsonb_each,
@@ -100,10 +99,6 @@ from .type_utils import (
     get_bson_type as get_bson_type,
 )
 
-# Forward reference for PipelineContext to avoid circular import
-if TYPE_CHECKING:
-    from ..pipeline_context import PipelineContext
-
 # Public API exports
 __all__ = [
     # Classes
@@ -139,7 +134,6 @@ __all__ = [
     # JSONB support
     "supports_jsonb",
     "supports_jsonb_each",
-    "_get_json_function_prefix",
     "_get_json_each_function",
     "_get_json_group_array_function",
 ]
@@ -502,101 +496,3 @@ class ExprEvaluator(SqlConvertersMixin, PythonEvaluatorsMixin):
         return self.evaluate_for_aggregation(
             expr, context=context, as_alias=alias
         )
-
-    def build_group_by_expression(
-        self,
-        expr: Any,
-        context: AggregationContext | None = None,
-    ) -> tuple[str, list[Any]]:
-        """Build a SQL ``GROUP BY`` expression without aliasing.
-
-        Args:
-            expr: Expression or field reference used as a grouping key.
-            context: Optional aggregation context; creates a fresh context
-                when ``None``.
-
-        Returns:
-            tuple[str, list[Any]]: SQL expression and bound parameters.
-
-        Examples:
-            >>> evaluator = ExprEvaluator()
-            >>> evaluator.build_group_by_expression("$category")
-            ("json_extract(data, '$.category')", [])
-
-            >>> evaluator.build_group_by_expression({"$toLower": "$category"})
-            ("lower(json_extract(data, '$.category'))", [])
-        """
-        if context is None:
-            context = AggregationContext()
-
-        # For GROUP BY, we just need the expression without alias
-        return self._convert_operand_to_sql_agg(expr, context)
-
-    def build_having_expression(
-        self,
-        expr: Any,
-        context: AggregationContext | None = None,
-    ) -> tuple[str, list[Any]]:
-        """Build a SQL ``HAVING`` expression for post-aggregation filtering.
-
-        Converts single-key operator expressions via ``_convert_expr_to_sql()``
-        and other operands via ``_convert_operand_to_sql_agg()``.
-
-        Args:
-            expr: Boolean expression or operand for the ``HAVING`` clause.
-            context: Optional aggregation context; creates a fresh context
-                when ``None``.
-
-        Returns:
-            tuple[str, list[Any]]: SQL expression and bound parameters.
-
-        Examples:
-            >>> evaluator = ExprEvaluator()
-            >>> evaluator.build_having_expression({"$gt": ["$total", 100]})
-            ("json_extract(data, '$.total') > ?", [100])
-        """
-        if context is None:
-            context = AggregationContext()
-
-        # HAVING expressions are similar to WHERE expressions
-        # Use _convert_expr_to_sql for boolean expressions
-        if isinstance(expr, dict) and len(expr) == 1:
-            key = next(iter(expr.keys()))
-            if key.startswith("$"):
-                return self._convert_expr_to_sql(expr)
-
-        # For non-expression operands, convert normally
-        return self._convert_operand_to_sql_agg(expr, context)
-
-    def _handle_aggregation_variable_sql_tier(
-        self, var_name: str, context: PipelineContext | None = None
-    ) -> str:
-        """Resolve an aggregation variable name for SQL-tier pipelines.
-
-        Maps ``$$ROOT`` to ``"root_data"``, ``$$CURRENT`` to ``"data"``, and
-        ``$$REMOVE`` to the literal marker ``"$$REMOVE"``.
-
-        Args:
-            var_name: Aggregation variable name (e.g., ``"$$ROOT"``).
-            context: Optional pipeline context (unused by this mapping).
-
-        Returns:
-            str: SQL column name or sentinel string.
-
-        Raises:
-            NotImplementedError: If ``var_name`` is not supported in SQL tier.
-        """
-        match var_name:
-            case "$$ROOT":
-                # In SQL tier, root_data is preserved in a separate column
-                return "root_data"
-            case "$$CURRENT":
-                # Current document state is in the data column
-                return "data"
-            case "$$REMOVE":
-                # Sentinel for field removal - handled at application level
-                return "$$REMOVE"
-            case _:
-                raise NotImplementedError(
-                    f"Aggregation variable {var_name} not supported in SQL tier"
-                )

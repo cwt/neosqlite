@@ -723,35 +723,6 @@ class ChangeStreamManager:
             except Exception as exc:
                 logger.debug("ChangeStream prune skipped: %s", exc)
 
-    # -- legacy compat ---------------------------------------------------
-
-    def notify_change(
-        self,
-        collection_name: str,
-        operation_type: str,
-        document: dict,
-        document_key: dict,
-        update_description: dict | None = None,
-        db_name: str = "test",
-    ) -> None:
-        """Ignore deprecated change notifications (kept for tests).
-
-        Change tracking is trigger-backed via SQLite triggers and pulled by
-        ``pull_stream``.
-
-        Args:
-            collection_name: Name of the mutated collection.
-            operation_type: Mutation operation name.
-            document: Document payload associated with the mutation.
-            document_key: Key document containing ``_id``.
-            update_description: Optional update description payload.
-            db_name: Database name containing the collection.
-        """
-        logger.debug(
-            "notify_change(%r) ignored: streams are trigger-backed",
-            collection_name,
-        )
-
 
 def is_change_stream_pipeline(pipeline: list[dict]) -> bool:
     """Check if an aggregation pipeline contains a ``$changeStream`` stage.

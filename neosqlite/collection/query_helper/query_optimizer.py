@@ -438,33 +438,6 @@ class QueryOptimizerMixin:
 
         return self._bubble_matches_left(pipeline, only_indexed=False)
 
-    def _is_datetime_indexed_field(self, field: str) -> bool:
-        """Check if a field has a UTC datetime index in ``sqlite_master``.
-
-        Datetime indexes follow the naming pattern
-        ``idx_{collection}_{field}_utc`` with dots replaced by underscores.
-
-        Args:
-            field: Field name (supports dot notation) to check.
-
-        Returns:
-            bool: ``True`` if the datetime index exists, ``False`` otherwise.
-        """
-        # Construct the expected index name for datetime indexes
-        # Convert dots to underscores in field name
-        field_name_for_index = field.replace(".", "_")
-        coll_name = validate_identifier(self.collection.name)
-        expected_datetime_index_name = (
-            f"idx_{coll_name}_{field_name_for_index}_utc"
-        )
-
-        # Query the SQLite master table to check if this specific index exists
-        cursor = self.collection.db.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
-            (expected_datetime_index_name,),
-        )
-        return cursor.fetchone() is not None
-
     def _reorder_pipeline_for_indexes(
         self, pipeline: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:

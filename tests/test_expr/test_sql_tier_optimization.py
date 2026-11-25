@@ -20,50 +20,26 @@ from neosqlite.collection.sql_tier_aggregator import (
 
 
 class TestPipelineContext:
-    """Test PipelineContext class for tracking field state."""
+    """Test PipelineContext class for tracking pipeline state."""
 
     def test_init_default_values(self):
         """Test PipelineContext initialization."""
         ctx = PipelineContext()
-        assert ctx.computed_fields == {}
-        assert ctx.removed_fields == set()
         assert ctx.stage_index == 0
         assert ctx.has_root is False
-        assert ctx.has_computed is False
+        assert ctx.needs_recursive is False
+        assert ctx.cte_prefix == "stage"
+        assert ctx.pre_ctes == []
 
-    def test_add_computed_field(self):
-        """Test adding computed field."""
+    def test_aux_id_and_pre_ctes(self):
+        """Test auxiliary CTE ID generation and pre-CTE draining."""
         ctx = PipelineContext()
-        ctx.add_computed_field("revenue", "price * quantity")
-        assert ctx.computed_fields["revenue"] == "price * quantity"
-        assert ctx.has_computed is True
-
-    def test_remove_field(self):
-        """Test removing field."""
-        ctx = PipelineContext()
-        ctx.remove_field("secret")
-        assert "secret" in ctx.removed_fields
-
-    def test_get_field_sql(self):
-        """Test getting field SQL expression."""
-        ctx = PipelineContext()
-        ctx.add_computed_field("revenue", "price * quantity")
-        assert ctx.get_field_sql("revenue") == "price * quantity"
-        assert ctx.get_field_sql("other") is None
-
-    def test_is_field_available(self):
-        """Test checking field availability."""
-        ctx = PipelineContext()
-        ctx.remove_field("secret")
-        assert ctx.is_field_available("secret") is False
-        assert ctx.is_field_available("other") is True
-
-    def test_is_field_computed(self):
-        """Test checking if field is computed."""
-        ctx = PipelineContext()
-        ctx.add_computed_field("revenue", "price * quantity")
-        assert ctx.is_field_computed("revenue") is True
-        assert ctx.is_field_computed("other") is False
+        assert ctx.next_aux_id() == 1
+        assert ctx.next_aux_id() == 2
+        ctx.add_pre_cte("aux_1", "SELECT 1", [42])
+        drained = ctx.drain_pre_ctes()
+        assert drained == [("aux_1", "SELECT 1", [42])]
+        assert ctx.drain_pre_ctes() == []
 
     def test_preserve_root(self):
         """Test preserving root document."""
@@ -75,19 +51,17 @@ class TestPipelineContext:
     def test_clone(self):
         """Test cloning context."""
         ctx = PipelineContext()
-        ctx.add_computed_field("revenue", "price * quantity")
-        ctx.remove_field("secret")
         ctx.preserve_root()
+        ctx.mark_recursive()
+        ctx.next_aux_id()
+        ctx.add_pre_cte("aux_1", "SELECT 1")
 
         cloned = ctx.clone()
-        assert cloned.computed_fields == ctx.computed_fields
-        assert cloned.removed_fields == ctx.removed_fields
         assert cloned.has_root == ctx.has_root
-        assert cloned.has_computed == ctx.has_computed
-
-        # Modifying clone shouldn't affect original
-        cloned.add_computed_field("tax", "revenue * 0.08")
-        assert "tax" not in ctx.computed_fields
+        assert cloned.needs_recursive == ctx.needs_recursive
+        assert cloned.stage_index == ctx.stage_index
+        assert cloned.pre_ctes == []
+        assert cloned.next_aux_id() == 2
 
 
 class TestSQLTierAggregator:

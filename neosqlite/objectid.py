@@ -17,10 +17,7 @@ import random
 import threading
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Self
-
-if TYPE_CHECKING:
-    pass
+from typing import Any, Self
 
 logger = logging.getLogger(__name__)
 

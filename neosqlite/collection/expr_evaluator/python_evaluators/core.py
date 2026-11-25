@@ -238,8 +238,6 @@ class CorePythonMixin(BasePythonMixin):
                 return self._evaluate_data_size_python(
                     operator, operands, document
                 )
-            case "$literal":
-                return self._evaluate_literal_python(operands, document)
             case "$function":
                 from ....js import (
                     JsWorkerError,
@@ -627,23 +625,6 @@ class CorePythonMixin(BasePythonMixin):
             else:
                 return True
         return False
-
-    def _evaluate_literal_python(
-        self, operands: Any, document: dict[str, Any]
-    ) -> Any:
-        """Evaluate the ``$literal`` operator in Python.
-
-        Delegates to ``_evaluate_operand_python()`` on the wrapped operand.
-
-        Args:
-            operands: The operand wrapped by ``$literal``.
-            document: Document dictionary passed to operand evaluation.
-
-        Returns:
-            Any: Result of evaluating ``operands``.
-        """
-        # $literal just returns its argument as-is (used to escape special characters)
-        return self._evaluate_operand_python(operands, document)
 
     def _evaluate_operand_python(
         self, operand: Any, document: dict[str, Any]

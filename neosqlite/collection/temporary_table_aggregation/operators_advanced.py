@@ -330,110 +330,94 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
 
         # Process each sub-pipeline and store results
         facet_results: dict[str, Any] = {}
-        result_tables: list[str] = []
         qe = self.query_engine or getattr(self.collection, "query_engine", None)
 
-        try:
-            for facet_name, sub_pipeline in facet_spec.items():
-                if not input_docs:
-                    facet_results[facet_name] = []
-                    continue
+        for facet_name, sub_pipeline in facet_spec.items():
+            if not input_docs:
+                facet_results[facet_name] = []
+                continue
 
-                if (
-                    not _can_insert_into_temp_collection(input_docs)
-                    and qe is not None
-                ):
+            if (
+                not _can_insert_into_temp_collection(input_docs)
+                and qe is not None
+            ):
+                from ..query_engine.python_aggregation_engine import (
+                    execute_python_aggregation,
+                )
+
+                facet_results[facet_name] = execute_python_aggregation(
+                    qe,
+                    sub_pipeline,
+                    session=None,
+                    initial_docs=deepcopy(input_docs),
+                )
+                continue
+
+            temp_collection_name = f"_facet_sub_{uuid.uuid4().hex[:12]}"
+            from .. import Collection
+
+            temp_collection = Collection(
+                db=self.collection.db,
+                name=temp_collection_name,
+                create=True,
+                database=self.collection._database,
+            )
+
+            try:
+                try:
+                    temp_collection.insert_many(deepcopy(input_docs))
+                    sub_results = list(temp_collection.aggregate(sub_pipeline))
+                except sqlite3.IntegrityError:
+                    if qe is None:
+                        raise
                     from ..query_engine.python_aggregation_engine import (
                         execute_python_aggregation,
                     )
 
-                    facet_results[facet_name] = execute_python_aggregation(
+                    sub_results = execute_python_aggregation(
                         qe,
                         sub_pipeline,
                         session=None,
                         initial_docs=deepcopy(input_docs),
                     )
-                    continue
 
-                temp_collection_name = f"_facet_sub_{uuid.uuid4().hex[:12]}"
-                from .. import Collection
+                facet_results[facet_name] = sub_results
 
-                temp_collection = Collection(
-                    db=self.collection.db,
-                    name=temp_collection_name,
-                    create=True,
-                    database=self.collection._database,
-                )
-
+            finally:
+                # Clean up temp collection table
                 try:
-                    try:
-                        temp_collection.insert_many(deepcopy(input_docs))
-                        sub_results = list(
-                            temp_collection.aggregate(sub_pipeline)
-                        )
-                    except sqlite3.IntegrityError:
-                        if qe is None:
-                            raise
-                        from ..query_engine.python_aggregation_engine import (
-                            execute_python_aggregation,
-                        )
-
-                        sub_results = execute_python_aggregation(
-                            qe,
-                            sub_pipeline,
-                            session=None,
-                            initial_docs=deepcopy(input_docs),
-                        )
-
-                    facet_results[facet_name] = sub_results
-
-                finally:
-                    # Clean up temp collection table
-                    try:
-                        self.db.execute(
-                            f"DROP TABLE IF EXISTS {temp_collection_name}"
-                        )
-                    except Exception as e:
-                        logger.debug(
-                            f"Failed to drop facet temp table '{temp_collection_name}': {e}"
-                        )
-                        pass
-
-            # Create a single result document with all facet fields
-            result_doc = facet_results
-
-            # Create the combined result table through create_temp so the
-            # pipeline context owns it — a raw CREATE TEMP TABLE here leaked
-            # one _facet_combined_* table per aggregation (#124).
-            result_table = create_temp(
-                {"$facet": "_combined"},
-                "SELECT NULL AS id, NULL AS _id, '{}' AS data WHERE 0",
-            )
-            data_val = neosqlite_json_dumps(result_doc)
-            data_placeholder = self.jsonb.json_placeholder()
-            if self.jsonb.jsonb_supported:
-                self.db.execute(
-                    f"INSERT INTO {result_table} (_id, data) VALUES (?, {data_placeholder})",
-                    (None, data_val),
-                )
-            else:
-                self.db.execute(
-                    f"INSERT INTO {result_table} (_id, data) VALUES (?, ?)",
-                    (None, data_val),
-                )
-
-            return result_table
-
-        except Exception as e:
-            # Clean up any result tables on error
-            for table_name in result_tables:
-                try:
-                    self.db.execute(f"DROP TABLE IF EXISTS {table_name}")
-                except Exception as cleanup_error:
-                    logger.debug(
-                        f"Failed to cleanup result table {table_name}: {cleanup_error}"
+                    self.db.execute(
+                        f"DROP TABLE IF EXISTS {temp_collection_name}"
                     )
-            raise e
+                except Exception as e:
+                    logger.debug(
+                        f"Failed to drop facet temp table '{temp_collection_name}': {e}"
+                    )
+
+        # Create a single result document with all facet fields
+        result_doc = facet_results
+
+        # Create the combined result table through create_temp so the
+        # pipeline context owns it — a raw CREATE TEMP TABLE here leaked
+        # one _facet_combined_* table per aggregation (#124).
+        result_table = create_temp(
+            {"$facet": "_combined"},
+            "SELECT NULL AS id, NULL AS _id, '{}' AS data WHERE 0",
+        )
+        data_val = neosqlite_json_dumps(result_doc)
+        data_placeholder = self.jsonb.json_placeholder()
+        if self.jsonb.jsonb_supported:
+            self.db.execute(
+                f"INSERT INTO {result_table} (_id, data) VALUES (?, {data_placeholder})",
+                (None, data_val),
+            )
+        else:
+            self.db.execute(
+                f"INSERT INTO {result_table} (_id, data) VALUES (?, ?)",
+                (None, data_val),
+            )
+
+        return result_table
 
     @python_hybrid_fallback("$unionWith")
     def _process_union_with_stage(self, create_temp, current_table, union_spec):

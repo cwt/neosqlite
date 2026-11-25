@@ -164,22 +164,3 @@ def unified_text_search(document: dict[str, Any], search_term: str) -> bool:
         return any(search_in_value(value, term) for value in doc.values())
 
     return search_in_document(document, search_term)
-
-
-def simple_text_contains(text: str, search_term: str) -> bool:
-    """Perform a simple case-insensitive substring check.
-
-    Provides a fast fallback when either argument may not be a string or when
-    basic lowercase substring matching is sufficient.
-
-    Args:
-        text: The text to search within.
-        search_term: The substring to look for.
-
-    Returns:
-        bool: True if both inputs are strings and ``search_term`` appears in
-            ``text`` ignoring case, False otherwise.
-    """
-    if not isinstance(text, str) or not isinstance(search_term, str):
-        return False
-    return search_term.lower() in text.lower()

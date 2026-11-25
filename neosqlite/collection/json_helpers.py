@@ -1,17 +1,11 @@
 import json
 import logging
-import re
 from datetime import UTC, date, datetime
 from typing import Any, override
 
 from neosqlite.binary import Binary
 
 logger = logging.getLogger(__name__)
-
-# Pre-compile ISO date pattern for performance
-ISO_DATE_PATTERN = re.compile(
-    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$"
-)
 
 
 class NeoSQLiteJSONEncoder(json.JSONEncoder):

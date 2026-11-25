@@ -60,7 +60,6 @@ class AggregationMixin(SqlAggregationMixin):
         self._reorder_pipeline_for_indexes: Method to reorder pipelines
         self._estimate_pipeline_cost: Method to estimate costs
         self._optimize_match_pushdown: Method to optimize match pushdown
-        self._is_datetime_indexed_field: Method to check datetime indexes
         self._build_group_query: Method to build group queries
         self._apply_query: Method to apply queries to documents
     """
@@ -71,7 +70,6 @@ class AggregationMixin(SqlAggregationMixin):
     _reorder_pipeline_for_indexes: Any
     _estimate_pipeline_cost: Any
     _optimize_match_pushdown: Any
-    _is_datetime_indexed_field: Any
     _apply_query: Any
 
     def _process_group_stage(

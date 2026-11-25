@@ -246,7 +246,6 @@ class Cursor:
         self._tables_to_cleanup = tables_to_cleanup or []
         self._closed = False
         self._active_generator: Any = None
-        self._generator_closed = False
         self._options = 0
         self._max_await_time_ms: int | None = None
         self._exhausted = False
@@ -1264,10 +1263,6 @@ class Cursor:
                 self._sort, self._collation
             )
         )
-        # If we have a where predicate or we are in Python fallback mode for filter,
-        # we CANNOT do SQL pagination because the Python filter might exclude documents
-        # that the SQL LIMIT would have included.
-        pagination_clause = ""
 
         # Use the collection's JSONB support flag to determine how to select data
         jsonb = self._collection.query_engine.jsonb
@@ -1288,14 +1283,13 @@ class Cursor:
         else:
             params = ()
 
-        # Append sort and pagination
-        cmd = f"{cmd}{sort_clause}{pagination_clause}"
+        # Append sort clause (SQL pagination cannot be used in fallback mode
+        # because Python filtering may exclude rows)
+        cmd = f"{cmd}{sort_clause}"
 
         # Track which parts were handled by SQL
         if sort_clause:
             self._sql_handled_sort = True
-        if pagination_clause:
-            self._sql_handled_pagination = True
 
         # Add comment if specified
         if self._comment:
@@ -1835,9 +1829,7 @@ class Cursor:
         """Close the cursor, stop active generators, and drop temp tables."""
         if self._closed:
             return
-        # Signal any active generator to stop and release its sqlite
-        # statement (#135)
-        self._generator_closed = True
+        # Stop active generator and release its sqlite statement (#135)
         gen = getattr(self, "_active_generator", None)
         if gen is not None:
             try:

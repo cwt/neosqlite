@@ -278,20 +278,6 @@ class StringMixin(BaseSqlMixin):
                     END FROM _sc
                 )"""
                 return sql, str1_params + str2_params
-            case "$substrBytes":
-                # Substring by bytes - SQLite's substr works on characters, not bytes
-                # For ASCII this is the same, for UTF-8 we need special handling
-                if len(operands) != 3:
-                    raise ValueError("$substrBytes requires exactly 3 operands")
-                str_sql, str_params = self._convert_operand_to_sql(operands[0])
-                start_sql, start_params = self._convert_operand_to_sql(
-                    operands[1]
-                )
-                len_sql, len_params = self._convert_operand_to_sql(operands[2])
-                # Use substr - note this works on characters in SQLite
-                # For true byte-level operations, would need hex/unescape
-                sql = f"substr({str_sql}, {start_sql} + 1, {len_sql})"
-                return sql, str_params + start_params + len_params
             case "$regexMatch":
                 # $regexMatch format: {input, regex, options?}
                 if not isinstance(operands, dict) or "input" not in operands:

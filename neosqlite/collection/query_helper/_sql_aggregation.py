@@ -40,7 +40,6 @@ class SqlAggregationMixin:
     _estimate_pipeline_cost: Any
     _optimize_match_pushdown: Any
     _reorder_pipeline_for_indexes: Any
-    _is_datetime_indexed_field: Any
     _apply_query: Any
 
     def _build_aggregation_query(
@@ -171,13 +170,6 @@ class SqlAggregationMixin:
                         )
                     limit = f"LIMIT {count}"
                 case "$group":
-                    # Check if this is a $unwind + $group pattern we can optimize
-                    optimization_result = self._optimize_unwind_group_pattern(
-                        i, effective_pipeline
-                    )
-                    if optimization_result is not None:
-                        return optimization_result
-
                     # A group stage must be first or preceded only by $match stages
                     if (
                         seen_group
@@ -246,25 +238,6 @@ class SqlAggregationMixin:
                             unwind_field_name = unwind_field[
                                 1:
                             ]  # Remove leading $
-                            group_id_field = group_stage["_id"][
-                                1:
-                            ]  # Remove leading $
-
-                            # Build SELECT and GROUP BY clauses for unwound data
-                            select_expressions = []
-                            output_fields = ["_id"]
-
-                            # Handle _id field
-                            if group_id_field == unwind_field_name:
-                                # Grouping by the unwound field
-                                select_expressions.append("je.value AS _id")
-                                group_by_clause = "GROUP BY je.value"
-                            else:
-                                # Grouping by another field
-                                select_expressions.append(
-                                    f"{self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}') AS _id"
-                                )
-                                group_by_clause = f"GROUP BY {self.jsonb.json_function_prefix}_extract({quote_table_name(self.collection.name)}.data, '{parse_json_path(group_id_field)}')"
 
                             # Try to build the group query using the general method
                             # This supports all accumulator operations including $avg, $min, $max
@@ -336,95 +309,6 @@ class SqlAggregationMixin:
         )
         cmd = f"{select_clause} FROM {quote_table_name(self.collection.name)} {where_clause} {group_by} {order_by} {limit} {offset}"
         return cmd, params, output_fields
-
-    def _optimize_unwind_group_pattern(
-        self, group_stage_index: int, pipeline: list[dict[str, Any]]
-    ) -> tuple[str, list[Any], list[str]] | None:
-        """Optimize a ``$unwind`` + ``$group`` pattern into SQL.
-
-        Handles pipelines where stage 0 is a simple string ``$unwind``
-        (``"$field"``) and stage 1 is a ``$group`` with a simple string
-        ``_id`` (``"$field"``). Rewrites SQL expressions produced by
-        ``_build_group_query`` to read unwound elements from
-        ``json_each``/``jsonb_each`` aliased as ``je``.
-
-        Args:
-            group_stage_index: Index of the ``$group`` stage in the pipeline.
-            pipeline: Complete aggregation pipeline being compiled.
-
-        Returns:
-            tuple[str, list[Any], list[str]] | None: Tuple of
-                ``(sql, params, output_fields)`` with an empty parameter list
-                if optimization applies, or ``None`` otherwise.
-        """
-        # Check if this is a $unwind + $group pattern we can optimize
-        if group_stage_index == 1 and "$unwind" in pipeline[0]:
-            # $unwind followed by $group - try to optimize with SQL
-            unwind_stage = pipeline[0]["$unwind"]
-            group_spec = pipeline[group_stage_index]["$group"]
-
-            if (
-                isinstance(unwind_stage, str)
-                and unwind_stage.startswith("$")
-                and isinstance(group_spec.get("_id"), str)
-                and group_spec.get("_id").startswith("$")
-            ):
-                unwind_field = unwind_stage[1:]  # Remove leading $
-                table_name = quote_table_name(self.collection.name)
-
-                # Try to build the group query using the general method
-                group_result = self._build_group_query(group_spec)
-                if group_result is not None:
-                    select_clause, group_by_clause, output_fields = group_result
-
-                    # Modify the SELECT clause to work with the unwound data
-                    # Replace json_extract(data, '$.field') with appropriate expressions
-
-                    # For the _id field, if it matches the unwind field, use je.value
-                    group_id_field = group_spec["_id"][1:]  # Remove leading $
-                    if group_id_field == unwind_field:
-                        # Replace the _id extraction with je.value
-                        modified_select = select_clause.replace(
-                            f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}') AS _id",
-                            "je.value AS _id",
-                        )
-                        # Also replace any other references to the unwind field in the SELECT clause
-                        modified_select = modified_select.replace(
-                            f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(unwind_field)}')",
-                            "je.value",
-                        )
-                        # For GROUP BY clause, use je.value when grouping by the unwind field
-                        modified_group_by = "GROUP BY je.value"
-                    else:
-                        modified_select = select_clause
-                        # Keep the original GROUP BY but ensure it references the correct table
-                        modified_group_by = group_by_clause.replace(
-                            f"{self.jsonb.json_function_prefix}_extract(data,",
-                            f"{self.jsonb.json_function_prefix}_extract({table_name}.data,",
-                        )
-
-                    # Replace all other json_extract(data, ...) with json_extract(table.data, ...)
-                    # to properly reference the table column in the JOIN context
-                    # This is needed for fields that aren't the unwind field (e.g., $push: $name)
-                    modified_select = modified_select.replace(
-                        f"{self.jsonb.json_function_prefix}_extract(data,",
-                        f"{self.jsonb.json_function_prefix}_extract({table_name}.data,",
-                    )
-
-                    # Build the FROM clause with json_each for unwinding
-                    from_clause = f"FROM {table_name}, {self.jsonb.json_each_function}({self.jsonb.json_function_prefix}_extract({table_name}.data, '{parse_json_path(unwind_field)}')) as je"
-
-                    # Add ordering by _id for consistent results
-                    order_by_clause = "ORDER BY _id"
-
-                    # Construct the full SQL command
-                    cmd = f"{modified_select} {from_clause} {modified_group_by} {order_by_clause}"
-                    return cmd, [], output_fields
-                else:
-                    # If we can't build the group query, fall back to Python
-                    return None
-
-        return None
 
     def _build_group_query(
         self, group_spec: dict[str, Any]

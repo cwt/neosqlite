@@ -66,7 +66,6 @@ class SQLTierAggregator(StageBuildersMixin):
     UNSUPPORTED_EXPRESSIONS = {
         "$function",  # Custom JavaScript
         "$accumulator",  # Custom accumulator
-        "$script",  # JavaScript execution
     }
 
     def __init__(

@@ -75,8 +75,6 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
             db_connection=collection.db,
             jsonb_context=self.jsonb,
         )
-        # Track if pipeline has $sort stage (for $first/$last limitation)
-        self._has_sort_stage = False
         # Track if we've warned about $text on temp tables (FTS after $unwind)
         self._text_on_temp_table_warned = False
         # Track if $unwind has been processed in the current pipeline
@@ -122,8 +120,7 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
             NotImplementedError: If a ``$count`` field name is invalid or the
                 pipeline contains an unsupported stage.
         """
-        # Reset sort stage tracking for this pipeline
-        self._has_sort_stage = False
+        # Reset pipeline tracking state
         self._has_unwind_in_pipeline = False
         self._text_on_temp_table_warned = False
 
@@ -282,10 +279,6 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                                 limit_value,
                             )
                         i = j  # Skip processed stages
-
-                        # Track that we've seen a $sort stage (needed for $first/$last limitation)
-                        if sort_spec is not None:
-                            self._has_sort_stage = True
 
                     case "$addFields":
                         current_table = self._process_add_fields_stage(
