@@ -314,7 +314,7 @@ class SQLOperatorTranslator:
                                 f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
                                 f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
                                 f"WHERE datetime(COALESCE("
-                                f"CASE WHEN json_each.type = 'object' THEN json_extract(json_each.value, '$.\"$date\"') END, "
+                                f"CASE WHEN json_each.type = 'object' THEN {self._json_function_prefix}_extract(json_each.value, '$.\"$date\"') END, "
                                 f"CASE WHEN json_each.type = 'text' THEN json_each.value END"
                                 f")) IN ({placeholders})))"
                             )
@@ -339,7 +339,7 @@ class SQLOperatorTranslator:
                                 f"(json_type({data_expr}, {json_path}) = 'array' AND EXISTS ("
                                 f"SELECT 1 FROM {self._json_each_function}({data_expr}, {json_path}) AS json_each "
                                 f"WHERE datetime(COALESCE("
-                                f"CASE WHEN json_each.type = 'object' THEN json_extract(json_each.value, '$.\"$date\"') END, "
+                                f"CASE WHEN json_each.type = 'object' THEN {self._json_function_prefix}_extract(json_each.value, '$.\"$date\"') END, "
                                 f"CASE WHEN json_each.type = 'text' THEN json_each.value END"
                                 f")) IN ({placeholders})))"
                             )
