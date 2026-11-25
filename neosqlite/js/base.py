@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Protocol, Self, runtime_checkable
 
+from ..binary import Binary
 from ..objectid import ObjectId
 
 
@@ -80,13 +81,30 @@ def to_marker(value: Any) -> Any:
         value: Arbitrary Python document or scalar value.
 
     Returns:
-        JSON-serializable value with ``ObjectId`` and ``datetime`` encoded as
-        ``{"$oid": ...}`` and ``{"$date": ...}`` markers.
+        JSON-serializable value with ``ObjectId``, ``datetime``, ``date``,
+        ``Binary``, and ``bytes`` encoded as marker dictionaries.
     """
     if isinstance(value, ObjectId):
         return {"$oid": str(value)}
     if isinstance(value, datetime):
         return {"$date": value.isoformat()}
+    if isinstance(value, date):
+        return {
+            "__neosqlite_js_type__": "date",
+            "isoformat": value.isoformat(),
+        }
+    if isinstance(value, Binary):
+        return {
+            "__neosqlite_js_type__": "Binary",
+            "hex": bytes(value).hex(),
+            "subtype": value.subtype,
+        }
+    if isinstance(value, (bytes, bytearray)):
+        return {
+            "__neosqlite_js_type__": "Binary",
+            "hex": bytes(value).hex(),
+            "subtype": 0,
+        }
     if isinstance(value, (list, tuple)):
         return [to_marker(item) for item in value]
     if isinstance(value, dict):
@@ -97,15 +115,17 @@ def to_marker(value: Any) -> Any:
 def from_marker(value: Any) -> Any:
     """Decode JSON-safe marker dictionaries back into Python/BSON types.
 
-    Only single-key marker objects (``$date``, ``$oid``, ``$numberLong``) are
-    decoded so ordinary user documents containing extra fields are preserved.
+    Single-key marker objects (``$date``, ``$oid``, ``$numberLong``) and
+    explicit ``__neosqlite_js_type__`` marker objects (``date``, ``Binary``)
+    are decoded so ordinary user documents containing extra fields are
+    preserved.
 
     Args:
         value: Decoded JSON value returned by a JS worker.
 
     Returns:
-        Python value with markers restored to ``datetime``, ``ObjectId``, or
-        ``int`` where valid.
+        Python value with markers restored to ``datetime``, ``date``,
+        ``ObjectId``, ``Binary``, or ``int`` where valid.
     """
     if isinstance(value, dict):
         if len(value) == 1:
@@ -124,6 +144,30 @@ def from_marker(value: Any) -> Any:
                     return int(value["$numberLong"])
                 except ValueError:
                     return value["$numberLong"]
+        js_type = value.get("__neosqlite_js_type__")
+        if (
+            js_type == "date"
+            and len(value) == 2
+            and isinstance(value.get("isoformat"), str)
+        ):
+            try:
+                return date.fromisoformat(value["isoformat"])
+            except ValueError:
+                return value["isoformat"]
+        if (
+            js_type == "Binary"
+            and len(value) == 3
+            and isinstance(value.get("hex"), str)
+            and isinstance(value.get("subtype"), int)
+            and not isinstance(value.get("subtype"), bool)
+        ):
+            try:
+                return Binary(
+                    bytes.fromhex(value["hex"]),
+                    subtype=value["subtype"],
+                )
+            except (ValueError, TypeError):
+                return value
         return {key: from_marker(val) for key, val in value.items()}
     if isinstance(value, list):
         return [from_marker(item) for item in value]

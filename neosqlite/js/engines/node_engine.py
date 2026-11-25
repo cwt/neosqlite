@@ -35,9 +35,27 @@ _NODE_GUEST_HARNESS = r"""
   const _Date_toISOString = Date.prototype.toISOString;
   const _Array_isArray = Array.isArray;
   const _Object_keys = Object.keys;
+  const _Object_create = Object.create;
   const _Object_defineProperty = Object.defineProperty;
   const _BigInt = BigInt;
+  const _BigInt_toString = BigInt.prototype.toString;
+  const _Number_toString = Number.prototype.toString;
   const _String = String;
+  const _Uint8Array = Uint8Array;
+  const _parseInt = parseInt;
+
+  function makeNullObj() {
+    return _Object_create(null);
+  }
+
+  function setSafeProp(obj, key, val) {
+    _Object_defineProperty(obj, key, {
+      value: val,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
 
   function fromJSONSafe(value) {
     if (value && typeof value === 'object' && !_Array_isArray(value)) {
@@ -56,17 +74,42 @@ _NODE_GUEST_HARNESS = r"""
       if (keys.length === 1 && typeof value.$numberLong === 'string') {
         return _BigInt(value.$numberLong);
       }
+      if (
+        value.__neosqlite_js_type__ === 'date' &&
+        typeof value.isoformat === 'string' &&
+        keys.length === 2
+      ) {
+        return new _Date(value.isoformat + 'T00:00:00.000Z');
+      }
+      if (
+        value.__neosqlite_js_type__ === 'Binary' &&
+        typeof value.hex === 'string' &&
+        keys.length === 3
+      ) {
+        const hex = value.hex;
+        const bytes = new _Uint8Array(hex.length >> 1);
+        for (let i = 0, j = 0; i < bytes.length; i++, j += 2) {
+          bytes[i] = _parseInt(hex.slice(j, j + 2), 16);
+        }
+        _Object_defineProperty(bytes, '__neosqlite_subtype__', {
+          value: typeof value.subtype === 'number' ? value.subtype : 0,
+          enumerable: false,
+          configurable: true,
+          writable: true,
+        });
+        return bytes;
+      }
       const out = {};
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
-        out[k] = fromJSONSafe(value[k]);
+        setSafeProp(out, k, fromJSONSafe(value[k]));
       }
       return out;
     }
     if (_Array_isArray(value)) {
       const out = [];
       for (let i = 0; i < value.length; i++) {
-        out.push(fromJSONSafe(value[i]));
+        setSafeProp(out, i, fromJSONSafe(value[i]));
       }
       return out;
     }
@@ -75,35 +118,65 @@ _NODE_GUEST_HARNESS = r"""
 
   function toJSONSafe(value) {
     if (value instanceof _Date) {
-      return { $date: _Date_toISOString.call(value) };
+      const out = makeNullObj();
+      setSafeProp(out, '$date', _Date_toISOString.call(value));
+      return out;
+    }
+    if (value instanceof _Uint8Array) {
+      let hex = '';
+      for (let i = 0; i < value.length; i++) {
+        const b = _Number_toString.call(value[i], 16);
+        hex += b.length === 1 ? '0' + b : b;
+      }
+      const sub =
+        typeof value.__neosqlite_subtype__ === 'number'
+          ? value.__neosqlite_subtype__
+          : 0;
+      const out = makeNullObj();
+      setSafeProp(out, '__neosqlite_js_type__', 'Binary');
+      setSafeProp(out, 'hex', hex);
+      setSafeProp(out, 'subtype', sub);
+      return out;
     }
     if (_Array_isArray(value)) {
       const out = [];
+      _Object_defineProperty(out, 'toJSON', {
+        value: undefined,
+        enumerable: false,
+        configurable: true,
+        writable: true,
+      });
       for (let i = 0; i < value.length; i++) {
-        out.push(toJSONSafe(value[i]));
+        setSafeProp(out, i, toJSONSafe(value[i]));
       }
       return out;
     }
     if (value && typeof value === 'object') {
-      const out = {};
+      const out = makeNullObj();
       const keys = _Object_keys(value);
       for (let i = 0; i < keys.length; i++) {
         const k = keys[i];
-        out[k] = toJSONSafe(value[k]);
+        setSafeProp(out, k, toJSONSafe(value[k]));
       }
       return out;
     }
     if (typeof value === 'bigint') {
-      return { $numberLong: value.toString() };
+      const out = makeNullObj();
+      setSafeProp(out, '$numberLong', _BigInt_toString.call(value));
+      return out;
     }
     return value;
   }
 
   function formatErr(err) {
-    if (err && typeof err === 'object' && err.message !== undefined) {
-      return _String(err.message);
+    try {
+      if (err && typeof err === 'object' && 'message' in err && err.message !== undefined) {
+        return _String(err.message);
+      }
+      return _String(err);
+    } catch (_) {
+      return 'JavaScript error (unformattable thrown value)';
     }
-    return _String(err);
   }
 
   const rawLine = globalThis.__neosqlite_payload__;
@@ -118,7 +191,7 @@ _NODE_GUEST_HARNESS = r"""
   const rawArgs = req.args || [];
   const args = [];
   for (let i = 0; i < rawArgs.length; i++) {
-    args.push(fromJSONSafe(rawArgs[i]));
+    setSafeProp(args, i, fromJSONSafe(rawArgs[i]));
   }
   const thisArg =
     req.thisArg === undefined ? null : fromJSONSafe(req.thisArg);
@@ -158,9 +231,19 @@ _NODE_WORKER_SCRIPT = (
     "const vm = require('node:vm');\n"
     "const protoWrite = process.stdout.write.bind(process.stdout);\n"
     "const GUEST_HARNESS = " + json.dumps(_NODE_GUEST_HARNESS) + ";\n"
+    "function safeFormatErr(err) {\n"
+    "  try {\n"
+    "    if (err && typeof err === 'object' && 'message' in err && err.message !== undefined) {\n"
+    "      return String(err.message);\n"
+    "    }\n"
+    "    return String(err);\n"
+    "  } catch (_) {\n"
+    "    return 'JavaScript error (unformattable thrown value)';\n"
+    "  }\n"
+    "}\n"
     "process.on('unhandledRejection', (err) => {\n"
     "  process.stderr.write(\n"
-    "    'Unhandled rejection: ' + String((err && err.message) || err) + '\\n'\n"
+    "    'Unhandled rejection: ' + safeFormatErr(err) + '\\n'\n"
     "  );\n"
     "});\n"
     "const rl = readline.createInterface({\n"
@@ -193,9 +276,7 @@ _NODE_WORKER_SCRIPT = (
     "      protoWrite(JSON.stringify({ id, ok: true, value: null }) + '\\n');\n"
     "    }\n"
     "  } catch (err) {\n"
-    "    const message =\n"
-    "      err && err.message ? String(err.message) : String(err);\n"
-    "    protoWrite(JSON.stringify({ id, ok: false, error: message }) + '\\n');\n"
+    "    protoWrite(JSON.stringify({ id, ok: false, error: safeFormatErr(err) }) + '\\n');\n"
     "  }\n"
     "});\n"
 )

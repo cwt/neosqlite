@@ -648,3 +648,211 @@ def test_legacy_js_worker_get_worker_compat(supported_node):
     worker = get_worker(supported_node)
     assert worker is not None
     assert worker.call("function(a,b){return a+b}", [10, 20]) == 30
+
+
+def test_unusual_thrown_values_fail_fast_without_killing_worker(active_engine):
+    """Throwing null-prototype or hostile objects fails fast without worker reset."""
+    import time
+
+    from neosqlite.js.base import JsWorkerError
+    from neosqlite.js.registry import get_js_worker
+
+    worker = get_js_worker(active_engine)
+    assert worker is not None
+    # Warm up worker so _proc is started before capturing pid
+    assert worker.call("function(x) { return x; }", [1]) == 1
+    old_pid = worker._proc.pid  # type: ignore[attr-defined]
+
+    payloads = [
+        "function() { throw Object.create(null); }",
+        "function() { throw { toString: null }; }",
+        "function() { throw { get message() { throw new Error('boom'); } }; }",
+    ]
+    start = time.monotonic()
+    for code in payloads:
+        with pytest.raises(JsWorkerError):
+            worker.call(code, [])
+    elapsed = time.monotonic() - start
+    assert elapsed < 4.0
+    assert get_js_worker(active_engine) is worker
+    assert worker._proc is not None and worker._proc.pid == old_pid  # type: ignore[attr-defined]
+    assert worker.call("function(x) { return x + 1; }", [41]) == 42
+
+
+def test_same_call_prototype_pollution_does_not_corrupt_result(active_engine):
+    """Prototype mutations inside one call do not hijack its serialized output."""
+    from neosqlite.binary import Binary
+    from neosqlite.js.registry import get_js_worker
+
+    worker = get_js_worker(active_engine)
+    assert worker is not None
+
+    code = """
+    function() {
+        Array.prototype.push = function() { throw new Error("push hijacked"); };
+        Array.prototype.toJSON = function() { return "array-hijacked"; };
+        Object.prototype.toJSON = function() { return "object-hijacked"; };
+        BigInt.prototype.toString = function() { return "0"; };
+        Object.defineProperty(Object.prototype, "pollutedKey", {
+            set() { throw new Error("setter triggered"); },
+            configurable: true
+        });
+        return {
+            arr: [1, 2, 3],
+            big: 1234567890123456789012345n,
+            nested: { pollutedKey: "safe" },
+            bytes: new Uint8Array([1, 2, 255])
+        };
+    }
+    """
+    result = worker.call(code, [])
+    assert result["arr"] == [1, 2, 3]
+    assert result["big"] == 1234567890123456789012345
+    assert result["nested"] == {"pollutedKey": "safe"}
+    assert isinstance(result["bytes"], Binary)
+    assert result["bytes"] == b"\x01\x02\xff"
+
+
+def test_binary_bytes_and_date_in_where_and_function(active_engine):
+    """Binary, bytes, and datetime.date pass cleanly across Python <-> JS."""
+    from datetime import date
+
+    from neosqlite.binary import Binary
+    from neosqlite.js.registry import get_js_worker
+
+    worker = get_js_worker(active_engine)
+    assert worker is not None
+
+    uuid_bin = Binary(b"0123456789abcdef", Binary.UUID_SUBTYPE)
+    raw = b"\x01\x02\xfe\xff"
+    day = date(2026, 3, 15)
+
+    res = worker.call(
+        """
+        function(doc) {
+            if (!(doc.uuid instanceof Uint8Array)) throw new Error("not Uint8Array");
+            if (!(doc.raw instanceof Uint8Array)) throw new Error("raw not Uint8Array");
+            if (!(doc.day instanceof Date)) throw new Error("day not Date");
+            return {
+                uuid: doc.uuid,
+                raw: doc.raw,
+                year: doc.day.getUTCFullYear(),
+                month: doc.day.getUTCMonth() + 1,
+                date: doc.day.getUTCDate()
+            };
+        }
+        """,
+        [{"uuid": uuid_bin, "raw": raw, "day": day}],
+    )
+    assert isinstance(res["uuid"], Binary)
+    assert bytes(res["uuid"]) == b"0123456789abcdef"
+    assert res["uuid"].subtype == Binary.UUID_SUBTYPE
+    assert isinstance(res["raw"], Binary)
+    assert res["raw"] == raw
+    assert (res["year"], res["month"], res["date"]) == (2026, 3, 15)
+
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn["bin_docs"]
+        coll.insert_one({"name": "a", "payload": uuid_bin})
+        coll.insert_one({"name": "b", "payload": Binary(b"\x00\x01", 0)})
+        found = list(
+            coll.find(
+                {"$where": "function() { return this.payload.length === 16; }"}
+            )
+        )
+        assert [doc["name"] for doc in found] == ["a"]
+
+
+def test_supervisor_large_stderr_does_not_deadlock():
+    """Writing >128KB to worker stderr must not fill OS pipe buffer and hang."""
+    import sys
+
+    from neosqlite.js import SubprocessJsWorker
+
+    class _StderrHeavyWorker(SubprocessJsWorker):
+        engine_name = "stderrheavy"
+
+        def _build_command(self) -> list[str]:
+            script = (
+                "import json, sys\n"
+                "for line in sys.stdin:\n"
+                "    sys.stderr.write('E' * 200000 + '\\n')\n"
+                "    sys.stderr.flush()\n"
+                "    req = json.loads(line)\n"
+                "    sys.stdout.write("
+                "json.dumps({'id': req['id'], 'ok': True, 'value': 99}) + '\\n'"
+                ")\n"
+                "    sys.stdout.flush()\n"
+            )
+            return [sys.executable, "-I", "-u", "-c", script]
+
+    with _StderrHeavyWorker(timeout=2.0) as worker:
+        assert worker.call("function(){}", []) == 99
+
+
+def test_legacy_close_js_workers_clears_node_worker(supported_node):
+    """close_js_workers() shuts down worker obtained via js_worker.get_worker()."""
+    w1 = get_worker(supported_node)
+    assert w1 is not None
+    assert w1.call("function(){return 1}", []) == 1
+    proc1 = w1._proc
+    assert proc1 is not None and proc1.poll() is None
+
+    neosqlite.close_js_workers()
+    assert proc1.poll() is not None
+
+    w2 = get_worker(supported_node)
+    assert w2 is not None and w2 is not w1
+
+
+def test_supervisor_concurrent_close_and_call():
+    """Concurrent close() and call() must not deadlock or leave process alive."""
+    import sys
+    import threading
+    import time
+
+    from neosqlite.js import SubprocessJsWorker
+    from neosqlite.js.base import JsWorkerError
+
+    class _SlowWorker(SubprocessJsWorker):
+        engine_name = "slowclose"
+
+        def _build_command(self) -> list[str]:
+            script = (
+                "import json, sys, time\n"
+                "for line in sys.stdin:\n"
+                "    req = json.loads(line)\n"
+                "    if req['code'] == 'ready':\n"
+                "        sys.stdout.write("
+                "json.dumps({'id': req['id'], 'ok': True, 'value': 0}) + '\\n'"
+                ")\n"
+                "        sys.stdout.flush()\n"
+                "        continue\n"
+                "    time.sleep(0.3)\n"
+                "    sys.stdout.write("
+                "json.dumps({'id': req['id'], 'ok': True, 'value': 1}) + '\\n'"
+                ")\n"
+                "    sys.stdout.flush()\n"
+            )
+            return [sys.executable, "-I", "-u", "-c", script]
+
+    worker = _SlowWorker(timeout=2.0)
+    assert worker.call("ready") == 0
+    proc = worker._proc
+    assert proc is not None
+
+    errors: list[Exception] = []
+
+    def invoke():
+        try:
+            worker.call("slow")
+        except JsWorkerError as exc:
+            errors.append(exc)
+
+    t = threading.Thread(target=invoke)
+    t.start()
+    time.sleep(0.05)
+    worker.close()
+    t.join(timeout=3.0)
+    assert not t.is_alive()
+    assert proc.poll() is not None

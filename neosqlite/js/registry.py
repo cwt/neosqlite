@@ -41,12 +41,13 @@ def _normalize_engine_name(engine: str) -> str:
 
 
 def _registered_names_locked() -> list[str]:
-    return [backend.name for backend in _backends]
+    return [backend.name.strip().lower() for backend in _backends]
 
 
 def _find_backend_locked(name: str) -> JsEngineBackend | None:
+    target = name.strip().lower()
     for backend in _backends:
-        if backend.name == name:
+        if backend.name.strip().lower() == target:
             return backend
     return None
 
@@ -71,7 +72,8 @@ def register_js_engine(
 
     Args:
         backend: Backend implementing :class:`JsEngineBackend`. Its ``name``
-            must be lowercase and cannot be ``"auto"`` or ``"none"``.
+            is normalized case-insensitively and cannot be ``"auto"`` or
+            ``"none"``.
         priority: Optional zero-based insertion index in auto-selection order
             (``0`` means highest priority). When ``None``, appends after
             existing backends.
@@ -87,7 +89,7 @@ def register_js_engine(
         if existing_entry is not None:
             existing_entry[1].close()
         for idx, existing in enumerate(_backends):
-            if existing.name == name:
+            if existing.name.strip().lower() == name:
                 _backends.pop(idx)
                 break
         if priority is None:
@@ -112,7 +114,7 @@ def unregister_js_engine(name: str) -> bool:
         if entry is not None:
             entry[1].close()
         for idx, backend in enumerate(_backends):
-            if backend.name == cleaned:
+            if backend.name.strip().lower() == cleaned:
                 _backends.pop(idx)
                 return True
         return False
@@ -249,16 +251,17 @@ def get_js_worker(engine: str | None = None) -> JsWorker | None:
     if selected is None:
         return None
     backend, info = selected
+    worker_key = backend.name.strip().lower()
     with _registry_lock:
-        cached = _workers.get(backend.name)
+        cached = _workers.get(worker_key)
         if cached is not None:
             cached_info, cached_worker = cached
             if cached_info == info:
                 return cached_worker
             cached_worker.close()
-            _workers.pop(backend.name, None)
+            _workers.pop(worker_key, None)
         worker = backend.create_worker()
-        _workers[backend.name] = (info, worker)
+        _workers[worker_key] = (info, worker)
         return worker
 
 

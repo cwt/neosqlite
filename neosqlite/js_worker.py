@@ -9,10 +9,9 @@ original ``NodeWorker``, ``JsWorkerError``, ``get_worker``, and
 from __future__ import annotations
 
 import atexit
-import threading
 from typing import TYPE_CHECKING
 
-from .js.base import JsWorkerError
+from .js.base import JsEngineInfo, JsWorkerError
 from .js.engines.node_engine import (
     DEFAULT_NODE_HEAP_MB as _DEFAULT_HEAP_MB,
 )
@@ -20,40 +19,56 @@ from .js.engines.node_engine import (
     DEFAULT_NODE_MEMORY_MB as _DEFAULT_MEMORY_MB,
 )
 from .js.engines.node_engine import NodeWorker
-from .js.registry import close_js_workers
+from .js.registry import (
+    _registry_lock,
+    _workers,
+    close_js_workers,
+    get_js_worker,
+)
 from .js.supervisor import DEFAULT_TIMEOUT as _DEFAULT_TIMEOUT
 
 if TYPE_CHECKING:
     from .js_runtime import NodeRuntime
 
-_worker: NodeWorker | None = None
-_worker_lock = threading.Lock()
-
 
 def get_worker(runtime: NodeRuntime | None = None) -> NodeWorker | None:
-    """Return the shared Node.js worker when a supported runtime is available."""
-    global _worker
+    """Return the shared Node.js worker via ``neosqlite.js.registry``."""
     if runtime is None:
-        from .js_runtime import find_node_runtime
+        worker = get_js_worker("node")
+        return worker if isinstance(worker, NodeWorker) else None
 
-        runtime = find_node_runtime()
-    if runtime is None:
-        return None
-    with _worker_lock:
-        if _worker is None or _worker.runtime != runtime:
-            if _worker is not None:
-                _worker.close()
-            _worker = NodeWorker(runtime)
-        return _worker
+    from . import js_runtime
+
+    active = js_runtime.find_node_runtime()
+    if active == runtime:
+        worker = get_js_worker("node")
+        return worker if isinstance(worker, NodeWorker) else None
+
+    with _registry_lock:
+        cached = _workers.get("node")
+        if cached is not None:
+            _, existing_worker = cached
+            if (
+                isinstance(existing_worker, NodeWorker)
+                and existing_worker.runtime == runtime
+            ):
+                return existing_worker
+            existing_worker.close()
+            _workers.pop("node", None)
+        new_worker = NodeWorker(runtime)
+        info = JsEngineInfo(
+            name="node",
+            available=True,
+            version=runtime.version_string,
+            detail=f"Node.js {runtime.version_string}",
+            path=runtime.path,
+        )
+        _workers["node"] = (info, new_worker)
+        return new_worker
 
 
 def close_worker() -> None:
-    """Shut down the shared Node.js worker and any cached engine workers."""
-    global _worker
-    with _worker_lock:
-        if _worker is not None:
-            _worker.close()
-            _worker = None
+    """Shut down any cached JS engine workers."""
     close_js_workers()
 
 

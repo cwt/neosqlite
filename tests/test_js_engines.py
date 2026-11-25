@@ -400,3 +400,74 @@ def test_probing_jsbox_does_not_load_native_extension_in_host_process():
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_binary_bytes_and_date_marker_roundtrip():
+    """Verify Binary, bytes, and datetime.date encode/decode safely."""
+    from datetime import date
+
+    from neosqlite.binary import Binary
+    from neosqlite.js.base import from_marker, to_marker
+
+    raw = b"\x00\x01\xfe\xff"
+    decoded_raw = from_marker(to_marker(raw))
+    assert isinstance(decoded_raw, Binary)
+    assert decoded_raw == raw
+    assert decoded_raw.subtype == Binary.BINARY_SUBTYPE
+
+    bin_val = Binary(b"uuid-bytes-here!", Binary.UUID_SUBTYPE)
+    decoded_bin = from_marker(to_marker(bin_val))
+    assert isinstance(decoded_bin, Binary)
+    assert bytes(decoded_bin) == b"uuid-bytes-here!"
+    assert decoded_bin.subtype == Binary.UUID_SUBTYPE
+
+    day = date(2026, 3, 15)
+    decoded_day = from_marker(to_marker(day))
+    assert type(decoded_day) is date
+    assert decoded_day == day
+
+    # Invalid extended marker payloads degrade safely without raising.
+    assert (
+        from_marker(
+            {"__neosqlite_js_type__": "date", "isoformat": "not-a-date"}
+        )
+        == "not-a-date"
+    )
+    invalid_bin = {
+        "__neosqlite_js_type__": "Binary",
+        "hex": "not-hex",
+        "subtype": 0,
+    }
+    assert from_marker(invalid_bin) == invalid_bin
+
+
+def test_mixed_case_custom_engine_registration():
+    """Mixed-case custom engine names normalize across select/cache/unregister."""
+    from neosqlite.js.registry import (
+        get_js_worker,
+        register_js_engine,
+        unregister_js_engine,
+    )
+
+    previous = neosqlite.get_js_engine()
+    backend = _FakeBackend("MyEngine")
+    register_js_engine(backend)
+    try:
+        assert any(
+            info.name.lower() == "myengine"
+            for info in neosqlite.list_js_engines()
+        )
+        neosqlite.set_js_engine("MyEngine")
+        assert neosqlite.get_js_engine() == "myengine"
+        w1 = get_js_worker("MyEngine")
+        w2 = get_js_worker("myengine")
+        assert w1 is not None
+        assert w1 is w2
+    finally:
+        unregister_js_engine("MyEngine")
+        assert not any(
+            info.name.lower() == "myengine"
+            for info in neosqlite.list_js_engines()
+        )
+        neosqlite.set_js_engine(previous)
+        neosqlite.close_js_workers()

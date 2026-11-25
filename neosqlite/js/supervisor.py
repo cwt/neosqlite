@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 from abc import ABC, abstractmethod
+from collections import deque
 from typing import IO, Any, Self
 
 from .base import JsWorkerError, from_marker, to_marker
@@ -25,6 +26,7 @@ from .base import JsWorkerError, from_marker, to_marker
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 5.0
+_STDERR_TAIL_LINES = 32
 
 # Minimal environment variables required on Windows so native CRT/system DLLs
 # resolve when launching an executable by absolute path without leaking secrets.
@@ -64,13 +66,28 @@ def _stdout_reader_loop(
         line_queue.put(None)
 
 
+def _stderr_reader_loop(
+    stderr: IO[str],
+    tail: deque[str],
+) -> None:
+    """Continuously drain worker stderr into a bounded tail buffer."""
+    try:
+        while True:
+            line = stderr.readline()
+            if not line:
+                break
+            tail.append(line)
+    except (OSError, ValueError):
+        pass
+
+
 class SubprocessJsWorker(ABC):
     """Base class for persistent out-of-process JavaScript workers.
 
     Subclasses provide ``engine_name`` and ``_build_command()``. All IPC,
-    cross-platform timeout enforcement (via a dedicated reader thread so pipes
-    work identically on Linux, macOS, and Windows), crash/OOM recovery, and
-    process cleanup live here.
+    cross-platform timeout enforcement (via dedicated reader threads so pipes
+    work identically on Linux, macOS, and Windows and stderr never deadlocks),
+    crash/OOM recovery, and process cleanup live here.
     """
 
     engine_name: str = "unknown"
@@ -91,7 +108,9 @@ class SubprocessJsWorker(ABC):
         self._proc: subprocess.Popen[str] | None = None
         self._line_queue: queue.Queue[str | None] | None = None
         self._reader_thread: threading.Thread | None = None
-        self._lock = threading.Lock()
+        self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+        self._stderr_thread: threading.Thread | None = None
+        self._lock = threading.RLock()
         self._next_id = 1
 
     @abstractmethod
@@ -154,27 +173,41 @@ class SubprocessJsWorker(ABC):
         )
         reader.start()
 
+        stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
+        stderr_thread: threading.Thread | None = None
+        if proc.stderr is not None:
+            stderr_thread = threading.Thread(
+                target=_stderr_reader_loop,
+                args=(proc.stderr, stderr_tail),
+                name=f"neosqlite-js-{self.engine_name}-stderr",
+                daemon=True,
+            )
+            stderr_thread.start()
+
         self._proc = proc
         self._line_queue = line_queue
         self._reader_thread = reader
+        self._stderr_tail = stderr_tail
+        self._stderr_thread = stderr_thread
 
     def _restart(self) -> None:
         self.close()
         self._start()
 
     def _reap_and_read_stderr(self, proc: subprocess.Popen[str]) -> str:
-        """Reap an unexpectedly exited worker and return its stderr text."""
+        """Reap an unexpectedly exited worker and return its buffered stderr."""
         try:
             proc.wait(timeout=1)
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-        if proc.stderr is not None:
-            try:
-                return proc.stderr.read()
-            except (OSError, ValueError):
-                return ""
-        return ""
+        stderr_thread = self._stderr_thread
+        if (
+            stderr_thread is not None
+            and stderr_thread is not threading.current_thread()
+        ):
+            stderr_thread.join(timeout=0.5)
+        return "".join(self._stderr_tail)
 
     def call(
         self,
@@ -184,21 +217,28 @@ class SubprocessJsWorker(ABC):
     ) -> Any:
         """Evaluate a JS function inside the isolated worker process."""
         with self._lock:
+            try:
+                encoded_args = [to_marker(a) for a in (args or [])]
+                encoded_this = to_marker(this_arg)
+                request_id = self._next_id
+                self._next_id += 1
+                payload = json.dumps(
+                    {
+                        "id": request_id,
+                        "code": code,
+                        "args": encoded_args,
+                        "thisArg": encoded_this,
+                        "timeout": self.timeout,
+                    }
+                )
+            except (TypeError, ValueError) as exc:
+                raise JsWorkerError(
+                    f"Cannot serialize JS arguments: {exc}"
+                ) from exc
+
             self._start()
             assert self._proc is not None and self._proc.stdin is not None
             assert self._line_queue is not None
-
-            request_id = self._next_id
-            self._next_id += 1
-            payload = json.dumps(
-                {
-                    "id": request_id,
-                    "code": code,
-                    "args": [to_marker(a) for a in (args or [])],
-                    "thisArg": to_marker(this_arg),
-                    "timeout": self.timeout,
-                }
-            )
 
             try:
                 self._proc.stdin.write(payload + "\n")
@@ -247,40 +287,48 @@ class SubprocessJsWorker(ABC):
             return from_marker(response.get("value"))
 
     def close(self) -> None:
-        """Terminate the worker process and clean up pipes and reader thread."""
-        proc = self._proc
-        reader = self._reader_thread
-        self._proc = None
-        self._line_queue = None
-        self._reader_thread = None
+        """Terminate the worker process and clean up pipes and reader threads."""
+        with self._lock:
+            proc = self._proc
+            reader = self._reader_thread
+            stderr_reader = self._stderr_thread
+            self._proc = None
+            self._line_queue = None
+            self._reader_thread = None
+            self._stderr_thread = None
 
-        if proc is not None:
-            if proc.stdin is not None:
-                try:
-                    proc.stdin.close()
-                except OSError:
-                    pass
-            if proc.poll() is None:
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=1)
-                except (subprocess.SubprocessError, OSError):
+            if proc is not None:
+                if proc.stdin is not None:
                     try:
-                        proc.kill()
-                        proc.wait(timeout=1)
-                    except (subprocess.SubprocessError, OSError):
-                        pass
-
-        if reader is not None and reader is not threading.current_thread():
-            reader.join(timeout=1.0)
-
-        if proc is not None:
-            for stream in (proc.stdout, proc.stderr):
-                if stream is not None:
-                    try:
-                        stream.close()
+                        proc.stdin.close()
                     except OSError:
                         pass
+                if proc.poll() is None:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1)
+                    except (subprocess.SubprocessError, OSError):
+                        try:
+                            proc.kill()
+                            proc.wait(timeout=1)
+                        except (subprocess.SubprocessError, OSError):
+                            pass
+
+            if reader is not None and reader is not threading.current_thread():
+                reader.join(timeout=1.0)
+            if (
+                stderr_reader is not None
+                and stderr_reader is not threading.current_thread()
+            ):
+                stderr_reader.join(timeout=1.0)
+
+            if proc is not None:
+                for stream in (proc.stdout, proc.stderr):
+                    if stream is not None:
+                        try:
+                            stream.close()
+                        except OSError:
+                            pass
 
     def __enter__(self) -> Self:
         return self
