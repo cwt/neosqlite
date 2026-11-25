@@ -149,7 +149,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
         part_paths = [parse_json_path(pf) for pf in partition_fields]
         part_cols = [f"_p{i}" for i in range(len(part_paths))]
         part_extracts = [
-            f"json_extract(data, '{p}') AS _p{i}"
+            f"{self.jsonb.json_function_prefix}_extract(data, '{p}') AS _p{i}"
             for i, p in enumerate(part_paths)
         ]
 
@@ -160,10 +160,10 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 params.extend([bounds[0], bounds[1]])
             else:
                 bounds_sql = (
-                    f"SELECT MIN(json_extract(data, '{json_path}')) AS _lo, "
-                    f"MAX(json_extract(data, '{json_path}')) AS _hi "
+                    f"SELECT MIN({self.jsonb.json_function_prefix}_extract(data, '{json_path}')) AS _lo, "
+                    f"MAX({self.jsonb.json_function_prefix}_extract(data, '{json_path}')) AS _hi "
                     f"FROM {current_table} "
-                    f"WHERE json_extract(data, '{json_path}') IS NOT NULL"
+                    f"WHERE {self.jsonb.json_function_prefix}_extract(data, '{json_path}') IS NOT NULL"
                 )
             series_sql = (
                 "SELECT _lo AS _val, 0 AS _idx, _lo AS _base, _hi AS _limit "
@@ -176,7 +176,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             gen_data_expr = (
                 f"json({json_set_func}('{{}}', '{json_path}', _s._val))"
             )
-            exists_cond = f"json_extract(c.data, '{json_path}') = _s._val"
+            exists_cond = f"{self.jsonb.json_function_prefix}_extract(c.data, '{json_path}') = _s._val"
         else:
             p_cols_str = ", ".join(part_cols)
             p_extract_str = ", ".join(part_extracts)
@@ -189,7 +189,7 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
             else:
                 bounds_sql = (
                     f"SELECT {p_cols_str}, MIN(_v) AS _lo, MAX(_v) AS _hi "
-                    f"FROM (SELECT {p_extract_str}, json_extract(data, '{json_path}') AS _v "
+                    f"FROM (SELECT {p_extract_str}, {self.jsonb.json_function_prefix}_extract(data, '{json_path}') AS _v "
                     f"FROM {current_table}) WHERE _v IS NOT NULL "
                     f"GROUP BY {p_cols_str}"
                 )
@@ -208,10 +208,10 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 set_args.append(f"'{p_path}'")
                 set_args.append(f"_s._p{i}")
                 match_parts.append(
-                    f"json_extract(c.data, '{p_path}') IS _s._p{i}"
+                    f"{self.jsonb.json_function_prefix}_extract(c.data, '{p_path}') IS _s._p{i}"
                 )
             set_args.extend([f"'{json_path}'", "_s._val"])
-            match_parts.append(f"json_extract(c.data, '{json_path}') = _s._val")
+            match_parts.append(f"{self.jsonb.json_function_prefix}_extract(c.data, '{json_path}') = _s._val")
             gen_data_expr = (
                 f"json({json_set_func}('{{}}', {', '.join(set_args)}))"
             )
@@ -551,11 +551,11 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 SELECT
                     src.data AS _raw_data,
                     {col_id_expr} AS _col_id,
-                    json_extract(src.data, '$._id') AS _doc_id,
+                    {self.jsonb.json_function_prefix}_extract(src.data, '$._id') AS _doc_id,
                     CASE
-                        WHEN json_extract(src.data, '$._id.__neosqlite_objectid__') = 1
-                        THEN json_extract(src.data, '$._id.id')
-                        ELSE json_extract(src.data, '$._id')
+                        WHEN {self.jsonb.json_function_prefix}_extract(src.data, '$._id.__neosqlite_objectid__') = 1
+                        THEN {self.jsonb.json_function_prefix}_extract(src.data, '$._id.id')
+                        ELSE {self.jsonb.json_function_prefix}_extract(src.data, '$._id')
                     END AS _graph_doc_id,
                     lower(hex(randomblob(12))) AS _gen_oid
                 FROM {current_table} src
@@ -736,22 +736,22 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 s_key = (
                     "COALESCE(src._id, "
                     + _graph_lookup_scalar_or_oid(
-                        "json_extract(src.data, '$._id')"
+                        f"{self.jsonb.json_function_prefix}_extract(src.data, '$._id')"
                     )
                     + ")"
                     if src_has_underscore_id
                     else _graph_lookup_scalar_or_oid(
-                        "json_extract(src.data, '$._id')"
+                        f"{self.jsonb.json_function_prefix}_extract(src.data, '$._id')"
                     )
                 )
                 t_key = "tgt._id"
             else:
                 jp = parse_json_path(f)
                 s_key = _graph_lookup_scalar_or_oid(
-                    f"json_extract(src.data, '{jp}')"
+                    f"{self.jsonb.json_function_prefix}_extract(src.data, '{jp}')"
                 )
                 t_key = _graph_lookup_scalar_or_oid(
-                    f"json_extract(tgt.data, '{jp}')"
+                    f"{self.jsonb.json_function_prefix}_extract(tgt.data, '{jp}')"
                 )
             cond_parts.append(
                 f"({s_key}) IS NOT NULL AND ({t_key}) = ({s_key})"
@@ -791,8 +791,8 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                 f"FROM json_each({src_lookup}) WHERE key != '_id' "
                 f"UNION ALL "
                 f"SELECT '_id' AS k, "
-                f"CASE WHEN json_type(tgt.data, '$._id') IN ('object', 'array') THEN json_extract(tgt.data, '$._id') "
-                f"WHEN json_type(tgt.data, '$._id') IS NOT NULL THEN json_quote(json_extract(tgt.data, '$._id')) "
+                f"CASE WHEN json_type(tgt.data, '$._id') IN ('object', 'array') THEN {self.jsonb.json_function_prefix}_extract(tgt.data, '$._id') "
+                f"WHEN json_type(tgt.data, '$._id') IS NOT NULL THEN json_quote({self.jsonb.json_function_prefix}_extract(tgt.data, '$._id')) "
                 f"WHEN tgt._id IS NOT NULL THEN json_quote(tgt._id) END AS jv "
                 f"WHERE json_type(tgt.data, '$._id') IS NOT NULL OR tgt._id IS NOT NULL"
             )
