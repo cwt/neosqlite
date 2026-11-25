@@ -1578,14 +1578,14 @@ class StageBuildersMixin:
                 "t1._id"
                 if local_field == "_id"
                 else _graph_lookup_scalar_or_oid(
-                    f"json_extract(t1.data, '{parse_json_path(local_field)}')"
+                    f"{self.jsonb.json_function_prefix}_extract(t1.data, '{parse_json_path(local_field)}')"
                 )
             )
             foreign_expr = (
                 "pipeline_result._id"
                 if foreign_field == "_id"
                 else _graph_lookup_scalar_or_oid(
-                    f"json_extract(pipeline_result.data, '{parse_json_path(foreign_field)}')"
+                    f"{self.jsonb.json_function_prefix}_extract(pipeline_result.data, '{parse_json_path(foreign_field)}')"
                 )
             )
             join_cond = _lookup_join_condition(
