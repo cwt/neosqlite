@@ -201,6 +201,7 @@ class TypePythonMixin(BasePythonMixin):
                 )
 
     # Type converter wrapper methods for backward compatibility (used by tests)
+    @staticmethod
     def _convert_to_int(value: Any) -> Any:
         """Convert a value to a Python ``int``.
 

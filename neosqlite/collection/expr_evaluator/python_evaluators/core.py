@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import Any
 
 from ..constants import REMOVE_SENTINEL
-from .base import BasePythonMixin
+from .base import BasePythonMixin, _is_mongo_truthy
 
 
 class CorePythonMixin(BasePythonMixin):
@@ -313,12 +313,16 @@ class CorePythonMixin(BasePythonMixin):
         """
         if operator == "$not":
             # Accept both {"$not": [<expr>]} and the documented bare-dict
-            # form {"$not": {"$gt": [...]}} (#122)
+            # form {"$not": {"$gt": [...]}} (#122), plus field/scalar operands.
             if isinstance(operands, dict):
-                return not self._evaluate_expr_python(operands, document)
+                return not _is_mongo_truthy(
+                    self._evaluate_operand_python(operands, document)
+                )
             if not isinstance(operands, list) or len(operands) != 1:
                 raise ValueError("$not requires exactly one operand")
-            return not self._evaluate_expr_python(operands[0], document)
+            return not _is_mongo_truthy(
+                self._evaluate_operand_python(operands[0], document)
+            )
 
         # Short-circuit: evaluate lazily so later (possibly invalid) operands
         # do not crash rows already decided (#122)
@@ -506,7 +510,9 @@ class CorePythonMixin(BasePythonMixin):
         if not isinstance(operands, dict):
             # Handle array format: [condition, true_case, false_case]
             if isinstance(operands, list) and len(operands) == 3:
-                condition = self._evaluate_expr_python(operands[0], document)
+                condition = _is_mongo_truthy(
+                    self._evaluate_operand_python(operands[0], document)
+                )
                 if condition:
                     return self._evaluate_operand_python(operands[1], document)
                 else:
@@ -516,7 +522,9 @@ class CorePythonMixin(BasePythonMixin):
         if "if" not in operands or "then" not in operands:
             raise ValueError("$cond requires 'if' and 'then' fields")
 
-        condition = self._evaluate_expr_python(operands["if"], document)
+        condition = _is_mongo_truthy(
+            self._evaluate_operand_python(operands["if"], document)
+        )
         if condition:
             return self._evaluate_operand_python(operands["then"], document)
         elif "else" in operands:
@@ -580,7 +588,9 @@ class CorePythonMixin(BasePythonMixin):
                 continue
             case = branch.get("case")
             then = branch.get("then")
-            if case is not None and self._evaluate_expr_python(case, document):
+            if case is not None and _is_mongo_truthy(
+                self._evaluate_operand_python(case, document)
+            ):
                 return self._evaluate_operand_python(then, document)
 
         if default is not None:

@@ -102,23 +102,28 @@ class ObjectPythonMixin(BasePythonMixin):
             case "$getField":
                 if not isinstance(operands, dict) or "field" not in operands:
                     raise ValueError("$getField requires 'field' specification")
-                field = operands["field"]
+                field = self._evaluate_operand_python(
+                    operands["field"], document
+                )
                 input_val = operands.get("input")
                 if input_val is not None:
                     obj = self._evaluate_operand_python(input_val, document)
                 else:
                     obj = document
-                if not isinstance(obj, dict):
+                if not isinstance(obj, dict) or not isinstance(field, str):
                     return None
                 return obj.get(field)
             case "$setField":
                 if not isinstance(operands, dict):
                     raise ValueError("$setField requires a dictionary")
-                field = operands.get("field")
+                field_spec = operands.get("field")
                 value = operands.get("value")
                 input_val = operands.get("input")
-                if field is None:
+                if field_spec is None:
                     raise ValueError("$setField requires 'field'")
+                field = self._evaluate_operand_python(field_spec, document)
+                if not isinstance(field, str):
+                    raise ValueError("$setField 'field' must resolve to string")
                 if input_val is not None:
                     obj = self._evaluate_operand_python(input_val, document)
                 else:
@@ -133,7 +138,9 @@ class ObjectPythonMixin(BasePythonMixin):
                     raise ValueError(
                         "$unsetField requires 'field' specification"
                     )
-                field = operands["field"]
+                field = self._evaluate_operand_python(
+                    operands["field"], document
+                )
                 input_val = operands.get("input")
                 if input_val is not None:
                     obj = self._evaluate_operand_python(input_val, document)
@@ -142,14 +149,18 @@ class ObjectPythonMixin(BasePythonMixin):
                 if not isinstance(obj, dict):
                     return None
                 result = dict(obj)
-                result.pop(field, None)
+                if isinstance(field, str):
+                    result.pop(field, None)
                 return result
             case "$objectToArray":
-                # Convert object to array of {k, v} objects
-                if isinstance(operands, dict):
-                    obj = operands
-                else:
-                    obj = self._evaluate_operand_python(operands, document)
+                # Unwrap single-element list form and evaluate expression
+                # operands so expressions like {$mergeObjects: ...} run first.
+                operand = (
+                    operands[0]
+                    if isinstance(operands, list) and len(operands) == 1
+                    else operands
+                )
+                obj = self._evaluate_operand_python(operand, document)
                 if not isinstance(obj, dict):
                     return []
                 return [{"k": k, "v": v} for k, v in obj.items()]
@@ -172,7 +183,7 @@ class ObjectPythonMixin(BasePythonMixin):
                     new_context["$$" + var_name] = var_value
 
                 # Evaluate the 'in' expression with new context
-                return self._evaluate_expr_python(in_expr, new_context)
+                return self._evaluate_operand_python(in_expr, new_context)
             case "$literal":
                 # Return the operand as-is without evaluation
                 return operands

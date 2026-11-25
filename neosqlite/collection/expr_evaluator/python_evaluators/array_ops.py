@@ -6,7 +6,7 @@ import json as _json
 from datetime import datetime
 from typing import Any
 
-from .base import BasePythonMixin
+from .base import BasePythonMixin, _is_mongo_truthy
 
 # BSON comparison order groups (lower = earlier in sort).
 # Order: Null < Numbers < Strings < Objects < Arrays <
@@ -101,15 +101,6 @@ def _set_key(v: Any) -> Any:
     if isinstance(v, str):
         return ("s", v)
     return ("o", str(v))
-
-
-def _is_mongo_truthy(val: Any) -> bool:
-    """Return MongoDB truthiness for $anyElementTrue/$allElementsTrue."""
-    if val is None or isinstance(val, bool):
-        return bool(val)
-    if isinstance(val, (int, float)):
-        return val != 0
-    return True
 
 
 def _dedupe(seq: list) -> list:
@@ -488,7 +479,9 @@ class ArrayPythonMixin(BasePythonMixin):
                 set1 = self._evaluate_operand_python(operands[0], document)
                 set2 = self._evaluate_operand_python(operands[1], document)
                 if isinstance(set1, list) and isinstance(set2, list):
-                    return set(set1) == set(set2)
+                    return {_set_key(x) for x in set1} == {
+                        _set_key(y) for y in set2
+                    }
                 return False
             case "$setIntersection":
                 if len(operands) != 2:
@@ -526,7 +519,9 @@ class ArrayPythonMixin(BasePythonMixin):
                 set1 = self._evaluate_operand_python(operands[0], document)
                 set2 = self._evaluate_operand_python(operands[1], document)
                 if isinstance(set1, list) and isinstance(set2, list):
-                    return set(set1).issubset(set(set2))
+                    return {_set_key(x) for x in set1}.issubset(
+                        {_set_key(y) for y in set2}
+                    )
                 return False
             case "$anyElementTrue":
                 # Handle both list and single operand formats

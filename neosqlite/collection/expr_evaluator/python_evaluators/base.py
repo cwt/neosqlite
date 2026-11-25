@@ -2,7 +2,17 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
+
+
+def _is_mongo_truthy(val: Any) -> bool:
+    """Return MongoDB truthiness: only False, None, and numeric zero are falsy."""
+    if val is None or isinstance(val, bool):
+        return bool(val)
+    if isinstance(val, (int, float, Decimal)):
+        return val != 0
+    return True
 
 
 class BasePythonMixin:

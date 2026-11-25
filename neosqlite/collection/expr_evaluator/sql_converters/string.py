@@ -474,7 +474,7 @@ class StringMixin(BaseSqlMixin):
                 # Bind each operand once in a scalar CTE before calling instr()/substr()
                 sql = (
                     f"(WITH _r(s, f, rep) AS (SELECT {string_sql}, {find_sql}, {replace_sql}) "
-                    f"SELECT CASE WHEN instr(s, f) > 0 THEN "
+                    f"SELECT CASE WHEN f != '' AND instr(s, f) > 0 THEN "
                     f"substr(s, 1, instr(s, f) - 1) || "
                     f"rep || "
                     f"substr(s, instr(s, f) + length(f)) "

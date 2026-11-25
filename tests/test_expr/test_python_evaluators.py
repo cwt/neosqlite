@@ -642,3 +642,117 @@ def test_unsupported_operators(evaluator):
         evaluator._evaluate_angle_python("$invalid", [1], {})
     with pytest.raises(NotImplementedError):
         evaluator._evaluate_array_python("$invalid", [1], {})
+
+
+def test_issue_202_python_evaluator_fixes(evaluator):
+    """Regression tests for #202 Python evaluator fixes."""
+    # 1. TypePythonMixin._convert_to_int is callable as a staticmethod
+    assert evaluator._convert_to_int("42") == 42
+
+    # 2. $let, $cond, $not, and $switch evaluate field/var/scalar operands
+    doc = {
+        "isActive": True,
+        "flagZero": 0,
+        "emptyStr": "",
+        "decZero": Decimal(0),
+        "$price": 99,
+        "fieldName": "$price",
+        "obj": {"a": 1, "b": 2},
+        "a": [{"x": 1}, {"y": [2, 3]}],
+        "b": [{"y": [2, 3]}, {"x": 1}],
+        "c": [{"x": 1}],
+    }
+    assert (
+        eval_py(evaluator, {"$let": {"vars": {"x": 42}, "in": "$$x"}}, doc)
+        == 42
+    )
+    assert (
+        eval_py(evaluator, {"$cond": ["$isActive", "yes", "no"]}, doc) == "yes"
+    )
+    assert (
+        eval_py(evaluator, {"$cond": ["$flagZero", "yes", "no"]}, doc) == "no"
+    )
+    # MongoDB truthiness: non-null empty string is truthy, Decimal("0") is falsy
+    assert (
+        eval_py(evaluator, {"$cond": ["$emptyStr", "yes", "no"]}, doc) == "yes"
+    )
+    assert (
+        eval_py(
+            evaluator,
+            {"$cond": {"if": "$decZero", "then": "yes", "else": "no"}},
+            doc,
+        )
+        == "no"
+    )
+    assert eval_py(evaluator, {"$not": ["$isActive"]}, doc) is False
+    assert eval_py(evaluator, {"$not": ["$flagZero"]}, doc) is True
+    assert eval_py(evaluator, {"$not": ["$emptyStr"]}, doc) is False
+    assert (
+        eval_py(
+            evaluator,
+            {
+                "$switch": {
+                    "branches": [
+                        {"case": "$flagZero", "then": 0},
+                        {"case": "$isActive", "then": 1},
+                    ],
+                    "default": 2,
+                }
+            },
+            doc,
+        )
+        == 1
+    )
+
+    # 3. $objectToArray evaluates expression dicts (not treated as literals)
+    assert eval_py(
+        evaluator,
+        {"$objectToArray": {"$mergeObjects": [{"a": 1}, {"b": 2}]}},
+        doc,
+    ) == [{"k": "a", "v": 1}, {"k": "b", "v": 2}]
+    assert eval_py(
+        evaluator,
+        {"$objectToArray": [{"$mergeObjects": [{"a": 1}]}]},
+        doc,
+    ) == [{"k": "a", "v": 1}]
+
+    # 4. $getField/$setField/$unsetField evaluate 'field' expression
+    assert (
+        eval_py(
+            evaluator, {"$getField": {"field": {"$literal": "$price"}}}, doc
+        )
+        == 99
+    )
+    assert eval_py(evaluator, {"$getField": {"field": "$fieldName"}}, doc) == 99
+    updated = eval_py(
+        evaluator,
+        {"$setField": {"field": {"$literal": "$price"}, "value": 120}},
+        {"tag": "x"},
+    )
+    assert updated == {"tag": "x", "$price": 120}
+    unset = eval_py(
+        evaluator,
+        {"$unsetField": {"field": {"$literal": "$price"}}},
+        {"$price": 99, "keep": 1},
+    )
+    assert unset == {"keep": 1}
+
+    # 5. $setEquals and $setIsSubset handle unhashable dict/list elements
+    assert eval_py(evaluator, {"$setEquals": ["$a", "$b"]}, doc) is True
+    assert eval_py(evaluator, {"$setEquals": ["$a", "$c"]}, doc) is False
+    assert eval_py(evaluator, {"$setIsSubset": ["$c", "$a"]}, doc) is True
+    assert eval_py(evaluator, {"$setIsSubset": ["$a", "$c"]}, doc) is False
+
+    # 6. $replaceOne leaves input unchanged when find is ""
+    assert (
+        eval_py(
+            evaluator,
+            {"$replaceOne": {"input": "abc", "find": "", "replacement": "X"}},
+            doc,
+        )
+        == "abc"
+    )
+    sql, params = evaluator._evaluate_sql_tier1(
+        {"$replaceOne": {"input": "$text", "find": "", "replacement": "X"}}
+    )
+    assert "f != ''" in sql

@@ -194,8 +194,7 @@ class StringPythonMixin(BasePythonMixin):
                 if string is None or delimiter is None:
                     return []
                 return str(string).split(str(delimiter))
-            case "$replaceAll":
-                # Handle MongoDB dict format: {input, find, replacement}
+            case "$replaceAll" | "$replaceOne":
                 if isinstance(operands, dict):
                     string = self._evaluate_operand_python(
                         operands.get("input"), document
@@ -207,10 +206,9 @@ class StringPythonMixin(BasePythonMixin):
                         operands.get("replacement"), document
                     )
                 else:
-                    # Handle list format
                     if len(operands) != 3:
                         raise ValueError(
-                            "$replaceAll requires string, find, and replacement"
+                            f"{operator} requires string, find, and replacement"
                         )
                     string = self._evaluate_operand_python(
                         operands[0], document
@@ -221,38 +219,12 @@ class StringPythonMixin(BasePythonMixin):
                     )
                 if string is None:
                     return None
-                # MongoDB: empty find returns the input unchanged (#117)
+                # MongoDB: empty find returns the input unchanged (#117, #202)
                 if str(find) == "":
                     return str(string)
+                if operator == "$replaceOne":
+                    return str(string).replace(str(find), str(replacement), 1)
                 return str(string).replace(str(find), str(replacement))
-            case "$replaceOne":
-                # Handle MongoDB dict format: {input, find, replacement}
-                if isinstance(operands, dict):
-                    string = self._evaluate_operand_python(
-                        operands.get("input"), document
-                    )
-                    find = self._evaluate_operand_python(
-                        operands.get("find"), document
-                    )
-                    replacement = self._evaluate_operand_python(
-                        operands.get("replacement"), document
-                    )
-                else:
-                    if len(operands) != 3:
-                        raise ValueError(
-                            "$replaceOne requires string, find, and replacement"
-                        )
-                    string = self._evaluate_operand_python(
-                        operands[0], document
-                    )
-                    find = self._evaluate_operand_python(operands[1], document)
-                    replacement = self._evaluate_operand_python(
-                        operands[2], document
-                    )
-                if string is None:
-                    return None
-                # Replace only first occurrence
-                return str(string).replace(str(find), str(replacement), 1)
             case "$strLenCP":
                 # String length in code points (Unicode characters)
                 # Handle both list and single operand formats
