@@ -5,8 +5,45 @@ avoid code duplication across modules, converting dot notation with optional
 array indexing into SQLite JSON path syntax.
 """
 
+from __future__ import annotations
 
-def parse_json_path(field: str) -> str:
+import re
+
+_ARRAY_SUFFIX_RE = re.compile(r"^(.*?)((?:\[(?:\d+|#(?:-\d+)?)\])+)$")
+
+
+def _needs_json_key_quotes(field_name: str) -> bool:
+    """Return True if a JSON key segment requires double-quoting in SQLite."""
+    if not field_name:
+        return False
+    return any(ch in field_name for ch in ("'", '"', "[", "]", "\\")) or any(
+        ch.isspace() for ch in field_name
+    )
+
+
+def _format_json_segment(part: str) -> str:
+    """Format one dot-separated JSON path segment safely for SQLite SQL literals."""
+    match = _ARRAY_SUFFIX_RE.match(part)
+    if match:
+        field_name, array_indices = match.group(1), match.group(2)
+    else:
+        field_name, array_indices = part, ""
+
+    if _needs_json_key_quotes(field_name):
+        # Escape backslash and double-quote for SQLite JSON path double-quoted keys,
+        # and double single quotes for enclosing SQL single-quoted string literals.
+        escaped = (
+            field_name.replace("\\", "\\\\")
+            .replace('"', '\\"')
+            .replace("'", "''")
+        )
+        return f'"{escaped}"{array_indices}'
+
+    escaped = field_name.replace("'", "''")
+    return f"{escaped}{array_indices}"
+
+
+def parse_json_path(field: str, *, preserve_id: bool = True) -> str:
     """Convert dot notation with array indexing to SQLite JSON path syntax.
 
     Supports:
@@ -18,17 +55,20 @@ def parse_json_path(field: str) -> str:
       ``"$.orders.items[2].name"``
     - Complex paths: ``"a.b[0].c[1].d"`` -> ``"$.a.b[0].c[1].d"``
 
-    Returns ``"_id"`` unchanged and escapes single quotes in path segments by
-    doubling them for SQLite string safety.
+    When ``preserve_id`` is ``True`` (default), returns ``"_id"`` unchanged.
+    Quotes path segments containing quotes, brackets, backslashes, or
+    whitespace as ``"segment"`` and doubles single quotes for SQL string safety.
 
     Args:
         field: Field path in dot notation with optional array indices.
+        preserve_id: Whether to return ``"_id"`` as bare ``"_id"`` rather than
+            ``"$._id"``.
 
     Returns:
         str: Properly formatted SQLite JSON path (or ``"_id"``).
     """
     # Handle special case for _id
-    if field == "_id":
+    if preserve_id and field == "_id":
         return field
 
     # Split the field path by dots while preserving array indices
@@ -42,14 +82,14 @@ def parse_json_path(field: str) -> str:
                 parts.append(current_part)
                 current_part = ""
         elif field[i] == "[":
-            # Find the closing bracket
+            # Find the closing bracket only if it looks like a valid array subscript
             bracket_end = field.find("]", i)
-            if bracket_end != -1:
-                # Add the array index to current part
-                current_part += field[i : bracket_end + 1]
+            candidate = field[i : bracket_end + 1] if bracket_end != -1 else ""
+            if bracket_end != -1 and _ARRAY_SUFFIX_RE.match("x" + candidate):
+                current_part += candidate
                 i = bracket_end
             else:
-                # Malformed array index, treat as regular character
+                # Literal bracket (unmatched '[' or non-index '[...]')
                 current_part += field[i]
         else:
             current_part += field[i]
@@ -60,20 +100,7 @@ def parse_json_path(field: str) -> str:
         parts.append(current_part)
 
     # Convert each part to JSON path format
-    json_parts = []
-    for part in parts:
-        # Escape single quotes in the field name by doubling them for SQLite
-        part = part.replace("'", "''")
-
-        # Check if part contains array indices
-        if "[" in part:
-            # Split field name from array indices
-            field_name_end = part.find("[")
-            field_name = part[:field_name_end]
-            array_indices = part[field_name_end:]
-            json_parts.append(f"{field_name}{array_indices}")
-        else:
-            json_parts.append(part)
+    json_parts = [_format_json_segment(part) for part in parts]
 
     return f"$.{'.'.join(json_parts)}"
 

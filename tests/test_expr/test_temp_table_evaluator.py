@@ -551,7 +551,7 @@ class TestConvertOperandToTempSql:
             sql, params = evaluator._convert_operand_to_temp_sql(
                 "$field", "temp"
             )
-            assert "temp.field" in sql
+            assert '"temp"."field"' in sql
             assert params == []
 
     def test_convert_nested_field_reference(self):
@@ -561,7 +561,7 @@ class TestConvertOperandToTempSql:
             sql, params = evaluator._convert_operand_to_temp_sql(
                 "$nested.field", "temp"
             )
-            assert "temp.nested_field" in sql
+            assert '"temp"."nested_field"' in sql
             assert params == []
 
     def test_convert_literal_value(self):

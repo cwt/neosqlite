@@ -9,7 +9,7 @@ import warnings
 from collections.abc import Callable
 from typing import Any
 
-from ...sql_utils import quote_table_name
+from ...sql_utils import validate_identifier
 from ..query_helper.utils import sanitize_fts_query
 from .operators_base import OperatorsBaseMixin
 
@@ -155,8 +155,11 @@ class OperatorsTextMixin(OperatorsBaseMixin):
             str: Tokenizer clause for FTS5 creation (for example,
                 ``", tokenize=porter"``), or ``""`` when none is configured.
         """
-        escaped_name = quote_table_name(self.collection.name).replace(
-            "_", "\\_"
+        coll_name = validate_identifier(self.collection.name)
+        escaped_name = (
+            coll_name.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
         )
         fts_table_pattern = f"{escaped_name}\\_%\\_fts"
         cursor = self.db.execute(

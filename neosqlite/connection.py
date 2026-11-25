@@ -1680,15 +1680,21 @@ def _command_cache_size(
 
     Args:
         _command: Command payload dictionary (unused).
-        **kwargs: Optional ``pages`` integer/value to set ``cache_size``; when
+        **kwargs: Optional ``pages`` integer value to set ``cache_size``; when
             omitted, queries the current setting.
 
     Returns:
         dict[str, Any]: Response dictionary with ``ok`` and either
-            ``message`` (when setting) or ``cache_size`` (when querying).
+            ``message`` (when setting), ``cache_size`` (when querying), or
+            ``errmsg`` if ``pages`` is not a non-boolean integer.
     """
     pages = kwargs.get("pages")
     if pages is not None:
+        if not isinstance(pages, int) or isinstance(pages, bool):
+            return {
+                "ok": 0,
+                "errmsg": f"Invalid cache_size pages value: {pages!r}",
+            }
         self.db.execute(f"PRAGMA cache_size = {pages}")
         return {"ok": 1, "message": f"cache_size set to {pages}"}
     current = self.db.execute("PRAGMA cache_size").fetchone()[0]
@@ -1702,15 +1708,21 @@ def _command_busy_timeout(
 
     Args:
         _command: Command payload dictionary (unused).
-        **kwargs: Optional ``milliseconds`` value to set ``busy_timeout``;
-            when omitted, queries the current timeout.
+        **kwargs: Optional non-negative integer ``milliseconds`` value to set
+            ``busy_timeout``; when omitted, queries the current timeout.
 
     Returns:
         dict[str, Any]: Response dictionary with ``ok`` and either
-            ``message`` (when setting) or ``busy_timeout`` (when querying).
+            ``message`` (when setting), ``busy_timeout`` (when querying), or
+            ``errmsg`` if ``milliseconds`` is invalid.
     """
     ms = kwargs.get("milliseconds")
     if ms is not None:
+        if not isinstance(ms, int) or isinstance(ms, bool) or ms < 0:
+            return {
+                "ok": 0,
+                "errmsg": f"Invalid busy_timeout milliseconds value: {ms!r}",
+            }
         self.db.execute(f"PRAGMA busy_timeout = {ms}")
         return {"ok": 1, "message": f"busy_timeout set to {ms}ms"}
     current = self.db.execute("PRAGMA busy_timeout").fetchone()[0]
@@ -2048,24 +2060,79 @@ def _command_query_only(
     return {"ok": 1, "query_only": bool(cursor.fetchone()[0])}
 
 
-def _command_default(self: Connection, cmd_name: str) -> dict[str, Any]:
-    """Fallback handler: validate ``cmd_name`` and run it as a PRAGMA.
+_READ_ONLY_PRAGMA_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "application_id",
+        "auto_vacuum",
+        "automatic_index",
+        "busy_timeout",
+        "cache_size",
+        "cache_spill",
+        "cell_size_check",
+        "checkpoint_fullfsync",
+        "collation_list",
+        "compile_options",
+        "data_version",
+        "database_list",
+        "encoding",
+        "foreign_key_check",
+        "foreign_keys",
+        "freelist_count",
+        "fullfsync",
+        "function_list",
+        "hard_heap_limit",
+        "ignore_check_constraints",
+        "integrity_check",
+        "journal_mode",
+        "journal_size_limit",
+        "legacy_alter_table",
+        "legacy_file_format",
+        "locking_mode",
+        "max_page_count",
+        "mmap_size",
+        "module_list",
+        "page_count",
+        "page_size",
+        "pragma_list",
+        "query_only",
+        "quick_check",
+        "read_uncommitted",
+        "recursive_triggers",
+        "reverse_unordered_selects",
+        "schema_version",
+        "secure_delete",
+        "soft_heap_limit",
+        "synchronous",
+        "table_list",
+        "temp_store",
+        "threads",
+        "trusted_schema",
+        "user_version",
+        "wal_autocheckpoint",
+    }
+)
 
-    Rejects names that do not match ``^[A-Za-z_][A-Za-z0-9_]*$``, executes
-    ``PRAGMA <cmd_name>``, and maps result rows into dictionaries keyed by
-    column names from ``cursor.description``.
+
+def _command_default(self: Connection, cmd_name: str) -> dict[str, Any]:
+    """Fallback handler: run an allowlisted read-only SQLite PRAGMA.
+
+    Rejects unknown or mutating command names against
+    ``_READ_ONLY_PRAGMA_ALLOWLIST``, executes ``PRAGMA <cmd_name>``, and maps
+    result rows into dictionaries keyed by column names from
+    ``cursor.description``.
 
     Args:
-        cmd_name: Candidate SQLite PRAGMA identifier.
+        cmd_name: Candidate read-only SQLite PRAGMA identifier.
 
     Returns:
         dict[str, Any]: Dictionary ``{"ok": 1, "result": [...]}`` on success,
             or ``{"ok": 0, "errmsg": ...}`` if validation or execution fails.
     """
-    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", cmd_name):
-        return {"ok": 0, "errmsg": f"Invalid command name: {cmd_name}"}
+    normalized = cmd_name.lower() if isinstance(cmd_name, str) else ""
+    if normalized not in _READ_ONLY_PRAGMA_ALLOWLIST:
+        return {"ok": 0, "errmsg": f"Unknown command: {cmd_name}"}
     try:
-        cursor = self.db.execute(f"PRAGMA {cmd_name}")
+        cursor = self.db.execute(f"PRAGMA {normalized}")
         result = cursor.fetchall()
         return {
             "ok": 1,

@@ -346,29 +346,48 @@ class StringMixin(BaseSqlMixin):
                 string_sql, string_params = self._convert_operand_to_sql(
                     operands[0]
                 )
-                # Literal delimiter: use replace() to convert to JSON array.
-                # A leading "$" denotes a field reference in MongoDB
-                # expressions, not a literal string, so it must not take this
-                # branch — those delimiters are resolved at runtime in Python.
                 if isinstance(operands[1], str) and not operands[1].startswith(
                     "$"
                 ):
                     delim = operands[1]
-                    # Escape delimiter for safe embedding in SQL string literal.
-                    delim_sql = delim.replace("'", "''")
-                    # Split by replacing delimiter with '","' and wrapping in '["']...'"']'.
-                    # This handles simple strings; for strings with embedded
-                    # JSON-special characters the caller should use
-                    # force_python fallback.
+                    if delim == "":
+                        raise ValueError("empty separator")
+                    # Use a recursive CTE + json_group_array so arbitrary
+                    # characters (", \, newlines, tabs, etc.) are JSON-escaped
+                    # by SQLite rather than string-concatenated into JSON.
                     sql = (
-                        f"CASE WHEN {string_sql} IS NULL THEN json('[]') "
-                        f"ELSE json('[\"' ||"
-                        f" replace({string_sql}, '{delim_sql}', '\",\"') ||"
-                        f" '\"]') END"
+                        f"(WITH RECURSIVE "
+                        f"__split_in(val, sep) AS (SELECT ({string_sql}), ?), "
+                        f"__split(part, rest) AS ("
+                        f"SELECT "
+                        f"CASE WHEN instr(CAST(val AS TEXT), sep) > 0 "
+                        f"THEN substr(CAST(val AS TEXT), 1, "
+                        f"instr(CAST(val AS TEXT), sep) - 1) "
+                        f"ELSE CAST(val AS TEXT) END, "
+                        f"CASE WHEN instr(CAST(val AS TEXT), sep) > 0 "
+                        f"THEN substr(CAST(val AS TEXT), "
+                        f"instr(CAST(val AS TEXT), sep) + length(sep)) "
+                        f"ELSE NULL END "
+                        f"FROM __split_in WHERE val IS NOT NULL "
+                        f"UNION ALL "
+                        f"SELECT "
+                        f"CASE WHEN instr(rest, (SELECT sep FROM __split_in)) > 0 "
+                        f"THEN substr(rest, 1, "
+                        f"instr(rest, (SELECT sep FROM __split_in)) - 1) "
+                        f"ELSE rest END, "
+                        f"CASE WHEN instr(rest, (SELECT sep FROM __split_in)) > 0 "
+                        f"THEN substr(rest, "
+                        f"instr(rest, (SELECT sep FROM __split_in)) + "
+                        f"length((SELECT sep FROM __split_in))) "
+                        f"ELSE NULL END "
+                        f"FROM __split WHERE rest IS NOT NULL"
+                        f") "
+                        f"SELECT CASE WHEN (SELECT val FROM __split_in) IS NULL "
+                        f"THEN json('[]') "
+                        f"ELSE json((SELECT json_group_array(part) FROM __split)) "
+                        f"END)"
                     )
-                    # The string fragment appears twice (null check + replace):
-                    # duplicate its params in SQL order.
-                    return sql, string_params + string_params
+                    return sql, [*string_params, delim]
                 # Dynamic delimiter: fall back to Python.
                 raise NotImplementedError(
                     "$split with dynamic delimiter not supported in SQL tier"

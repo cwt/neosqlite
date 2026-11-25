@@ -23,6 +23,30 @@ ASCENDING = 1
 DESCENDING = -1
 
 
+def _sanitize_sql_comment(comment: str) -> str:
+    """Neutralize SQL block and line comment markers in user comments.
+
+    Strips null bytes and iteratively breaks up ``/*``, ``*/``, and ``--``
+    sequences (including nested combinations such as ``*--/`` or ``/**/``) so
+    a SQL comment passed to :meth:`Cursor.comment` cannot terminate the
+    enclosing ``/* ... */`` SQL comment block prematurely.
+
+    Args:
+        comment: Raw comment string from ``Cursor.comment()``.
+
+    Returns:
+        str: Comment string safe to embed inside ``/* ... */``.
+    """
+    sanitized = str(comment).replace("\x00", "")
+    while "/*" in sanitized or "*/" in sanitized or "--" in sanitized:
+        sanitized = (
+            sanitized.replace("/*", "/ *")
+            .replace("*/", "* /")
+            .replace("--", "- -")
+        )
+    return sanitized
+
+
 class Cursor:
     """Cursor for iterating over query results in a NeoSQLite collection.
 
@@ -973,11 +997,7 @@ class Cursor:
                     self._sql_handled_pagination = True
 
                 if self._comment:
-                    safe_comment = (
-                        self._comment.replace("/*", "")
-                        .replace("*/", "")
-                        .replace("--", "")
-                    )
+                    safe_comment = _sanitize_sql_comment(self._comment)
                     cmd = f"/* {safe_comment} */ {cmd}"
 
                 db_cursor = self._collection.db.execute(cmd, params)
@@ -1076,11 +1096,7 @@ class Cursor:
 
             # Add comment if specified
             if self._comment:
-                safe_comment = (
-                    self._comment.replace("/*", "")
-                    .replace("*/", "")
-                    .replace("--", "")
-                )
+                safe_comment = _sanitize_sql_comment(self._comment)
                 cmd_without_hint = f"/* {safe_comment} */ {cmd_without_hint}"
                 cmd_with_hint = f"/* {safe_comment} */ {cmd_with_hint}"
 
@@ -1179,14 +1195,10 @@ class Cursor:
         if pagination_clause:
             self._sql_handled_pagination = True
 
-            # Add comment if specified
-            if self._comment:
-                safe_comment = (
-                    self._comment.replace("--", "- -")
-                    .replace("/*", "/ *")
-                    .replace("*/", "* /")
-                )
-                cmd = f"/* {safe_comment} */ {cmd}"
+        # Add comment if specified
+        if self._comment:
+            safe_comment = _sanitize_sql_comment(self._comment)
+            cmd = f"/* {safe_comment} */ {cmd}"
 
         db_cursor = self._collection.db.execute(cmd, params)
         apply = partial(self._query_helpers._apply_query, self._filter)
@@ -1309,11 +1321,7 @@ class Cursor:
 
             # Add comment if specified
             if self._comment:
-                safe_comment = (
-                    self._comment.replace("/*", "")
-                    .replace("*/", "")
-                    .replace("--", "")
-                )
+                safe_comment = _sanitize_sql_comment(self._comment)
                 cmd_without_hint = f"/* {safe_comment} */ {cmd_without_hint}"
                 cmd_with_hint = f"/* {safe_comment} */ {cmd_with_hint}"
             db_cursor = self._execute_sql_with_hint(
@@ -1368,11 +1376,7 @@ class Cursor:
 
             # Add comment if specified
             if self._comment:
-                safe_comment = (
-                    self._comment.replace("/*", "")
-                    .replace("*/", "")
-                    .replace("--", "")
-                )
+                safe_comment = _sanitize_sql_comment(self._comment)
                 cmd = f"/* {safe_comment} */ {cmd}"
 
             db_cursor = self._collection.db.execute(cmd)
@@ -1840,7 +1844,9 @@ class Cursor:
         for table in self._tables_to_cleanup:
             try:
                 # Use a new connection or the shared connection to drop tables
-                self._collection.db.execute(f"DROP TABLE IF EXISTS {table}")
+                self._collection.db.execute(
+                    f"DROP TABLE IF EXISTS {quote_table_name(table)}"
+                )
             except Exception as e:
                 logger.debug(
                     f"Failed to drop temporary table '{table}' during cleanup: {e}"

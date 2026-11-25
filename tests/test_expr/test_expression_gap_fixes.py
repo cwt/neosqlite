@@ -33,8 +33,8 @@ class TestSplitDynamicDelimiter:
         sql, params = evaluator.evaluate_for_aggregation(
             {"$split": ["$name", ","]}
         )
-        assert "replace(" in sql
-        assert params == []
+        assert "json_group_array" in sql
+        assert params == [","]
 
     @pytest.mark.parametrize("force_python", [False, True])
     def test_split_with_field_reference(self, force_python):

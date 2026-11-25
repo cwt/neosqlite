@@ -773,8 +773,8 @@ class TestIdColumnRef:
         # Should be a dot-separated pair
         parts = ref.split(".")
         assert len(parts) == 2
-        # First part should be the collection/table name
-        assert parts[0] == query_helper.collection.name
+        # First part should be the quoted collection/table name
+        assert parts[0] == f'"{query_helper.collection.name}"'
         assert parts[1] == "_id"
 
 

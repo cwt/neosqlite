@@ -20,6 +20,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 from .._sqlite import sqlite3
+from ..sql_utils import quote_identifier, quote_table_name
 from .json_path_utils import parse_json_path
 from .jsonb_support import JSONBContext
 from .query_helper.translation_cache import TranslationCache
@@ -199,7 +200,7 @@ class TempTableExprEvaluator:
                 # Store with temp_table placeholder for substitution on cache hit
                 # FIX: self._temp_tables[-1] already includes the prefix
                 where_clause_template = where_clause.replace(
-                    temp_tables[-1], "{temp_table}"
+                    quote_table_name(temp_tables[-1]), "{temp_table}"
                 )
                 self._translation_cache.put(
                     cache_key,
@@ -378,7 +379,9 @@ class TempTableExprEvaluator:
         """Drop and forget every temp table this evaluator created."""
         for table in self._temp_tables:
             try:
-                self.db.execute(f"DROP TABLE IF EXISTS {table}")
+                self.db.execute(
+                    f"DROP TABLE IF EXISTS {quote_table_name(table)}"
+                )
             except Exception as drop_error:  # pragma: no cover
                 logger.debug(
                     f"Failed to drop temp table '{table}': {drop_error}"
@@ -493,7 +496,11 @@ class TempTableExprEvaluator:
         self._create_temp_table(temp_table, collection_name, list(field_list))
 
         # Build WHERE clause by substituting temp table name into template
-        where_clause = where_clause_template.replace("{temp_table}", temp_table)
+        quoted_coll = quote_table_name(collection_name)
+        quoted_temp = quote_table_name(temp_table)
+        where_clause = where_clause_template.replace(
+            "{temp_table}", quoted_temp
+        )
 
         # Parameters are cached verbatim from the identical expression that
         # populated the cache — no re-extraction needed.
@@ -501,15 +508,15 @@ class TempTableExprEvaluator:
 
         # Build SELECT with JSON text conversion for Python-space data
         select_data = self.jsonb.data_column(
-            f"{collection_name}.{self.data_column}"
+            f"{quoted_coll}.{self.data_column}"
         )
         select_data = f"{select_data} as data"
 
         # Build the final query
         query = f"""
-            SELECT {temp_table}.id, {temp_table}._id, {select_data}
-            FROM {collection_name}
-            JOIN {temp_table} ON {collection_name}.id = {temp_table}.id
+            SELECT {quoted_temp}.id, {quoted_temp}._id, {select_data}
+            FROM {quoted_coll}
+            JOIN {quoted_temp} ON {quoted_coll}.id = {quoted_temp}.id
             WHERE {where_clause}
         """
 
@@ -588,8 +595,10 @@ class TempTableExprEvaluator:
         select_exprs = ["id"]
 
         # Check if _id column exists
+        quoted_coll = quote_table_name(collection_name)
+        quoted_temp = quote_table_name(temp_table)
         try:
-            self.db.execute(f"SELECT _id FROM {collection_name} LIMIT 0")
+            self.db.execute(f"SELECT _id FROM {quoted_coll} LIMIT 0")
             has_id = True
         except sqlite3.OperationalError as e:
             logger.debug(
@@ -607,22 +616,21 @@ class TempTableExprEvaluator:
             # Build JSON extract expression
             extract_expr = (
                 f"{self.jsonb.function('extract')}("
-                f"{self.data_column}, '{parse_json_path(field)}') as {col_name}"
+                f"{self.data_column}, '{parse_json_path(field)}') as {quote_identifier(col_name)}"
             )
 
             select_exprs.append(extract_expr)
 
         # Create temp table with SELECT (faster than CREATE + INSERT)
-        select_sql = f"SELECT {', '.join(select_exprs)} FROM {collection_name}"
-        create_sql = (
-            f"CREATE TEMPORARY TABLE IF NOT EXISTS {temp_table} AS {select_sql}"
-        )
+        select_sql = f"SELECT {', '.join(select_exprs)} FROM {quoted_coll}"
+        create_sql = f"CREATE TEMPORARY TABLE IF NOT EXISTS {quoted_temp} AS {select_sql}"
 
         self.db.execute(create_sql)
 
         # Create index on temp table for faster joins
+        idx_name = quote_identifier(f"idx_{temp_table}_id")
         self.db.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{temp_table}_id ON {temp_table}(id)"
+            f"CREATE INDEX IF NOT EXISTS {idx_name} ON {quoted_temp}(id)"
         )
 
     def _build_main_query(
@@ -647,10 +655,12 @@ class TempTableExprEvaluator:
         where_clause, params = self._build_expr_where_from_temp(
             expr, temp_table
         )
+        quoted_coll = quote_table_name(collection_name)
+        quoted_temp = quote_table_name(temp_table)
 
         # Build SELECT with JSON text conversion for Python-space data
         select_data = self.jsonb.data_column(
-            f"{collection_name}.{self.data_column}"
+            f"{quoted_coll}.{self.data_column}"
         )
         select_data = f"{select_data} as data"
 
@@ -660,7 +670,7 @@ class TempTableExprEvaluator:
             for fkey, fval in filter_expr.items():
                 extract = (
                     f"{self.jsonb.json_function_prefix}_extract("
-                    f"{collection_name}.{self.data_column}, "
+                    f"{quoted_coll}.{self.data_column}, "
                     f"'{parse_json_path(fkey)}')"
                 )
                 extra_conds.append(f"{extract} = ?")
@@ -670,9 +680,9 @@ class TempTableExprEvaluator:
 
         # Build the final query
         query = f"""
-            SELECT {temp_table}.id, {temp_table}._id, {select_data}
-            FROM {collection_name}
-            JOIN {temp_table} ON {collection_name}.id = {temp_table}.id
+            SELECT {quoted_temp}.id, {quoted_temp}._id, {select_data}
+            FROM {quoted_coll}
+            JOIN {quoted_temp} ON {quoted_coll}.id = {quoted_temp}.id
             WHERE {where_clause}
         """
 
@@ -1029,7 +1039,10 @@ class TempTableExprEvaluator:
             # Field reference - use temp table column
             field_path = operand[1:]  # Remove $
             col_name = self._sanitize_field_name(field_path)
-            return f"{temp_table}.{col_name}", []
+            return (
+                f"{quote_table_name(temp_table)}.{quote_identifier(col_name)}",
+                [],
+            )
 
         elif isinstance(operand, dict):
             # Nested expression
@@ -1115,7 +1128,9 @@ class TempTableExprEvaluator:
         """Clean up all temporary tables created by this evaluator."""
         for table in self._temp_tables:
             try:
-                self.db.execute(f"DROP TABLE IF EXISTS {table}")
+                self.db.execute(
+                    f"DROP TABLE IF EXISTS {quote_table_name(table)}"
+                )
             except Exception as e:
                 logger.debug(
                     f"Failed to drop temporary table {table} during cleanup: {e}"

@@ -359,7 +359,7 @@ class GridFSBucket:
 
         cursor = self._db.execute(
             f"""
-            INSERT INTO {self._files_collection}
+            INSERT INTO {quote_table_name(self._files_collection)}
             (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
             VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
         """,
@@ -416,7 +416,7 @@ class GridFSBucket:
         try:
             self._db.executemany(
                 f"""
-                INSERT INTO {self._chunks_collection}
+                INSERT INTO {quote_table_name(self._chunks_collection)}
                 (files_id, n, data)
                 VALUES (?, ?, ?)
             """,
@@ -450,7 +450,7 @@ class GridFSBucket:
         # Get file metadata using integer ID
         row = self._db.execute(
             f"""
-            SELECT length, chunkSize FROM {self._files_collection}
+            SELECT length, chunkSize FROM {quote_table_name(self._files_collection)}
             WHERE id = ?
         """,
             (file_int_id,),
@@ -462,7 +462,7 @@ class GridFSBucket:
         # Get all chunks in order
         cursor = self._db.execute(
             f"""
-            SELECT data FROM {self._chunks_collection}
+            SELECT data FROM {quote_table_name(self._chunks_collection)}
             WHERE files_id = ?
             ORDER BY n ASC
         """,
@@ -499,7 +499,7 @@ class GridFSBucket:
                     try:
                         ObjectId(file_id)  # Validate the hex string
                         cursor = self._db.execute(
-                            f"SELECT id FROM {self._files_collection} WHERE _id = ?",
+                            f"SELECT id FROM {quote_table_name(self._files_collection)} WHERE _id = ?",
                             (file_id,),
                         )
                         return row[0] if (row := cursor.fetchone()) else None
@@ -512,7 +512,7 @@ class GridFSBucket:
                 try:
                     int_file_id = int(file_id)
                     cursor = self._db.execute(
-                        f"SELECT id FROM {self._files_collection} WHERE id = ?",
+                        f"SELECT id FROM {quote_table_name(self._files_collection)} WHERE id = ?",
                         (int_file_id,),
                     )
                     return row[0] if (row := cursor.fetchone()) else None
@@ -569,7 +569,7 @@ class GridFSBucket:
 
         row = self._db.execute(
             f"""
-            SELECT id FROM {self._files_collection}
+            SELECT id FROM {quote_table_name(self._files_collection)}
             WHERE filename = ?
             ORDER BY uploadDate {order}, id {order}
             LIMIT 1 OFFSET ?
@@ -634,7 +634,7 @@ class GridFSBucket:
         # Delete chunks first
         self._db.execute(
             f"""
-            DELETE FROM {self._chunks_collection}
+            DELETE FROM {quote_table_name(self._chunks_collection)}
             WHERE files_id = ?
         """,
             (file_int_id,),
@@ -643,7 +643,7 @@ class GridFSBucket:
         # Delete file document
         cursor = self._db.execute(
             f"""
-            DELETE FROM {self._files_collection}
+            DELETE FROM {quote_table_name(self._files_collection)}
             WHERE id = ?
         """,
             (file_int_id,),
@@ -748,9 +748,10 @@ class GridFSBucket:
             )  # Look up by string representation of integer
 
         # Check if file with this ID already exists
+        files_coll = quote_table_name(self._files_collection)
         row = self._db.execute(
             f"""
-            SELECT id FROM {self._files_collection}
+            SELECT id FROM {files_coll}
             WHERE _id = ?
         """,
             (id_for_lookup,),
@@ -780,7 +781,7 @@ class GridFSBucket:
             # Store the ObjectId in the _id column, let SQLite auto-generate the integer id
             self._db.execute(
                 f"""
-                INSERT INTO {self._files_collection}
+                INSERT INTO {files_coll}
                 (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
                 VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -799,7 +800,7 @@ class GridFSBucket:
             # The integer in the 'id' column as the primary key, and string representation in '_id' column
             self._db.execute(
                 f"""
-                INSERT INTO {self._files_collection}
+                INSERT INTO {files_coll}
                 (id, _id, filename, length, chunkSize, uploadDate, md5, metadata)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -821,7 +822,7 @@ class GridFSBucket:
         if isinstance(file_id, ObjectId):
             # If it was an ObjectId, get the auto-generated integer ID
             file_int_id = self._db.execute(
-                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
+                f"SELECT id FROM {files_coll} WHERE _id = ?",
                 (str(file_id),),
             ).fetchone()[0]
         else:
@@ -867,9 +868,10 @@ class GridFSBucket:
                 file_id
             )  # Use string representation for consistency
 
+        files_coll = quote_table_name(self._files_collection)
         row = self._db.execute(
             f"""
-            SELECT id FROM {self._files_collection}
+            SELECT id FROM {files_coll}
             WHERE _id = ?
         """,
             (id_for_lookup,),
@@ -902,9 +904,11 @@ class GridFSBucket:
         """
         # Chunks are keyed by the integer id column (files_id), not the
         # logical _id — selecting _id here orphaned every chunk (#92).
+        files_coll = quote_table_name(self._files_collection)
+        chunks_coll = quote_table_name(self._chunks_collection)
         cursor = self._db.execute(
             f"""
-            SELECT id FROM {self._files_collection}
+            SELECT id FROM {files_coll}
             WHERE filename = ?
         """,
             (filename,),
@@ -919,7 +923,7 @@ class GridFSBucket:
         placeholders = ",".join("?" * len(file_ids))
         self._db.execute(
             f"""
-            DELETE FROM {self._chunks_collection}
+            DELETE FROM {chunks_coll}
             WHERE files_id IN ({placeholders})
         """,
             file_ids,
@@ -928,7 +932,7 @@ class GridFSBucket:
         # Delete all file documents
         self._db.execute(
             f"""
-            DELETE FROM {self._files_collection}
+            DELETE FROM {files_coll}
             WHERE filename = ?
         """,
             (filename,),
@@ -949,7 +953,7 @@ class GridFSBucket:
 
         cursor = self._db.execute(
             f"""
-            UPDATE {self._files_collection}
+            UPDATE {quote_table_name(self._files_collection)}
             SET filename = ?
             WHERE id = ?
         """,
@@ -971,7 +975,7 @@ class GridFSBucket:
         """
         cursor = self._db.execute(
             f"""
-            UPDATE {self._files_collection}
+            UPDATE {quote_table_name(self._files_collection)}
             SET filename = ?
             WHERE filename = ?
         """,
@@ -988,10 +992,14 @@ class GridFSBucket:
         from ``_files_collection`` to satisfy foreign-key constraints.
         """
         # Delete all chunks first (foreign key constraint)
-        self._db.execute(f"DELETE FROM {self._chunks_collection}")
+        self._db.execute(
+            f"DELETE FROM {quote_table_name(self._chunks_collection)}"
+        )
 
         # Delete all files
-        self._db.execute(f"DELETE FROM {self._files_collection}")
+        self._db.execute(
+            f"DELETE FROM {quote_table_name(self._files_collection)}"
+        )
 
     def list(self) -> list[str]:
         """List all distinct filenames stored in this GridFS bucket.
@@ -1000,6 +1008,6 @@ class GridFSBucket:
             list[str]: Sorted list of unique filenames in the files table.
         """
         cursor = self._db.execute(
-            f"SELECT DISTINCT filename FROM {self._files_collection} ORDER BY filename"
+            f"SELECT DISTINCT filename FROM {quote_table_name(self._files_collection)} ORDER BY filename"
         )
         return [row[0] for row in cursor.fetchall()]

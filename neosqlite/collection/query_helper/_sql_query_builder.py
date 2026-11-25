@@ -570,11 +570,9 @@ class SqlQueryBuilderMixin:
     ) -> tuple[str, list[Any]]:
         """Build an array-containment OR predicate for plain equality (#99).
 
-        The array may sit at any depth along the dotted path (``"a.scores"``
-        is a whole array; ``"students.name"`` names a leaf inside each element
-        of ``$.students``), so one ``EXISTS`` arm using ``json_each`` /
-        ``jsonb_each`` is emitted per candidate depth alongside direct scalar
-        equality.
+        Delegates to :func:`build_json_containment_clause` so path quoting,
+        JSONB parameter binding, and ``json_each`` / ``jsonb_each`` array
+        traversal share one implementation.
 
         Args:
             field: Dotted MongoDB field path.
@@ -585,50 +583,16 @@ class SqlQueryBuilderMixin:
             tuple[str, list[Any]]: Parenthesized SQL ``OR`` predicate and its
             corresponding parameter list.
         """
-        from ..type_utils import serialize_sql_query_value
+        from ..type_utils import build_json_containment_clause
 
-        json_each_func = self.jsonb.json_each_function
-        scalar_val, scalar_ph = serialize_sql_query_value(
-            value, self.jsonb.jsonb_supported
+        return build_json_containment_clause(
+            "data",
+            field,
+            extract_expr,
+            value,
+            self.jsonb.json_each_function,
+            jsonb_supported=self.jsonb.jsonb_supported,
         )
-        each_val, each_ph = serialize_sql_query_value(
-            value, json_each_func == "jsonb_each"
-        )
-        text_val, _ = serialize_sql_query_value(value, False)
-        segs = field.split(".")
-        arms: list[str] = []
-        params: list[Any] = [scalar_val]
-        for k in range(1, len(segs) + 1):
-            arr_path = "'$." + ".".join(segs[:k]) + "'"
-            arr_expr = "json_extract(data, " + arr_path + ")"
-            rest = segs[k:]
-            if rest:
-                leaf_path = "$." + ".".join(rest)
-                elem_pred = (
-                    "CASE WHEN type = 'object' THEN "
-                    "json_extract(value, '" + leaf_path + "') = ? ELSE 0 END"
-                )
-                arm_param = text_val
-            else:
-                elem_pred = f"value = {each_ph}"
-                arm_param = each_val
-            arms.append(
-                "EXISTS (SELECT 1 FROM "
-                + json_each_func
-                + "("
-                + "CASE WHEN json_type(data, "
-                + arr_path
-                + ") = 'array' "
-                + "THEN "
-                + arr_expr
-                + " END"
-                + ") WHERE "
-                + elem_pred
-                + ")"
-            )
-            params.append(arm_param)
-        clause = " OR ".join([f"{extract_expr} = {scalar_ph}"] + arms)
-        return "(" + clause + ")", params
 
     def _field_has_index(self, field: str) -> bool:
         """Return whether an index exists whose name encodes ``field`` (#99).

@@ -115,8 +115,11 @@ class SqlAggregationMixin:
                     for key, direction in sort_spec.items():
                         # When sorting after a group stage, we sort by the output field name
                         if group_by:
+                            quoted_key = (
+                                f'"{key.replace(chr(34), chr(34) * 2)}"'
+                            )
                             sort_clauses.append(
-                                f"{key} {'DESC' if direction == DESCENDING else 'ASC'}"
+                                f"{quoted_key} {'DESC' if direction == DESCENDING else 'ASC'}"
                             )
                         else:
                             sort_clauses.append(
@@ -417,9 +420,10 @@ class SqlAggregationMixin:
                 return None
 
             op, expr = next(iter(accumulator.items()))
+            quoted_alias = f'"{field.replace(chr(34), chr(34) * 2)}"'
 
             if op == "$count":
-                select_expressions.append(f"COUNT(*) AS {field}")
+                select_expressions.append(f"COUNT(*) AS {quoted_alias}")
                 output_fields.append(field)
                 continue
 
@@ -429,7 +433,7 @@ class SqlAggregationMixin:
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
                 select_expressions.append(
-                    f"json_group_array({self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
+                    f"json_group_array({self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {quoted_alias}"
                 )
                 output_fields.append(field)
                 continue
@@ -440,14 +444,14 @@ class SqlAggregationMixin:
                     return None  # Fallback for complex accumulator expressions
                 field_name = expr[1:]
                 select_expressions.append(
-                    f"json_group_array(DISTINCT {self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS \"{field}\""
+                    f"json_group_array(DISTINCT {self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {quoted_alias}"
                 )
                 output_fields.append(field)
                 continue
 
             # Handle special case for $sum with integer literal 1 (count operation)
             if op == "$sum" and isinstance(expr, int) and expr == 1:
-                select_expressions.append(f"COUNT(*) AS {field}")
+                select_expressions.append(f"COUNT(*) AS {quoted_alias}")
                 output_fields.append(field)
                 continue
 
@@ -467,7 +471,7 @@ class SqlAggregationMixin:
                 return None  # Unsupported accumulator
 
             select_expressions.append(
-                f"{sql_func}({self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {field}"
+                f"{sql_func}({self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(field_name)}')) AS {quoted_alias}"
             )
             output_fields.append(field)
 

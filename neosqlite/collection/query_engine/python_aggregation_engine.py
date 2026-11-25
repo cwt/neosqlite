@@ -19,6 +19,7 @@ from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 from ...exceptions import MalformedQueryException
+from ...sql_utils import quote_table_name
 from ..cursor import DESCENDING
 from ..expr_evaluator import (
     ExprEvaluator,
@@ -685,9 +686,13 @@ def execute_python_aggregation(
             case "$sample":
                 sample_spec = stage["$sample"]
                 sample_size = sample_spec["size"]
-                if sample_size < 0:
+                if (
+                    not isinstance(sample_size, int)
+                    or isinstance(sample_size, bool)
+                    or sample_size < 0
+                ):
                     raise MalformedQueryException(
-                        "$sample size must be non-negative"
+                        "$sample size must be a non-negative integer"
                     )
                 docs_with_context = random.sample(
                     docs_with_context,
@@ -740,7 +745,7 @@ def execute_python_aggregation(
                         # Clean up temp table after loading
                         try:
                             query_engine.collection.db.execute(
-                                f"DROP TABLE IF EXISTS {table_name}"
+                                f"DROP TABLE IF EXISTS {quote_table_name(table_name)}"
                             )
                         except Exception as e:
                             logger.debug(
@@ -842,6 +847,13 @@ def execute_python_aggregation(
                 output_spec = bucket_auto_spec.get(
                     "output", {"count": {"$sum": 1}}
                 )
+
+                if not isinstance(num_buckets, int) or isinstance(
+                    num_buckets, bool
+                ):
+                    raise MalformedQueryException(
+                        "$bucketAuto buckets must be an integer"
+                    )
 
                 if not group_by or num_buckets <= 0:
                     docs_with_context = []
@@ -1383,7 +1395,6 @@ def execute_python_aggregation(
 
                     docs_with_context = new_docs_with_context
             case "$collStats":
-                from ...sql_utils import quote_table_name
                 from ..query_helper.utils import get_force_fallback
 
                 coll_stats_spec = (

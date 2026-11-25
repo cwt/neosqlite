@@ -56,8 +56,8 @@ def test_parse_json_path_special_id():
 def test_parse_json_path_malformed_bracket():
     """Test handling of malformed array index (no closing bracket)."""
     result = parse_json_path("field[no_closing")
-    # The function should treat the bracket as a literal character when no closing bracket exists
-    assert result == "$.field[no_closing"
+    # Unmatched brackets must be double-quoted as a key segment for SQLite
+    assert result == '$."field[no_closing"'
 
 
 def test_parse_json_path_empty_string():
@@ -146,9 +146,9 @@ def test_consistency_between_functions():
 
 def test_edge_case_bracket_handling():
     """Test edge cases related to bracket handling."""
-    # Test multiple consecutive brackets (edge case)
-    result = parse_json_path("field[[0]]")  # nested brackets
-    assert result == "$.field[[0]]"
+    # Test multiple consecutive brackets (malformed array index quoted as literal key)
+    result = parse_json_path("field[[0]]")
+    assert result == '$."field[[0]]"'
 
     # Test bracket followed by dot
     result = parse_json_path("field[0].next")
@@ -160,4 +160,4 @@ def test_edge_case_bracket_handling():
 
     # Test malformed: multiple opening brackets without closing
     result = parse_json_path("field[[no_close")
-    assert result == "$.field[[no_close"
+    assert result == '$."field[[no_close"'

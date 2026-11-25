@@ -332,10 +332,20 @@ class TemporaryTableAggregationProcessor(OperatorsMixin):
                     case "$sample":
                         sample_spec = stage["$sample"]
                         sample_size = sample_spec["size"]
+                        if (
+                            not isinstance(sample_size, int)
+                            or isinstance(sample_size, bool)
+                            or sample_size < 0
+                        ):
+                            raise ValueError(
+                                "The $sample size must be a non-negative integer, "
+                                f"got {sample_size}"
+                            )
                         sample_stage = {"$sample": sample_spec}
                         new_table = create_temp(
                             sample_stage,
-                            f"SELECT * FROM {current_table} ORDER BY RANDOM() LIMIT {sample_size}",
+                            f"SELECT * FROM {current_table} ORDER BY RANDOM() LIMIT ?",
+                            params=[sample_size],
                         )
                         current_table = new_table
                         i += 1

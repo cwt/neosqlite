@@ -631,7 +631,9 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 ):
                     # Use FTS5 bm25() function for relevance scoring
                     bm25_score = self._generate_text_score_sql()
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"'{field.replace(chr(39), chr(39) * 2)}'"
+                    )
                     json_parts.append(bm25_score)
                 else:
                     # Expression projection: use ExprEvaluator
@@ -648,7 +650,9 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                             f"Expression {value} not supported in SQL tier"
                         )
                     all_params.extend(expr_params)
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"'{field.replace(chr(39), chr(39) * 2)}'"
+                    )
                     json_parts.append(expr_sql)
 
             elif value == "$$ROOT":
@@ -657,7 +661,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
                 )
             elif value == "$$CURRENT":
                 json_set_func = self.jsonb.function("set")
-                json_parts.append(f"'{field}'")
+                json_parts.append(f"'{field.replace(chr(39), chr(39) * 2)}'")
                 json_parts.append(
                     f"json(CASE WHEN json_type(data, '$._id') IS NOT NULL "
                     f"OR _id IS NULL THEN data "
@@ -666,11 +670,12 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
             elif isinstance(value, str) and value.startswith("$"):
                 # Field reference: "$some.path"
                 source_field = value[1:]
+                escaped_field = field.replace("'", "''")
                 if source_field == "_id":
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(f"'{escaped_field}'")
                     json_parts.append("_id")
                 else:
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(f"'{escaped_field}'")
                     json_parts.append(
                         f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
                     )
@@ -681,7 +686,7 @@ class OperatorsSortProjMixin(OperatorsBaseMixin):
 
             elif value == 1:
                 # Simple inclusion: copy field from data
-                json_parts.append(f"'{field}'")
+                json_parts.append(f"'{field.replace(chr(39), chr(39) * 2)}'")
                 json_parts.append(
                     f"{json_extract_func}(data, '{parse_json_path(field)}')"
                 )

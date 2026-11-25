@@ -136,7 +136,8 @@ class TestStringOperatorsPython:
         expr = {"$split": ["$text", ","]}
         sql, params = evaluator._evaluate_sql_tier1(expr)
         assert sql is not None
-        assert "replace" in sql.lower()
+        assert "json_group_array" in sql.lower()
+        assert params == [","]
 
     def test_replaceAll_operator(self):
         """Test $replaceAll operator."""

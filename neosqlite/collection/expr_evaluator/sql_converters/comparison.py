@@ -248,7 +248,7 @@ class ComparisonMixin(BaseSqlMixin):
                     and op_val.startswith("$")
                     and not op_val.startswith("$$")
                 ):
-                    path = f"'{parse_json_path(op_val[1:])}.\"$date\"'"
+                    path = f"'{parse_json_path(op_val[1:], preserve_id=False)}.\"$date\"'"
                     iso = f"{prefix}({self.data_column}, {path})"
                     return f"strftime('%Y-%m-%dT%H:%M:%fZ', {iso})", []
                 if any(

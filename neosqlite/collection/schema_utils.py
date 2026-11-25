@@ -98,12 +98,17 @@ def create_unique_index_on_id(
     Returns:
         bool: ``True`` if the statement succeeded, ``False`` on error.
     """
-    from ..sql_utils import quote_identifier, quote_table_name
+    from ..sql_utils import (
+        quote_identifier,
+        quote_table_name,
+        validate_identifier,
+    )
 
     try:
+        idx_name = quote_identifier(f"idx_{validate_identifier(table_name)}_id")
         db_connection.execute(
             f"CREATE UNIQUE INDEX IF NOT EXISTS "
-            f"idx_{quote_identifier(table_name)}_id "
+            f"{idx_name} "
             f"ON {quote_table_name(table_name)}(_id)"
         )
         return True

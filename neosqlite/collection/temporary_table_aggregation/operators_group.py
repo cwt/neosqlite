@@ -140,7 +140,19 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 )
 
         # $first/$last accumulators are materialized via a ranked CTE
-        self._first_last_fields: list[tuple[str, bool, str, bool]] = []
+        self._first_last_fields: list[tuple[str, str, bool, str, bool]] = []
+        # Map (output_doc_field, internal_sql_alias) to avoid illegal or
+        # reserved-word column aliases in the inner grouped SELECT.
+        self._group_output_aliases: list[tuple[str, str]] = [("_id", "_id")]
+        next_alias_idx = 0
+
+        def _alloc_alias(doc_field: str) -> str:
+            """Allocate a safe internal SQL column alias for a $group field."""
+            nonlocal next_alias_idx
+            sql_alias = f"__acc_{next_alias_idx}"
+            next_alias_idx += 1
+            self._group_output_aliases.append((doc_field, sql_alias))
+            return sql_alias
 
         def _format_literal_sql(val: Any) -> str:
             """Format a Python literal value as an inline SQL expression.
@@ -170,6 +182,58 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 )
                 return f"json('{json_str}')"
             return f"'{val}'"
+
+        def _build_template_object_sql(
+            template: dict[str, Any], op_name: str
+        ) -> str:
+            """Build a JSON object SQL expression for a $push/$addToSet dict."""
+            json_extract = f"{self.jsonb.json_function_prefix}_extract"
+            json_object_func = f"{self.jsonb.json_function_prefix}_object"
+            obj_args: list[str] = []
+            for key, val in template.items():
+                escaped_key = key.replace("'", "''")
+                if isinstance(val, str) and val in ("$$ROOT", "$$CURRENT"):
+                    obj_args.append(f"'{escaped_key}', json(data)")
+                elif isinstance(val, str) and val.startswith("$$ROOT."):
+                    obj_args.append(
+                        f"'{escaped_key}', {json_extract}(data, '{parse_json_path(val[7:])}')"
+                    )
+                elif isinstance(val, str) and val.startswith("$$CURRENT."):
+                    obj_args.append(
+                        f"'{escaped_key}', {json_extract}(data, '{parse_json_path(val[10:])}')"
+                    )
+                elif isinstance(val, str) and val.startswith("$"):
+                    field_name = val[1:]
+                    if field_name == "_id":
+                        obj_args.append(f"'{escaped_key}', _id")
+                    else:
+                        obj_args.append(
+                            f"'{escaped_key}', {json_extract}(data, '{parse_json_path(field_name)}')"
+                        )
+                elif isinstance(val, (int, float, str, bool, dict, list)) or (
+                    val is None
+                ):
+                    if isinstance(val, str):
+                        escaped_val = val.replace("'", "''")
+                        obj_args.append(
+                            f"'{escaped_key}', json_quote('{escaped_val}')"
+                        )
+                    elif isinstance(val, (dict, list)):
+                        json_str = json.dumps(
+                            val, separators=(",", ":")
+                        ).replace("'", "''")
+                        obj_args.append(f"'{escaped_key}', json('{json_str}')")
+                    elif val is None:
+                        obj_args.append(f"'{escaped_key}', NULL")
+                    elif isinstance(val, bool):
+                        obj_args.append(f"'{escaped_key}', {1 if val else 0}")
+                    else:
+                        obj_args.append(f"'{escaped_key}', {val}")
+                else:
+                    raise NotImplementedError(
+                        f"{op_name} with complex expression {template} not supported in SQL tier"
+                    )
+            return f"{json_object_func}({', '.join(obj_args)})"
 
         # Handle accumulators
         for field, accumulator in group_spec.items():
@@ -238,12 +302,13 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
 
             match op:
                 case "$sum" | "$avg" | "$min" | "$max":
+                    sql_alias = _alloc_alias(field)
                     sql_func = op[1:].upper()
                     if op == "$sum" and is_literal and literal_value == 1:
-                        select_parts.append(f"COUNT(*) AS {field}")
+                        select_parts.append(f"COUNT(*) AS {sql_alias}")
                     elif is_literal:
                         select_parts.append(
-                            f"{sql_func}({_format_literal_sql(literal_value)}) AS {field}"
+                            f"{sql_func}({_format_literal_sql(literal_value)}) AS {sql_alias}"
                         )
                     elif expr_field:
                         val_expr = (
@@ -252,11 +317,11 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                             else f"{json_extract}(data, '{parse_json_path(expr_field)}')"
                         )
                         select_parts.append(
-                            f"{sql_func}({val_expr}) AS {field}"
+                            f"{sql_func}({val_expr}) AS {sql_alias}"
                         )
                     elif expr_sql is not None:
                         select_parts.append(
-                            f"{sql_func}({expr_sql}) AS {field}"
+                            f"{sql_func}({expr_sql}) AS {sql_alias}"
                         )
                         select_params.extend(expr_params)
                     else:
@@ -265,12 +330,14 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         )
 
                 case "$count":
-                    select_parts.append(f"COUNT(*) AS {field}")
+                    sql_alias = _alloc_alias(field)
+                    select_parts.append(f"COUNT(*) AS {sql_alias}")
 
                 case "$first" | "$last":
+                    sql_alias = _alloc_alias(field)
                     if is_literal:
                         select_parts.append(
-                            f"{_format_literal_sql(literal_value)} AS {field}"
+                            f"{_format_literal_sql(literal_value)} AS {sql_alias}"
                         )
                     elif expr_field:
                         if expr_field in ("$$ROOT", "$$CURRENT"):
@@ -278,6 +345,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         self._first_last_fields.append(
                             (
                                 field,
+                                sql_alias,
                                 op == "$last",
                                 expr_field,
                                 False,
@@ -287,6 +355,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                         self._first_last_fields.append(
                             (
                                 field,
+                                sql_alias,
                                 op == "$last",
                                 expr_sql,
                                 True,
@@ -301,195 +370,73 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 case "$addToSet":
                     # Use json_group_array with DISTINCT
                     # Track this field for post-processing
+                    sql_alias = _alloc_alias(field)
                     array_fields.append(field)
 
                     if expr_sql is not None:
                         select_parts.append(
-                            f"{json_group_array}(DISTINCT {expr_sql}) AS {field}"
+                            f"{json_group_array}(DISTINCT {expr_sql}) AS {sql_alias}"
                         )
                         select_params.extend(expr_params)
                     # Check if expr is a subdocument template
                     elif isinstance(expr, dict):
-                        # Build json_object for the expression (same as $push)
-                        json_object_func = (
-                            f"{self.jsonb.json_function_prefix}_object"
+                        template_sql = _build_template_object_sql(
+                            expr, "$addToSet"
                         )
-                        obj_args = []
-                        for key, val in expr.items():
-                            if isinstance(val, str) and val in (
-                                "$$ROOT",
-                                "$$CURRENT",
-                            ):
-                                obj_args.append(f"'{key}', json(data)")
-                            elif isinstance(val, str) and val.startswith(
-                                "$$ROOT."
-                            ):
-                                obj_args.append(
-                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[7:])}')"
-                                )
-                            elif isinstance(val, str) and val.startswith(
-                                "$$CURRENT."
-                            ):
-                                obj_args.append(
-                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[10:])}')"
-                                )
-                            elif isinstance(val, str) and val.startswith("$"):
-                                field_name = val[1:]
-                                if field_name == "_id":
-                                    obj_args.append(f"'{key}', _id")
-                                else:
-                                    obj_args.append(
-                                        f"'{key}', {json_extract}(data, '{parse_json_path(field_name)}')"
-                                    )
-                            elif (
-                                isinstance(
-                                    val, (int, float, str, bool, dict, list)
-                                )
-                                or val is None
-                            ):
-                                if isinstance(val, str):
-                                    escaped_val = val.replace("'", "''")
-                                    obj_args.append(
-                                        f"'{key}', json_quote('{escaped_val}')"
-                                    )
-                                elif isinstance(val, (dict, list)):
-                                    json_str = json.dumps(
-                                        val, separators=(",", ":")
-                                    ).replace("'", "''")
-                                    obj_args.append(
-                                        f"'{key}', json('{json_str}')"
-                                    )
-                                elif val is None:
-                                    obj_args.append(f"'{key}', NULL")
-                                elif isinstance(val, bool):
-                                    obj_args.append(
-                                        f"'{key}', {1 if val else 0}"
-                                    )
-                                else:
-                                    obj_args.append(f"'{key}', {val}")
-                            else:
-                                raise NotImplementedError(
-                                    f"$addToSet with complex expression {expr} not supported in SQL tier"
-                                )
-
                         select_parts.append(
-                            f"{json_group_array}(DISTINCT {json_object_func}({', '.join(obj_args)})) AS {field}"
+                            f"{json_group_array}(DISTINCT {template_sql}) AS {sql_alias}"
                         )
                     elif is_literal:
                         select_parts.append(
-                            f"{json_group_array}(DISTINCT {_format_literal_sql(literal_value)}) AS {field}"
+                            f"{json_group_array}(DISTINCT {_format_literal_sql(literal_value)}) AS {sql_alias}"
                         )
                     elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT _id) AS {field}"
+                                f"{json_group_array}(DISTINCT _id) AS {sql_alias}"
                             )
                         elif expr_field in ("$$ROOT", "$$CURRENT"):
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT json(data)) AS {field}"
+                                f"{json_group_array}(DISTINCT json(data)) AS {sql_alias}"
                             )
                         else:
                             select_parts.append(
-                                f"{json_group_array}(DISTINCT {json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
+                                f"{json_group_array}(DISTINCT {json_extract}(data, '{parse_json_path(expr_field)}')) AS {sql_alias}"
                             )
 
                 case "$push":
                     # Use json_group_array
                     # Track this field for post-processing
+                    sql_alias = _alloc_alias(field)
                     array_fields.append(field)
 
                     if expr_sql is not None:
                         select_parts.append(
-                            f"{json_group_array}({expr_sql}) AS {field}"
+                            f"{json_group_array}({expr_sql}) AS {sql_alias}"
                         )
                         select_params.extend(expr_params)
                     # Check if expr is a dict expression (e.g., {'title': '$title', 'author': '$author'})
                     elif isinstance(expr, dict):
-                        # Build json_object for the expression
-                        json_object_func = (
-                            f"{self.jsonb.json_function_prefix}_object"
-                        )
-                        obj_args = []
-                        for key, val in expr.items():
-                            if isinstance(val, str) and val in (
-                                "$$ROOT",
-                                "$$CURRENT",
-                            ):
-                                obj_args.append(f"'{key}', json(data)")
-                            elif isinstance(val, str) and val.startswith(
-                                "$$ROOT."
-                            ):
-                                obj_args.append(
-                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[7:])}')"
-                                )
-                            elif isinstance(val, str) and val.startswith(
-                                "$$CURRENT."
-                            ):
-                                obj_args.append(
-                                    f"'{key}', {json_extract}(data, '{parse_json_path(val[10:])}')"
-                                )
-                            elif isinstance(val, str) and val.startswith("$"):
-                                field_name = val[1:]
-                                if field_name == "_id":
-                                    obj_args.append(f"'{key}', _id")
-                                else:
-                                    obj_args.append(
-                                        f"'{key}', {json_extract}(data, '{parse_json_path(field_name)}')"
-                                    )
-                            elif (
-                                isinstance(
-                                    val, (int, float, str, bool, dict, list)
-                                )
-                                or val is None
-                            ):
-                                # Literal value - inline directly (CREATE TABLE AS SELECT doesn't support params)
-                                if isinstance(val, str):
-                                    # Escape single quotes for SQL
-                                    escaped_val = val.replace("'", "''")
-                                    obj_args.append(
-                                        f"'{key}', json_quote('{escaped_val}')"
-                                    )
-                                elif isinstance(val, (dict, list)):
-                                    json_str = json.dumps(
-                                        val, separators=(",", ":")
-                                    ).replace("'", "''")
-                                    obj_args.append(
-                                        f"'{key}', json('{json_str}')"
-                                    )
-                                elif val is None:
-                                    obj_args.append(f"'{key}', NULL")
-                                elif isinstance(val, bool):
-                                    obj_args.append(
-                                        f"'{key}', {1 if val else 0}"
-                                    )
-                                else:
-                                    obj_args.append(f"'{key}', {val}")
-                            else:
-                                raise NotImplementedError(
-                                    f"$push with complex expression {expr} not supported in SQL tier"
-                                )
-
+                        template_sql = _build_template_object_sql(expr, "$push")
                         select_parts.append(
-                            f"{json_group_array}({json_object_func}({', '.join(obj_args)})) AS {field}"
+                            f"{json_group_array}({template_sql}) AS {sql_alias}"
                         )
-                        # Store literal values as params (though they can't be used in CREATE TABLE AS SELECT)
-                        # For now, we inline literal values
                     elif is_literal:
                         select_parts.append(
-                            f"{json_group_array}({_format_literal_sql(literal_value)}) AS {field}"
+                            f"{json_group_array}({_format_literal_sql(literal_value)}) AS {sql_alias}"
                         )
                     elif expr_field:
                         if expr_field == "_id":
                             select_parts.append(
-                                f"{json_group_array}(_id) AS {field}"
+                                f"{json_group_array}(_id) AS {sql_alias}"
                             )
                         elif expr_field in ("$$ROOT", "$$CURRENT"):
                             select_parts.append(
-                                f"{json_group_array}(json(data)) AS {field}"
+                                f"{json_group_array}(json(data)) AS {sql_alias}"
                             )
                         else:
                             select_parts.append(
-                                f"{json_group_array}({json_extract}(data, '{parse_json_path(expr_field)}')) AS {field}"
+                                f"{json_group_array}({json_extract}(data, '{parse_json_path(expr_field)}')) AS {sql_alias}"
                             )
 
                 case _:
@@ -509,16 +456,16 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # For grouped results, we need to properly construct the output
         # The _id field should be the group key, and other fields are accumulators
         # We'll create a JSON object with all the fields
-        aliases = self._select_aliases(select_parts)
         json_args = ", ".join(
             (
-                f"'{alias}', CASE WHEN json_valid({alias}) THEN "
-                f"CASE WHEN json_type({alias}) IN ('array', 'object') "
-                f"THEN json({alias}) ELSE {alias} END ELSE {alias} END"
-                if alias == "_id" or alias in array_fields
-                else f"'{alias}', {alias}"
+                f"'{doc_key.replace(chr(39), chr(39) * 2)}', "
+                f"CASE WHEN json_valid({sql_alias}) THEN "
+                f"CASE WHEN json_type({sql_alias}) IN ('array', 'object') "
+                f"THEN json({sql_alias}) ELSE {sql_alias} END ELSE {sql_alias} END"
+                if doc_key == "_id" or doc_key in array_fields
+                else f"'{doc_key.replace(chr(39), chr(39) * 2)}', {sql_alias}"
             )
-            for alias in aliases
+            for doc_key, sql_alias in self._group_output_aliases
         )
         json_object_func = f"{self.jsonb.json_function_prefix}_object"
         # Wrap with json() to ensure text output for Python consumption
@@ -654,7 +601,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 agg_parts.append("__neosqlite_gk AS _id")
             else:
                 agg_parts.append(part)
-        for field, is_last, expr_val, is_sql in self._first_last_fields:
+        for _, sql_alias, is_last, expr_val, is_sql in self._first_last_fields:
             if is_sql:
                 value_sql = expr_val
             elif expr_val == "_id":
@@ -669,7 +616,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 value_sql = f"json_extract(data, '{parse_json_path(expr_val)}')"
             flag = "rd" if is_last else "rn"
             agg_parts.append(
-                f"MAX(CASE WHEN {flag} = 1 THEN {value_sql} END) AS {field}"
+                f"MAX(CASE WHEN {flag} = 1 THEN {value_sql} END) AS {sql_alias}"
             )
 
         inner = f"SELECT {', '.join(agg_parts)} FROM ranked"
@@ -681,24 +628,28 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             # Constant-key aggregate: guard the phantom single row (#104)
             outer_from += " WHERE (SELECT COUNT(*) FROM ranked) > 0"
 
-        aliases = self._select_aliases(select_parts) + [
-            f for f, _, _, _ in self._first_last_fields
+        aliases = getattr(self, "_group_output_aliases", None) or [
+            (a, a)
+            for a in self._select_aliases(select_parts)
+            + [f for f, _, _, _, _ in self._first_last_fields]
         ]
         if self.jsonb.jsonb_supported:
             local_json_args = ", ".join(
-                f"'{a}', CASE WHEN typeof({a}) = 'blob' AND json_valid({a}, 4) "
-                f"THEN json({a}) "
-                f"WHEN typeof({a}) = 'text' AND json_valid({a}) "
-                f"AND json_type({a}) IN ('array', 'object') THEN json({a}) "
-                f"ELSE {a} END"
-                for a in aliases
+                f"'{doc_key.replace(chr(39), chr(39) * 2)}', "
+                f"CASE WHEN typeof({sql_alias}) = 'blob' AND json_valid({sql_alias}, 4) "
+                f"THEN json({sql_alias}) "
+                f"WHEN typeof({sql_alias}) = 'text' AND json_valid({sql_alias}) "
+                f"AND json_type({sql_alias}) IN ('array', 'object') THEN json({sql_alias}) "
+                f"ELSE {sql_alias} END"
+                for doc_key, sql_alias in aliases
             )
         else:
             local_json_args = ", ".join(
-                f"'{a}', CASE WHEN typeof({a}) = 'text' AND json_valid({a}) "
-                f"AND json_type({a}) IN ('array', 'object') THEN json({a}) "
-                f"ELSE {a} END"
-                for a in aliases
+                f"'{doc_key.replace(chr(39), chr(39) * 2)}', "
+                f"CASE WHEN typeof({sql_alias}) = 'text' AND json_valid({sql_alias}) "
+                f"AND json_type({sql_alias}) IN ('array', 'object') THEN json({sql_alias}) "
+                f"ELSE {sql_alias} END"
+                for doc_key, sql_alias in aliases
             )
 
         query = (
@@ -819,10 +770,10 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         if not is_standard_table:
             # Non-standard table - return rows as dictionaries with column names as keys
             select_clause = ", ".join(
-                quote_table_name(col) for col in column_names
+                f'"{col.replace(chr(34), chr(34) * 2)}"' for col in column_names
             )
             cursor = self.db.execute(
-                f"SELECT {select_clause} FROM {table_name}"
+                f"SELECT {select_clause} FROM {quote_table_name(table_name)}"
             )
             results = []
             while True:
@@ -987,61 +938,65 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # Sort boundaries
         sorted_boundaries = sorted(boundaries)
 
-        # Build CASE expression for bucketing
+        # Build CASE expression for bucketing using bound parameters
         # MongoDB uses the lower boundary as the _id value
         case_parts = []
+        bucket_params: list[Any] = []
         for lower, upper in pairwise(sorted_boundaries):
             case_parts.append(
-                f"WHEN {self._build_group_by_expr(group_by)} >= {lower} AND {self._build_group_by_expr(group_by)} < {upper} THEN {lower}"
+                "WHEN __bucket_val >= ? AND __bucket_val < ? THEN ?"
             )
+            bucket_params.extend([lower, upper, lower])
         # Default case - use the default label
         if default_label is None:
             case_parts.append("ELSE NULL")
-        elif isinstance(default_label, (int, float)):
-            case_parts.append(f"ELSE {default_label}")
         else:
-            escaped = str(default_label).replace("'", "''")
-            case_parts.append(f"ELSE '{escaped}'")
+            case_parts.append("ELSE ?")
+            bucket_params.append(default_label)
 
         case_expr = "CASE " + " ".join(case_parts) + " END"
 
         # Build output expressions
-        output_fields = []
-        output_fields.append(f"{case_expr} AS _id")
+        output_fields = ["__bucket_id AS _id"]
 
         for field_name, accumulator in output_spec.items():
+            quoted_alias = f'"{field_name.replace(chr(34), chr(34) * 2)}"'
             match accumulator:
                 case {"$sum": sum_expr}:
-                    output_fields.append(f"SUM({sum_expr}) AS {field_name}")
+                    output_fields.append(f"SUM({sum_expr}) AS {quoted_alias}")
                 case {"$avg": avg_expr}:
-                    output_fields.append(f"AVG({avg_expr}) AS {field_name}")
+                    output_fields.append(f"AVG({avg_expr}) AS {quoted_alias}")
                 case {"$count": _}:
-                    output_fields.append(f"COUNT(*) AS {field_name}")
+                    output_fields.append(f"COUNT(*) AS {quoted_alias}")
                 case {"$min": min_expr}:
-                    output_fields.append(f"MIN({min_expr}) AS {field_name}")
+                    output_fields.append(f"MIN({min_expr}) AS {quoted_alias}")
                 case {"$max": max_expr}:
-                    output_fields.append(f"MAX({max_expr}) AS {field_name}")
+                    output_fields.append(f"MAX({max_expr}) AS {quoted_alias}")
                 case {"$first": first_expr}:
-                    output_fields.append(f"MIN({first_expr}) AS {field_name}")
+                    output_fields.append(f"MIN({first_expr}) AS {quoted_alias}")
                 case {"$last": last_expr}:
-                    output_fields.append(f"MAX({last_expr}) AS {field_name}")
+                    output_fields.append(f"MAX({last_expr}) AS {quoted_alias}")
                 case {"$push": push_expr}:
                     # Use json_group_array for push
                     json_group_func = self.jsonb.json_group_array_function
                     output_fields.append(
-                        f"{json_group_func}({push_expr}) AS {field_name}"
+                        f"{json_group_func}({push_expr}) AS {quoted_alias}"
                     )
                 case _:
                     # Default to count
-                    output_fields.append(f"COUNT(*) AS {field_name}")
+                    output_fields.append(f"COUNT(*) AS {quoted_alias}")
 
         select_clause = ", ".join(output_fields)
+        group_by_expr = self._build_group_by_expr(group_by)
 
-        # Note: We must repeat the CASE expression in GROUP BY because SQLite
-        # doesn't allow column aliases in GROUP BY clause
+        inner_bucket_sql = (
+            f"SELECT *, {case_expr} AS __bucket_id FROM "
+            f"(SELECT *, {group_by_expr} AS __bucket_val FROM {current_table})"
+        )
         new_table = create_temp(
             {"$bucket": bucket_spec},
-            f"SELECT {select_clause} FROM {current_table} GROUP BY {case_expr} ORDER BY _id",
+            f"SELECT {select_clause} FROM ({inner_bucket_sql}) GROUP BY __bucket_id ORDER BY _id",
+            params=bucket_params or None,
         )
 
         return new_table
@@ -1089,12 +1044,25 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
             str: Name of the newly created temporary table, or
                 ``current_table`` unchanged if ``groupBy`` is missing or
                 ``buckets <= 0``.
+
+        Raises:
+            ValueError: If ``buckets`` is not a positive non-boolean integer.
         """
         group_by = bucket_auto_spec.get("groupBy")
         num_buckets = bucket_auto_spec.get("buckets", 10)
         output_spec = bucket_auto_spec.get("output", {"count": {"$sum": 1}})
 
-        if not group_by or num_buckets <= 0:
+        if (
+            not isinstance(num_buckets, int)
+            or isinstance(num_buckets, bool)
+            or num_buckets <= 0
+        ):
+            raise ValueError(
+                "The $bucketAuto 'buckets' option must be a positive integer, "
+                f"got {num_buckets!r}"
+            )
+
+        if not group_by:
             return current_table
 
         # For bucketAuto, we need to calculate min/max and divide into buckets
@@ -1111,27 +1079,28 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         # MongoDB returns _id as {min: <value>, max: <value>}
         agg_fields = []
         for field_name, accumulator in output_spec.items():
+            quoted_alias = f'"{field_name.replace(chr(34), chr(34) * 2)}"'
             match accumulator:
                 case {"$sum": 1}:
                     # Special case: $sum: 1 is a count
-                    agg_fields.append(f"COUNT(*) AS {field_name}")
+                    agg_fields.append(f"COUNT(*) AS {quoted_alias}")
                 case {"$sum": _}:
-                    agg_fields.append(f"SUM(s.val) AS {field_name}")
+                    agg_fields.append(f"SUM(s.val) AS {quoted_alias}")
                 case {"$avg": _}:
-                    agg_fields.append(f"AVG(s.val) AS {field_name}")
+                    agg_fields.append(f"AVG(s.val) AS {quoted_alias}")
                 case {"$count": _}:
-                    agg_fields.append(f"COUNT(*) AS {field_name}")
+                    agg_fields.append(f"COUNT(*) AS {quoted_alias}")
                 case {"$min": _}:
-                    agg_fields.append(f"MIN(s.val) AS {field_name}")
+                    agg_fields.append(f"MIN(s.val) AS {quoted_alias}")
                 case {"$max": _}:
-                    agg_fields.append(f"MAX(s.val) AS {field_name}")
+                    agg_fields.append(f"MAX(s.val) AS {quoted_alias}")
                 case _:
-                    agg_fields.append(f"COUNT(*) AS {field_name}")
+                    agg_fields.append(f"COUNT(*) AS {quoted_alias}")
 
         # Create subquery with NTILE bucketing
         subquery = f"""
             SELECT
-                NTILE({num_buckets}) OVER (ORDER BY {json_extract}(data, '{json_path}')) AS bucket,
+                NTILE(?) OVER (ORDER BY {json_extract}(data, '{json_path}')) AS bucket,
                 CAST({json_extract}(data, '{json_path}') AS REAL) AS val
             FROM {current_table}
         """
@@ -1146,6 +1115,7 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
         new_table = create_temp(
             {"$bucketAuto": bucket_auto_spec},
             f"SELECT {select_clause} FROM ({subquery}) s GROUP BY bucket ORDER BY MIN(s.val)",
+            params=[num_buckets],
         )
 
         return new_table

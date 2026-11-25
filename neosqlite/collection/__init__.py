@@ -20,7 +20,7 @@ from ..results import (
     InsertOneResult,
     UpdateResult,
 )
-from ..sql_utils import quote_table_name
+from ..sql_utils import quote_table_name, validate_identifier
 from .aggregation_cursor import AggregationCursor
 from .cursor import Cursor
 from .index_manager import IndexManager
@@ -428,7 +428,7 @@ class Collection:
             AttributeError: If ``name`` is not ``"files"`` or ``"chunks"``.
         """
         if name in ("files", "chunks"):
-            full_name = f"{quote_table_name(self.name)}_{name}"
+            full_name = f"{validate_identifier(self.name)}_{name}"
             return Collection(self.db, full_name, database=self._database)
         raise AttributeError(
             f"'{self.__class__.__name__}' object has no attribute '{name}'"
@@ -751,9 +751,7 @@ class Collection:
         elif self.name.endswith("_chunks"):
             bucket_name = self.name.removesuffix("_chunks")
         else:
-            raise RuntimeError(
-                f"Invalid GridFS collection name: {quote_table_name(self.name)}"
-            )
+            raise RuntimeError(f"Invalid GridFS collection name: {self.name}")
         return GridFSBucket(self.db, bucket_name=bucket_name)
 
     def _delete_one_as_gridfs(self, filter: dict[str, Any]):
@@ -1935,7 +1933,7 @@ class Collection:
             memory.my_collection
         """
         if self._database and hasattr(self._database, "name"):
-            return f"{self._database.name}.{quote_table_name(self.name)}"
+            return f"{self._database.name}.{self.name}"
         return self.name
 
     def with_options(

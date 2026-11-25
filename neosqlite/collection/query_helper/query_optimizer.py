@@ -6,7 +6,7 @@ index analysis, and pipeline optimization.
 
 from typing import TYPE_CHECKING, Any
 
-from ...sql_utils import quote_table_name
+from ...sql_utils import validate_identifier
 from ..index_manager import _load_index_keys
 
 if TYPE_CHECKING:
@@ -35,15 +35,24 @@ class QueryOptimizerMixin:
         Returns:
             list[str]: Field names that have indexes on this collection.
         """
-        # Get indexes that match our naming convention
-        cmd = (
-            "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE ?"
+        # Get indexes that match our naming convention on this table
+        coll_name = validate_identifier(self.collection.name)
+        escaped_name = (
+            coll_name.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
         )
-        like_pattern = f"idx_{quote_table_name(self.collection.name)}_%"
-        indexes = self.collection.db.execute(cmd, (like_pattern,)).fetchall()
+        cmd = (
+            "SELECT name FROM sqlite_master "
+            "WHERE type='index' AND tbl_name = ? AND name LIKE ? ESCAPE '\\'"
+        )
+        like_pattern = f"idx_{escaped_name}\\_%"
+        indexes = self.collection.db.execute(
+            cmd, (coll_name, like_pattern)
+        ).fetchall()
 
         indexed_fields = []
-        prefix_len = len(f"idx_{quote_table_name(self.collection.name)}_")
+        prefix_len = len(f"idx_{coll_name}_")
         for idx in indexes:
             index_name = idx[0]
             stored = _load_index_keys(self.collection.db, index_name)
@@ -312,7 +321,10 @@ class QueryOptimizerMixin:
         # Construct the expected index name for datetime indexes
         # Convert dots to underscores in field name
         field_name_for_index = field.replace(".", "_")
-        expected_datetime_index_name = f"idx_{quote_table_name(self.collection.name)}_{field_name_for_index}_utc"
+        coll_name = validate_identifier(self.collection.name)
+        expected_datetime_index_name = (
+            f"idx_{coll_name}_{field_name_for_index}_utc"
+        )
 
         # Query the SQLite master table to check if this specific index exists
         cursor = self.collection.db.execute(

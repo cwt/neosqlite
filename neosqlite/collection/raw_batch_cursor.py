@@ -246,7 +246,7 @@ class RawBatchCursor:
         for table in self._tables_to_cleanup:
             try:
                 self._collection._database.execute(
-                    f"DROP TABLE IF EXISTS {table}"
+                    f"DROP TABLE IF EXISTS {quote_table_name(table)}"
                 )
             except Exception as e:
                 logger.debug(

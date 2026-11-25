@@ -768,7 +768,9 @@ class StageBuildersMixin:
                     if expr_sql is None:
                         return None, []
                     all_params.extend(expr_params)
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"'{field.replace(chr(39), chr(39) * 2)}'"
+                    )
                     json_parts.append(expr_sql)
                     context.add_computed_field(field, expr_sql)
                 elif value in ("$$ROOT", "$$CURRENT"):
@@ -782,7 +784,9 @@ class StageBuildersMixin:
                         )
                         else "data"
                     )
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"'{field.replace(chr(39), chr(39) * 2)}'"
+                    )
                     json_parts.append(
                         f"json(CASE WHEN json_type({src_col}, '$._id') IS NOT NULL "
                         f"OR _id IS NULL THEN {src_col} "
@@ -790,11 +794,12 @@ class StageBuildersMixin:
                     )
                 elif isinstance(value, str) and value.startswith("$"):
                     source_field = value[1:]
+                    escaped_field = field.replace("'", "''")
                     if source_field == "_id":
-                        json_parts.append(f"'{field}'")
+                        json_parts.append(f"'{escaped_field}'")
                         json_parts.append("_id")
                     else:
-                        json_parts.append(f"'{field}'")
+                        json_parts.append(f"'{escaped_field}'")
                         json_parts.append(
                             f"{json_extract_func}(data, '{parse_json_path(source_field)}')"
                         )
@@ -803,7 +808,9 @@ class StageBuildersMixin:
                             f"THEN '{parse_json_path(field)}' ELSE '$.__none__' END"
                         )
                 elif value == 1:
-                    json_parts.append(f"'{field}'")
+                    json_parts.append(
+                        f"'{field.replace(chr(39), chr(39) * 2)}'"
+                    )
                     json_parts.append(
                         f"{json_extract_func}(data, '{parse_json_path(field)}')"
                     )
@@ -919,6 +926,10 @@ class StageBuildersMixin:
                 containing the sample size.
         """
         size = spec.get("size", 1)
+        if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+            raise ValueError(
+                f"The $sample size must be a non-negative integer, got {size}"
+            )
         select_parts = ["id", "_id", "data"]
         _append_root_column(select_parts, context, preserve_root)
         sql = f"SELECT {', '.join(select_parts)} FROM {prev_stage} ORDER BY RANDOM() LIMIT ?"
@@ -981,7 +992,7 @@ class StageBuildersMixin:
         # The bucket key alias must not collide with the input's own _id
         # column, so it is named __bucket_id and projected as _id outside.
         sub_parts = [f"{bucket_id_sql} AS __bucket_id"]
-        output_fields: list[str] = []
+        output_aliases: list[tuple[str, str]] = []
         array_fields: set[str] = set()
         for field, acc_spec in output.items():
             op, expr = next(iter(acc_spec.items()))
@@ -994,8 +1005,11 @@ class StageBuildersMixin:
             )
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
-            sub_parts.append(f"{sql_agg}({distinct_str}{expr_sql}) AS {field}")
-            output_fields.append(field)
+            sql_alias = f"__acc_{len(output_aliases)}"
+            sub_parts.append(
+                f"{sql_agg}({distinct_str}{expr_sql}) AS {sql_alias}"
+            )
+            output_aliases.append((field, sql_alias))
             if sql_agg == "json_group_array":
                 array_fields.add(field)
 
@@ -1003,11 +1017,11 @@ class StageBuildersMixin:
             ["'_id', __bucket_id"]
             + [
                 (
-                    f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"
-                    if f in array_fields
-                    else f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                    f"'{field.replace(chr(39), chr(39) * 2)}', json({alias})"
+                    if field in array_fields
+                    else f"'{field.replace(chr(39), chr(39) * 2)}', {alias}"
                 )
-                for f in output_fields
+                for field, alias in output_aliases
             ]
         )
 
@@ -1050,11 +1064,24 @@ class StageBuildersMixin:
         Returns:
             tuple[str | None, list[Any]]: SQL query and bound parameters, or
                 ``(None, [])`` when Python fallback is required.
+
+        Raises:
+            ValueError: If ``buckets`` is not a positive non-boolean integer.
         """
         group_by = spec.get("groupBy")
         buckets = spec.get("buckets", 10)
         output = spec.get("output", {"count": {"$sum": 1}})
         granularity = spec.get("granularity")
+
+        if (
+            not isinstance(buckets, int)
+            or isinstance(buckets, bool)
+            or buckets <= 0
+        ):
+            raise ValueError(
+                "The $bucketAuto 'buckets' option must be a positive integer, "
+                f"got {buckets!r}"
+            )
 
         if not group_by:
             return None, []
@@ -1063,11 +1090,9 @@ class StageBuildersMixin:
             return None, []
 
         agg_ctx = self._make_agg_context(context, preserve_root)
-        all_params = []
         key_sql, key_params = self.evaluator.build_select_expression(
             group_by, context=agg_ctx
         )
-        all_params.extend(key_params)
 
         min_max_sql = f"""
             SELECT
@@ -1082,8 +1107,9 @@ class StageBuildersMixin:
                 max_val,
                 CASE
                     WHEN max_val = min_val THEN 0
-                    ELSE (max_val - min_val) * 1.0 / {buckets}
-                END as bucket_width
+                    ELSE (max_val - min_val) * 1.0 / ?
+                END as bucket_width,
+                ? AS num_buckets
             FROM ({min_max_sql})
         """
 
@@ -1093,7 +1119,8 @@ class StageBuildersMixin:
             "MIN(val) AS __bmin",
             "MAX(val) AS __bmax",
         ]
-        output_fields: list[str] = []
+        grouped_params: list[Any] = []
+        output_aliases: list[tuple[str, str]] = []
         array_fields: set[str] = set()
         for field, acc_spec in output.items():
             op, expr = next(iter(acc_spec.items()))
@@ -1104,12 +1131,13 @@ class StageBuildersMixin:
             expr_sql, expr_params = self.evaluator.build_select_expression(
                 expr, context=agg_ctx
             )
-            all_params.extend(expr_params)
+            grouped_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
+            sql_alias = f"__acc_{len(output_aliases)}"
             grouped_parts.append(
-                f"{sql_agg}({distinct_str}{expr_sql}) AS {field}"
+                f"{sql_agg}({distinct_str}{expr_sql}) AS {sql_alias}"
             )
-            output_fields.append(field)
+            output_aliases.append((field, sql_alias))
             if sql_agg == "json_group_array":
                 array_fields.add(field)
 
@@ -1121,11 +1149,11 @@ class StageBuildersMixin:
             ["'_id', json_object('min', __bmin, 'max', __bmax)"]
             + [
                 (
-                    f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"
-                    if f in array_fields
-                    else f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                    f"'{field.replace(chr(39), chr(39) * 2)}', json({alias})"
+                    if field in array_fields
+                    else f"'{field.replace(chr(39), chr(39) * 2)}', {alias}"
                 )
-                for f in output_fields
+                for field, alias in output_aliases
             ]
         )
 
@@ -1152,10 +1180,10 @@ class StageBuildersMixin:
                             ELSE MIN(
                                 CAST(
                                     ({key_sql} - min_val) * 1.0
-                                    / ((max_val - min_val) * 1.0 / {buckets})
+                                    / NULLIF(bucket_width, 0)
                                     AS INTEGER
                                 ),
-                                {buckets} - 1
+                                num_buckets - 1
                             )
                         END as bucket_id
                     FROM {prev_stage} AS __src, ({bucket_calc_sql})
@@ -1167,6 +1195,18 @@ class StageBuildersMixin:
             )
             ORDER BY _id
         """
+        # Bind parameters in textual SQL order:
+        # 1) grouped_parts accumulators (in middle SELECT)
+        # 2) i SELECT key_sql x2
+        # 3) bucket_calc_sql (? / ?, min_max_sql key_sql x2)
+        all_params = (
+            grouped_params
+            + list(key_params)
+            + list(key_params)
+            + [buckets, buckets]
+            + list(key_params)
+            + list(key_params)
+        )
         return sql, all_params
 
     def _build_union_with_sql(
@@ -1608,7 +1648,7 @@ class StageBuildersMixin:
         else:
             agg_select_parts.append("NULL AS _id")
 
-        output_fields: list[str] = []
+        output_aliases: list[tuple[str, str]] = []
         array_fields: set[str] = set()
         for field, accumulator in spec.items():
             if field == "_id":
@@ -1633,10 +1673,11 @@ class StageBuildersMixin:
             )
             all_params.extend(expr_params)
             distinct_str = "DISTINCT " if use_distinct else ""
+            sql_alias = f"__acc_{len(output_aliases)}"
             agg_select_parts.append(
-                f"{sql_agg}({distinct_str}{expr_sql}) AS {field}"
+                f"{sql_agg}({distinct_str}{expr_sql}) AS {sql_alias}"
             )
-            output_fields.append(field)
+            output_aliases.append((field, sql_alias))
             if sql_agg == "json_group_array":
                 # json_group_array yields a JSON *string*; re-parse it so
                 # data holds a real JSON array like MongoDB (#94).
@@ -1665,11 +1706,11 @@ class StageBuildersMixin:
             [id_json_arg]
             + [
                 (
-                    f"'{f.replace(chr(39), chr(39) * 2)}', json({f})"
-                    if f in array_fields
-                    else f"'{f.replace(chr(39), chr(39) * 2)}', {f}"
+                    f"'{field.replace(chr(39), chr(39) * 2)}', json({alias})"
+                    if field in array_fields
+                    else f"'{field.replace(chr(39), chr(39) * 2)}', {alias}"
                 )
-                for f in output_fields
+                for field, alias in output_aliases
             ]
         )
         select_parts = [

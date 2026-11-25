@@ -13,7 +13,7 @@ from ..collection.schema_utils import column_exists
 
 # Import ObjectId for GridIn and GridOut
 from ..objectid import ObjectId
-from ..sql_utils import quote_table_name
+from ..sql_utils import quote_table_name, validate_identifier
 from .errors import NoFile
 from .utils import (
     deserialize_aliases,
@@ -68,8 +68,8 @@ class GridIn:
         self._filename = filename
         self._metadata = metadata
         self._file_id = file_id
-        self._files_collection = quote_table_name(f"{bucket_name}_files")
-        self._chunks_collection = quote_table_name(f"{bucket_name}_chunks")
+        self._files_collection = validate_identifier(f"{bucket_name}_files")
+        self._chunks_collection = validate_identifier(f"{bucket_name}_chunks")
         self._disable_md5 = disable_md5
         self._write_concern = write_concern or {}
         self._content_type = content_type
@@ -198,7 +198,7 @@ class GridIn:
             # Insert the chunk
             self._db.execute(
                 f"""
-                INSERT INTO {self._chunks_collection}
+                INSERT INTO {quote_table_name(self._chunks_collection)}
                 (files_id, n, data)
                 VALUES (?, ?, ?)
             """,
@@ -226,7 +226,7 @@ class GridIn:
             oid = ObjectId()
             cur = self._db.execute(
                 f"""
-                INSERT INTO {self._files_collection}
+                INSERT INTO {quote_table_name(self._files_collection)}
                 (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
                 VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
             """,
@@ -248,7 +248,7 @@ class GridIn:
                 # Store ObjectId in _id column, let SQLite auto-generate id
                 cur = self._db.execute(
                     f"""
-                    INSERT INTO {self._files_collection}
+                    INSERT INTO {quote_table_name(self._files_collection)}
                     (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
                     VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -268,7 +268,7 @@ class GridIn:
                 # Integer ID provided
                 cur = self._db.execute(
                     f"""
-                    INSERT INTO {self._files_collection}
+                    INSERT INTO {quote_table_name(self._files_collection)}
                     (id, _id, filename, chunkSize, uploadDate, metadata, content_type, aliases)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -309,7 +309,7 @@ class GridIn:
             # Look up the integer ID for this ObjectId — cache it: chunked
             # uploads previously re-ran this SELECT per chunk (#152)
             cursor = self._db.execute(
-                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
+                f"SELECT id FROM {quote_table_name(self._files_collection)} WHERE _id = ?",
                 (str(self._file_id),),
             )
             if (row := cursor.fetchone()) is None:
@@ -325,7 +325,7 @@ class GridIn:
         else:
             # For other types, try to look it up by value
             cursor = self._db.execute(
-                f"SELECT id FROM {self._files_collection} WHERE _id = ?",
+                f"SELECT id FROM {quote_table_name(self._files_collection)} WHERE _id = ?",
                 (str(self._file_id),),
             )
             if (row := cursor.fetchone()) is None:
@@ -359,7 +359,7 @@ class GridIn:
             if remaining:
                 self._db.execute(
                     f"""
-                    INSERT INTO {self._chunks_collection}
+                    INSERT INTO {quote_table_name(self._chunks_collection)}
                     (files_id, n, data)
                     VALUES (?, ?, ?)
                 """,
@@ -382,7 +382,7 @@ class GridIn:
                 md5_hash = self._md5_hasher.hexdigest()
             self._db.execute(
                 f"""
-                UPDATE {self._files_collection}
+                UPDATE {quote_table_name(self._files_collection)}
                 SET length = ?, md5 = ?
                 WHERE id = ?
             """,
@@ -439,11 +439,11 @@ class GridIn:
         try:
             file_int_id = self._get_file_id()
             self._db.execute(
-                f"DELETE FROM {self._chunks_collection} WHERE files_id = ?",
+                f"DELETE FROM {quote_table_name(self._chunks_collection)} WHERE files_id = ?",
                 (file_int_id,),
             )
             self._db.execute(
-                f"DELETE FROM {self._files_collection} WHERE id = ?",
+                f"DELETE FROM {quote_table_name(self._files_collection)} WHERE id = ?",
                 (file_int_id,),
             )
             self._db.commit()
@@ -497,8 +497,8 @@ class GridOut:
             self._int_file_id = row[0]  # Store the integer ID internally
         else:
             self._int_file_id = file_id  # Store the integer ID internally
-        self._files_collection = quote_table_name(f"{bucket_name}_files")
-        self._chunks_collection = quote_table_name(f"{bucket_name}_chunks")
+        self._files_collection = validate_identifier(f"{bucket_name}_files")
+        self._chunks_collection = validate_identifier(f"{bucket_name}_chunks")
 
         # Get file metadata using the integer ID
         # Check if new columns exist to maintain backward compatibility
@@ -533,7 +533,7 @@ class GridOut:
 
         query = f"""
             SELECT {", ".join(select_columns)}
-            FROM {self._files_collection}
+            FROM {quote_table_name(self._files_collection)}
             WHERE id = ?
         """
 
@@ -745,7 +745,7 @@ class GridOut:
         # Load the required chunk using the integer file ID
         row = self._db.execute(
             f"""
-            SELECT data FROM {self._chunks_collection}
+            SELECT data FROM {quote_table_name(self._chunks_collection)}
             WHERE files_id = ? AND n = ?
         """,
             (self._int_file_id, chunk_index),
@@ -1605,7 +1605,7 @@ class GridOutCursor:
         self._bucket_name = bucket_name
         self._filter = dict(filter) if filter else {}
         self._session = session
-        self._files_collection = quote_table_name(f"{bucket_name}_files")
+        self._files_collection = validate_identifier(f"{bucket_name}_files")
 
         self._sort: list[tuple[str, Any]] | None = None
         self._skip: int = 0
@@ -1748,7 +1748,7 @@ class GridOutCursor:
             pagination_clause = " LIMIT -1 OFFSET ?"
             params.append(self._skip)
 
-        query = f"SELECT id FROM {self._files_collection} {where_clause} {sort_clause} {pagination_clause}".strip()
+        query = f"SELECT id FROM {quote_table_name(self._files_collection)} {where_clause} {sort_clause} {pagination_clause}".strip()
         cursor = self._db.execute(query, params)
         self._file_ids = [row[0] for row in cursor.fetchall()]
         self._index = 0

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ... import query_operators
 from ...exceptions import MalformedQueryException
-from ...sql_utils import quote_table_name
+from ...sql_utils import validate_identifier
 from ..expr_evaluator import ExprEvaluator
 from ..index_manager import _load_index_keys
 from ..text_search import unified_text_search
@@ -243,25 +243,50 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                         search_term = value["$search"]
                         if isinstance(search_term, str):
                             # Find FTS tables for this collection to determine which fields are indexed
+                            coll_name = validate_identifier(
+                                self.collection.name
+                            )
+                            escaped_coll = (
+                                coll_name.replace("\\", "\\\\")
+                                .replace("%", "\\%")
+                                .replace("_", "\\_")
+                            )
                             cursor = self.collection.db.execute(
-                                "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE ?",
-                                (
-                                    f"{quote_table_name(self.collection.name)}_%_fts",
-                                ),
+                                "SELECT name FROM sqlite_master "
+                                "WHERE type = 'table' AND name LIKE ? ESCAPE '\\'",
+                                (f"{escaped_coll}\\_%\\_fts",),
                             )
                             fts_tables = cursor.fetchall()
+
+                            # Filter out FTS tables belonging to other collections
+                            # whose names start with `{coll_name}_`
+                            all_tables = {
+                                row[0]
+                                for row in self.collection.db.execute(
+                                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                                ).fetchall()
+                            }
+                            longer_prefixes = [
+                                tbl + "_"
+                                for tbl in all_tables
+                                if tbl != coll_name
+                                and tbl.startswith(coll_name + "_")
+                            ]
 
                             # Check each FTS-indexed field for matches and accumulate score
                             if fts_tables:
                                 search_lower = search_term.lower()
                                 matched_score = 0.0
+                                prefix_len = len(f"{coll_name}_")
                                 for fts_table in fts_tables:
                                     fts_table_name = fts_table[0]
-                                    index_name = fts_table_name[
-                                        len(
-                                            f"{quote_table_name(self.collection.name)}_"
-                                        ) : -4
-                                    ]
+                                    base_name = fts_table_name[:-4]
+                                    if any(
+                                        base_name.startswith(lp)
+                                        for lp in longer_prefixes
+                                    ):
+                                        continue
+                                    index_name = fts_table_name[prefix_len:-4]
                                     stored_keys = _load_index_keys(
                                         self.collection.db, fts_table_name
                                     )

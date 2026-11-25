@@ -906,6 +906,8 @@ def build_json_containment_clause(
     field_access: str,
     value: Any,
     json_each_function: str,
+    *,
+    jsonb_supported: bool | None = None,
 ) -> tuple[str, list[Any]]:
     """Build scalar equality and array containment SQL clause for a field.
 
@@ -920,11 +922,19 @@ def build_json_containment_clause(
         value: Target scalar or encoded JSON value to match.
         json_each_function: Table-valued function name (``"json_each"`` or
             ``"jsonb_each"``).
+        jsonb_supported: Optional explicit JSONB flag for scalar comparison
+            encoding; inferred from ``field_access`` when omitted.
 
     Returns:
         tuple[str, list[Any]]: Tuple of ``(sql_clause, params)``.
     """
-    is_field_jsonb = field_access.startswith("jsonb_extract(")
+    from .json_path_utils import parse_json_path
+
+    is_field_jsonb = (
+        jsonb_supported
+        if jsonb_supported is not None
+        else field_access.startswith("jsonb_extract(")
+    )
     each_is_jsonb = json_each_function == "jsonb_each"
     scalar_val, scalar_ph = serialize_sql_query_value(value, is_field_jsonb)
     each_val, each_ph = serialize_sql_query_value(value, each_is_jsonb)
@@ -934,11 +944,11 @@ def build_json_containment_clause(
     arms = [f"{field_access} = {scalar_ph}"]
     params: list[Any] = [scalar_val]
     for k in range(1, len(segs) + 1):
-        arr_path = "'$." + ".".join(segs[:k]) + "'"
+        arr_path = f"'{parse_json_path('.'.join(segs[:k]), preserve_id=False)}'"
         arr_expr = "json_extract(" + data_expr + ", " + arr_path + ")"
         rest = segs[k:]
         if rest:
-            leaf_path = "$." + ".".join(rest)
+            leaf_path = parse_json_path(".".join(rest), preserve_id=False)
             elem_pred = (
                 "CASE WHEN type = 'object' THEN "
                 "json_extract(value, '" + leaf_path + "') = ? ELSE 0 END"
