@@ -1,13 +1,12 @@
 """Tests for the SQLite parser-stack fallback in complex updates."""
 
-import pytest
 from types import SimpleNamespace
 
-from neosqlite import Connection
-from neosqlite._sqlite import sqlite3
-from neosqlite.collection.jsonb_support import supports_jsonb
+import pytest
 
 import neosqlite
+from neosqlite._sqlite import sqlite3
+from neosqlite.collection.jsonb_support import supports_jsonb
 from neosqlite.collection.query_helper import _sql_updates
 
 _JSONB_PROBE_CONN = sqlite3.connect(":memory:")

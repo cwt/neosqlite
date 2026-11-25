@@ -211,7 +211,9 @@ class OperatorsAdvancedMixin(OperatorsBaseMixin):
                     f"{self.jsonb.json_function_prefix}_extract(c.data, '{p_path}') IS _s._p{i}"
                 )
             set_args.extend([f"'{json_path}'", "_s._val"])
-            match_parts.append(f"{self.jsonb.json_function_prefix}_extract(c.data, '{json_path}') = _s._val")
+            match_parts.append(
+                f"{self.jsonb.json_function_prefix}_extract(c.data, '{json_path}') = _s._val"
+            )
             gen_data_expr = (
                 f"json({json_set_func}('{{}}', {', '.join(set_args)}))"
             )

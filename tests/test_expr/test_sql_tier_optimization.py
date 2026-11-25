@@ -77,7 +77,6 @@ class TestSQLTierAggregator:
     @pytest.fixture
     def collection(self):
         """Create a test collection with sample data."""
-        import neosqlite
 
         conn = neosqlite.Connection(":memory:")
         coll = conn.test_sql_tier
@@ -288,7 +287,6 @@ class TestSQLTierIntegration:
     @pytest.fixture
     def collection(self):
         """Create a test collection with sample data."""
-        import neosqlite
 
         conn = neosqlite.Connection(":memory:")
         coll = conn.test_integration
@@ -484,7 +482,6 @@ class TestSQLTierCorrectness:
     @pytest.fixture
     def collection(self):
         """Create a test collection with sample data."""
-        import neosqlite
 
         conn = neosqlite.Connection(":memory:")
         coll = conn.test_correctness
@@ -944,7 +941,6 @@ class TestSQLTierPerformance:
     @pytest.fixture
     def large_collection(self):
         """Create a test collection with large dataset."""
-        import neosqlite
 
         conn = neosqlite.Connection(":memory:")
         coll = conn.test_perf

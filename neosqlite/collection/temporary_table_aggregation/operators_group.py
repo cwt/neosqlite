@@ -572,12 +572,12 @@ class OperatorsGroupMixin(OperatorsBaseMixin):
                 value_sql = (
                     "_id"
                     if has_underscore_id
-                    else "json_extract(data, '$._id')"
+                    else f"{self.jsonb.json_function_prefix}_extract(data, '$._id')"
                 )
             elif expr_val in ("$$ROOT", "$$CURRENT"):
                 value_sql = "json(data)"
             else:
-                value_sql = f"json_extract(data, '{parse_json_path(expr_val)}')"
+                value_sql = f"{self.jsonb.json_function_prefix}_extract(data, '{parse_json_path(expr_val)}')"
             flag = "rd" if is_last else "rn"
             agg_parts.append(
                 f"MAX(CASE WHEN {flag} = 1 THEN {value_sql} END) AS {sql_alias}"
