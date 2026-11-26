@@ -10,6 +10,7 @@ from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Self
 
+from .query_operators import _bson_values_equal
 from .sql_utils import quote_table_name
 
 if TYPE_CHECKING:
@@ -147,24 +148,28 @@ def _match_operators(value: Any, operators: dict[str, Any]) -> bool:
     """
     for op, expected in operators.items():
         if op == "$eq":
-            if value != expected:
+            if not _bson_values_equal(value, expected):
                 return False
         elif op == "$ne":
-            if value == expected:
+            if _bson_values_equal(value, expected):
                 return False
         elif op in _RANGE_OPS:
             if not _compare_range_op(value, expected, _RANGE_OPS[op]):
                 return False
         elif op == "$in":
             try:
-                matched = value in expected
+                matched = any(
+                    _bson_values_equal(value, item) for item in expected
+                )
             except TypeError:
                 return False
             if not matched:
                 return False
         elif op == "$nin":
             try:
-                matched = value in expected
+                matched = any(
+                    _bson_values_equal(value, item) for item in expected
+                )
             except TypeError:
                 return False
             if matched:

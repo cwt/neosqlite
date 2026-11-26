@@ -791,3 +791,15 @@ def test_changestream_max_await_time_ms_zero_and_short_timeout(connection):
             next(short_stream)
         elapsed_short = time.monotonic() - start
         assert elapsed_short < 0.09
+
+
+def test_changestream_match_operators_are_bson_strict():
+    """$eq/$ne/$in/$nin must not conflate booleans with integers."""
+    from neosqlite.changestream import _match_operators
+
+    assert _match_operators(True, {"$eq": 1}) is False
+    assert _match_operators(True, {"$eq": True}) is True
+    assert _match_operators(1, {"$ne": True}) is True
+    assert _match_operators(False, {"$in": [0, 1]}) is False
+    assert _match_operators(True, {"$in": [0, True]}) is True
+    assert _match_operators(False, {"$nin": [0, 1]}) is True
