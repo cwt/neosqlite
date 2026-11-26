@@ -248,24 +248,45 @@ def get_pid(pid_file: str) -> int | None:
 def _is_nx_27017_process(pid: int) -> bool:
     """Verify via ``/proc/<pid>/cmdline`` (on Linux) that ``pid`` is NX-27017.
 
+    Only the invoked executable or module is considered.  A substring search
+    over the whole command line would match unrelated processes whose argv
+    merely mentions a path such as ``packages/nx_27017/tests/``.
+
     Returns ``True`` when process-cmdline inspection is unavailable on the
     current platform so non-Linux platforms continue to work cleanly.
     """
-    cmdline_path = f"/proc/{pid}/cmdline"
     if not os.path.exists("/proc"):
         return True
+    cmdline_path = f"/proc/{pid}/cmdline"
+    if not os.path.exists(cmdline_path):
+        return False
     try:
         with open(cmdline_path, "rb") as fh:
             raw = fh.read()
     except OSError:
-        # Process exited or /proc entry inaccessible; let caller handle signal
-        return True
+        # Unreadable process identity: fail closed rather than signal an
+        # arbitrary PID referenced by a stale or malicious PID file.
+        return False
     if not raw:
         return False
-    cmdline = (
-        raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").lower()
-    )
-    return "nx_27017" in cmdline or "nx-27017" in cmdline
+    argv = [
+        part.decode("utf-8", errors="replace")
+        for part in raw.split(b"\x00")
+        if part
+    ]
+    if not argv:
+        return False
+
+    names = ("nx-27017", "nx_27017", "nx_27017.py")
+    executable = os.path.basename(argv[0]).lower()
+    if executable in names:
+        return True
+    if executable.startswith("python"):
+        if len(argv) >= 3 and argv[1] == "-m":
+            return argv[2].lower() in ("nx_27017", "nx_27017.nx_27017")
+        if len(argv) >= 2:
+            return os.path.basename(argv[1]).lower() in names
+    return False
 
 
 def stop_daemon(pid_file: str) -> int:

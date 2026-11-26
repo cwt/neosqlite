@@ -6,6 +6,7 @@ import asyncio
 import os
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -930,6 +931,19 @@ class TestDaemonAndCliHardening:
             rc = daemon_mod.stop_daemon(str(pid_file))
         assert rc == 1
         mock_kill.assert_not_called()
+
+    def test_pid_identity_ignores_nx_27017_in_later_argv(self):
+        """Only the invoked executable/module identifies an NX-27017 daemon."""
+        if not os.path.exists("/proc"):
+            pytest.skip("/proc/<pid>/cmdline not available on this platform")
+        proc = subprocess.Popen(
+            ["sleep", "30", "packages/nx_27017/tests/test_security.py"]
+        )
+        try:
+            assert daemon_mod._is_nx_27017_process(proc.pid) is False
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
 
     def test_fts5_tokenizer_cli_validation(self):
         with patch.object(
