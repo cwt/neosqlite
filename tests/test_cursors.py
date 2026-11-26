@@ -2192,3 +2192,14 @@ def test_resolve_hint_index_uses_raw_collection_name():
         assert (
             resolve_hint_index(conn.db, "hinted", [("a", 1)]) == "idx_hinted_a"
         )
+
+
+def test_rewind_closed_cursor_raises_invalid_operation(collection):
+    """PyMongo-compatible: rewind() cannot resurrect a closed cursor."""
+    from neosqlite.exceptions import InvalidOperation
+
+    collection.insert_one({"x": 1})
+    cursor = collection.find({})
+    cursor.close()
+    with pytest.raises(InvalidOperation):
+        cursor.rewind()

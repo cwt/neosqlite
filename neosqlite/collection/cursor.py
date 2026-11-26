@@ -9,6 +9,7 @@ from itertools import islice
 from typing import TYPE_CHECKING, Any, Self
 
 from .._sqlite import sqlite3
+from ..exceptions import InvalidOperation
 from ..objectid import ObjectId
 from ..sql_utils import quote_table_name, validate_identifier
 from .json_path_utils import parse_json_path
@@ -365,7 +366,12 @@ class Cursor:
 
         Returns:
             Self: This cursor instance for method chaining.
+
+        Raises:
+            InvalidOperation: If the cursor has been closed.
         """
+        if self._closed:
+            raise InvalidOperation("Cursor is closed")
         gen = getattr(self, "_active_generator", None)
         if gen is not None:
             try:
