@@ -1167,3 +1167,20 @@ def test_with_options_preserves_state_and_rebinds_collections(tmp_path):
         assert shared_c1.write_concern == wc
         assert conn["shared"].database is conn
         assert conn["shared"].write_concern is None
+
+
+def test_collection_option_overrides_survive_connection_clone():
+    """Cached per-collection options and omitted options are preserved."""
+    from neosqlite.options import WriteConcern
+
+    with neosqlite.Connection(":memory:") as conn:
+        wc = WriteConcern(w=1)
+        modified = conn.items.with_options(write_concern=wc)
+        assert modified.write_concern == wc
+        # Omitted options are inherited by later collection clones.
+        assert modified.with_options().write_concern == wc
+
+        conn._collections["items"] = modified
+        clone = conn.with_options()
+        assert clone.items.database is clone
+        assert clone.items.write_concern == wc

@@ -146,6 +146,10 @@ class Collection:
         self.indexes = IndexManager(self)
         self.query_engine = QueryEngine(self)
         self._options = kwargs
+        self._codec_options = kwargs.get("codec_options")
+        self._read_preference = kwargs.get("read_preference")
+        self._write_concern = kwargs.get("write_concern")
+        self._read_concern = kwargs.get("read_concern")
         self._ttl_specs_cache: list[dict[str, Any]] | None = None
         validator = kwargs.get("validator")
         self._validator_schema: dict[str, Any] | None = (
@@ -2204,19 +2208,39 @@ class Collection:
             >>> coll = db.my_collection
             >>> clone = coll.with_options(write_concern={"w": "majority"})
         """
-        # Create a new collection instance (clone)
+        # Create a new collection instance (clone), keeping creation options
+        # such as the validator alongside the runtime PyMongo options below.
         clone = Collection(
             self.db,
             self.name,
             create=False,
             database=self._database,
+            **self._options,
         )
 
-        # Store options for API compatibility
-        clone._codec_options = codec_options
-        clone._read_preference = read_preference
-        clone._write_concern = write_concern
-        clone._read_concern = read_concern
+        # Inherit omitted options instead of resetting them to None.
+        clone._codec_options = (
+            codec_options if codec_options is not None else self._codec_options
+        )
+        clone._read_preference = (
+            read_preference
+            if read_preference is not None
+            else self._read_preference
+        )
+        clone._write_concern = (
+            write_concern if write_concern is not None else self._write_concern
+        )
+        clone._read_concern = (
+            read_concern if read_concern is not None else self._read_concern
+        )
+        for key, value in (
+            ("codec_options", clone._codec_options),
+            ("read_preference", clone._read_preference),
+            ("write_concern", clone._write_concern),
+            ("read_concern", clone._read_concern),
+        ):
+            if value is not None:
+                clone._options[key] = value
 
         return clone
 

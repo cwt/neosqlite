@@ -1252,16 +1252,23 @@ class Connection:
         clone.auto_vacuum = self.auto_vacuum
         clone._translation_cache_size = self._translation_cache_size
         clone.journal_mode = self.journal_mode
-        clone._collections = {
-            coll_name: Collection(
+        cloned_collections: dict[str, Collection] = {}
+        for coll_name, coll in self._collections.items():
+            new_coll = Collection(
                 self.db,
                 coll_name,
                 create=False,
                 database=clone,
                 **coll._options,
             )
-            for coll_name, coll in self._collections.items()
-        }
+            # Per-collection with_options() overrides live on the instance,
+            # not in _options; carry them across the Connection clone (#187).
+            new_coll._codec_options = coll._codec_options
+            new_coll._read_preference = coll._read_preference
+            new_coll._write_concern = coll._write_concern
+            new_coll._read_concern = coll._read_concern
+            cloned_collections[coll_name] = new_coll
+        clone._collections = cloned_collections
 
         # Store the new options, inheriting prior values when omitted
         clone._codec_options = (
