@@ -56,15 +56,17 @@ def test_pymongo_connection() -> MongoClient | None:
     return get_mongo_client()
 
 
-def _normalize_id(value: Any) -> Any:
+def _normalize_id(value: Any, *, is_id_field: bool = False) -> Any:
     """
-    Normalize ObjectId, _id fields, and complex types for comparison.
+    Normalize BSON values for type-aware comparison with MongoDB.
 
-    - Converts ObjectId to string.
-    - Removes _id fields for comparison.
-    - Normalizes datetime objects to naive UTC.
-    - Recursively handles dicts and lists.
-    - Normalizes MongoDB helper formats like {'$date': ...} to Python datetime.
+    - Tags ObjectIds with their type instead of collapsing them to strings,
+      so an ObjectId can no longer compare equal to a plain string.
+    - Keeps ``_id`` fields: scalar ids must match exactly, while generated
+      ObjectId ids use a type-only placeholder because the two databases
+      generate independent values.
+    - Normalizes datetime objects to naive UTC and recursively handles dicts
+      and lists, including MongoDB helper formats such as ``{'$date': ...}``.
     """
     if value is None:
         return None
@@ -78,13 +80,19 @@ def _normalize_id(value: Any) -> Any:
             return utc_dt.replace(tzinfo=None)
         return value
 
-    # Handle ObjectId
+    # Handle ObjectId. Generated ids differ between the two databases, so
+    # only the type is compared for _id fields; other ObjectId values keep
+    # their hex to validate references between documents.
     if hasattr(value, "__class__") and value.__class__.__name__ == "ObjectId":
-        return str(value)
+        return {"$objectId": "<generated>" if is_id_field else str(value)}
 
     # Handle NeoSQLite's internal dict representation of ObjectId
     if isinstance(value, dict) and "__neosqlite_objectid__" in value:
-        return str(value.get("id"))
+        return {
+            "$objectId": (
+                "<generated>" if is_id_field else str(value.get("id"))
+            )
+        }
 
     # Handle dict - recursive normalization
     if isinstance(value, dict):
@@ -104,9 +112,8 @@ def _normalize_id(value: Any) -> Any:
             return _normalize_id(date_val)
 
         return {
-            k: _normalize_id(v)
+            k: _normalize_id(v, is_id_field=k == "_id")
             for k, v in value.items()
-            if k != "_id"  # Remove _id field
         }
 
     # Handle list - normalize each item
@@ -253,9 +260,12 @@ def _compare_documents(
 
     # Handle different types
     if type(neo_doc).__name__ != type(mongo_doc).__name__:
-        # Special case: int vs float comparison
-        if isinstance(neo_doc, (int, float)) and isinstance(
-            mongo_doc, (int, float)
+        # Special case: int vs float comparison, but bool is not a number here
+        if (
+            not isinstance(neo_doc, bool)
+            and not isinstance(mongo_doc, bool)
+            and isinstance(neo_doc, (int, float))
+            and isinstance(mongo_doc, (int, float))
         ):
             if abs(float(neo_doc) - float(mongo_doc)) > tolerance:
                 return False, f"Numeric mismatch: {neo_doc} vs {mongo_doc}"
@@ -295,9 +305,12 @@ def _compare_documents(
                 return False, f"Item {i}: {error}"
         return True, None
 
-    # Handle numeric types with tolerance
-    if isinstance(neo_doc, (int, float)) and isinstance(
-        mongo_doc, (int, float)
+    # Handle numeric types with tolerance (bool stays distinct from int)
+    if (
+        not isinstance(neo_doc, bool)
+        and not isinstance(mongo_doc, bool)
+        and isinstance(neo_doc, (int, float))
+        and isinstance(mongo_doc, (int, float))
     ):
         if abs(float(neo_doc) - float(mongo_doc)) > tolerance:
             return False, f"Numeric mismatch: {neo_doc} vs {mongo_doc}"
