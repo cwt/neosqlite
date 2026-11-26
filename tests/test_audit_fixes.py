@@ -338,7 +338,9 @@ class TestBucketAutoAccumulatesSpecifiedField:
             c.aggregate([{"$bucketAuto": {"groupBy": "$qty", "buckets": 2}}])
         )
         pairs = sorted((d["_id"]["min"], d["_id"]["max"]) for d in rows)
-        assert pairs == [(1, 2), (9, 10)]
+        # MongoDB reports the next bucket's first value as the exclusive
+        # upper bound of a non-final bucket.
+        assert pairs == [(1, 9), (9, 10)]
 
     def test_degenerate_single_value_single_bucket(self, connection):
         c = connection.b2

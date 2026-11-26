@@ -1232,10 +1232,16 @@ def execute_python_aggregation(
                     auto_buckets.setdefault(b_idx, []).append((val, group_dcs))
 
                 new_docs = []
-                for b_idx in sorted(auto_buckets.keys()):
+                bucket_keys = sorted(auto_buckets.keys())
+                for pos, b_idx in enumerate(bucket_keys):
                     grouped = auto_buckets[b_idx]
                     bmin = grouped[0][0]
-                    bmax = grouped[-1][0]
+                    # MongoDB reports the next bucket's first value as the
+                    # exclusive upper bound, except for the final bucket.
+                    if pos + 1 < len(bucket_keys):
+                        bmax = auto_buckets[bucket_keys[pos + 1]][0][0]
+                    else:
+                        bmax = grouped[-1][0]
                     bucket_dcs = [dc for _v, g_dcs in grouped for dc in g_dcs]
                     new_docs.append(
                         _compute_bucket_output(

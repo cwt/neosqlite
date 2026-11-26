@@ -54,14 +54,26 @@ def _iter_leaf_values(document: dict[str, Any], parts: list[str]) -> Any | None:
                     # the Python fallback (MongoDB treats present null as a value).
                     nxt.append(v)
             elif isinstance(node, list):
-                for el in node:
-                    if isinstance(el, dict) and part in el:
+                # A numeric segment addresses an array index in MongoDB dot
+                # notation; other segments look up keys in array elements.
+                if part.isascii() and part.isdigit():
+                    idx = int(part)
+                    if 0 <= idx < len(node):
                         found = True
-                        ev = el[part]
-                        if isinstance(ev, list):
-                            nxt.extend(ev)
+                        indexed = node[idx]
+                        if isinstance(indexed, list):
+                            nxt.extend(indexed)
                         else:
-                            nxt.append(ev)
+                            nxt.append(indexed)
+                else:
+                    for el in node:
+                        if isinstance(el, dict) and part in el:
+                            found = True
+                            ev = el[part]
+                            if isinstance(ev, list):
+                                nxt.extend(ev)
+                            else:
+                                nxt.append(ev)
         if not found:
             return None
         current = nxt
@@ -413,9 +425,23 @@ class QueryBuilderMixin(SqlQueryBuilderMixin):
                             doc_value = doc_value.get(field, None)
                         else:
                             for path in field.split("."):
-                                if not isinstance(doc_value, dict):
+                                if isinstance(doc_value, dict):
+                                    doc_value = doc_value.get(path, None)
+                                elif (
+                                    isinstance(doc_value, list)
+                                    and path.isascii()
+                                    and path.isdigit()
+                                ):
+                                    idx = int(path)
+                                    doc_value = (
+                                        doc_value[idx]
+                                        if 0 <= idx < len(doc_value)
+                                        else None
+                                    )
+                                else:
+                                    doc_value = None
+                                if doc_value is None:
                                     break
-                                doc_value = doc_value.get(path, None)
 
                         if isinstance(value, re.Pattern):
                             if doc_value is None or not value.search(

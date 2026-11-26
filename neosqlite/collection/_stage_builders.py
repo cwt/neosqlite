@@ -1366,27 +1366,37 @@ class StageBuildersMixin:
                 json_object('min', __bmin, 'max', __bmax) AS _id,
                 json_object({json_args}) AS data{root_select_col}
             FROM (
-                SELECT
-                    __bucket_id,
-                    CASE WHEN MAX(CASE WHEN __gval IS NULL THEN 1 ELSE 0 END) = 1 THEN NULL ELSE MIN(__gval) END AS __bmin,
-                    MAX(__gval) AS __bmax{acc_select_sql}
-                FROM (
+                WITH __bucket_groups AS (
                     SELECT
-                        __dr.*,
-                        ((__dr.__drank - 1) * ?) / NULLIF(MAX(__dr.__drank) OVER (), 0) AS __bucket_id
+                        __bucket_id,
+                        CASE WHEN MAX(CASE WHEN __gval IS NULL THEN 1 ELSE 0 END) = 1 THEN NULL ELSE MIN(__gval) END AS __bmin,
+                        MAX(__gval) AS __bmax_raw{acc_select_sql}
                     FROM (
                         SELECT
-                            __bsrc.*,
-                            DENSE_RANK() OVER (ORDER BY __bsrc.__gval) AS __drank
+                            __dr.*,
+                            ((__dr.__drank - 1) * ?) / NULLIF(MAX(__dr.__drank) OVER (), 0) AS __bucket_id
                         FROM (
                             SELECT
-                                *,
-                                ({key_sql}) AS __gval
-                            FROM {prev_stage}
-                        ) AS __bsrc
-                    ) AS __dr
+                                __bsrc.*,
+                                DENSE_RANK() OVER (ORDER BY __bsrc.__gval) AS __drank
+                            FROM (
+                                SELECT
+                                    *,
+                                    ({key_sql}) AS __gval
+                                FROM {prev_stage}
+                            ) AS __bsrc
+                        ) AS __dr
+                    )
+                    GROUP BY __bucket_id
                 )
-                GROUP BY __bucket_id
+                SELECT
+                    __bucket_groups.*,
+                    COALESCE(
+                        (SELECT MIN(g.__bmin) FROM __bucket_groups g
+                         WHERE g.__bucket_id > __bucket_groups.__bucket_id),
+                        __bmax_raw
+                    ) AS __bmax
+                FROM __bucket_groups
             )
             ORDER BY __bmin
         """
