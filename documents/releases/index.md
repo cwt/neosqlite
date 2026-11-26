@@ -6,8 +6,8 @@ tags:
   - index
   - releases
   - changelog
-timestamp: 2026-11-16T00:00:00Z
-version: "1.18.1"
+timestamp: 2026-11-26T00:00:00Z
+version: "1.19.0"
 lifecycle: active
 ---
 
@@ -19,6 +19,7 @@ This directory contains individual release notes and detailed changelogs for eac
 
 | Version | Release Date | Highlights & Summary |
 | :--- | :--- | :--- |
+| [v1.19.0](./v1.19.0.md) | 2026-11-26 | NeoSQLite v1.19.0 is a feature and correctness release covering all changes since v1.18.1: 28 audited issue fixes (#183–#210), new aggregation/query capabilities, persistent validators, pluggable sandboxed JavaScript engines, and a hardened NX-27017 wire server, verified at 100% compatibility against both MongoDB and NX-27017. |
 | [v1.18.1](./v1.18.1.md) | 2026-11-16 | NeoSQLite v1.18.1 is a cumulative correctness, SQL-tier parity, SQLite 3.26–3.54 compatibility (including `_id BLOB` affinity and `neosqlite-migration`), and Python 3.12 modernization release rolling up all changes since v1.17.4, raising the minimum runtime to Python 3.12, and fixing optional-dependency metadata. Supersedes unpublished v1.18.0. |
 | [v1.18.0](./v1.18.0.md) | 2026-11-14 | NeoSQLite v1.18.0 is a cumulative correctness, SQL-tier parity, and Python 3.12 modernization release rolling up all changes since v1.17.4, raising the minimum runtime to Python 3.12, and fixing optional-dependency metadata. Tagged but never published on PyPI. |
 | [v1.17.4](./v1.17.4.md) | 2026-11-12 | NeoSQLite v1.17.4 is a critical correctness and SQLite engine compatibility release resolving scalar subquery JSON subtype loss in SQLite >= 3.54, eliminating connection ResourceWarnings, and ensuring seamless operation across both modern and legacy SQLite versions. |

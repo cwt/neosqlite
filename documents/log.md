@@ -7,13 +7,25 @@ tags:
   - bundle
   - changelog
 timestamp: 2026-11-25T00:00:00Z
-version: "1.18.1"
+version: "1.19.0"
 lifecycle: active
 ---
 
 # NeoSQLite Knowledge Base Bundle Log
 
 This document records the chronological history of structural changes, additions, deprecations, and refactoring operations performed on the NeoSQLite Open Knowledge Format (OKF) bundle.
+
+---
+
+## 2026-11-26 — Release v1.19.0
+
+### Summary
+Promoted all post-v1.18.1 changes to a minor release: 28 audited issue fixes (#183–#210), new aggregation/query features, persistent validators, pluggable sandboxed JavaScript engines, hardened NX-27017 protocol handling, and a stricter differential comparison harness.
+
+### Key Modifications
+1. **Version bump** — `pyproject.toml` is now `1.19.0`; README and OKF frontmatter versions were updated.
+2. **New release note** — Added [releases/v1.19.0.md](./releases/v1.19.0.md) and an index entry; previous notes remain active.
+3. **Verification gates** — 3,446 unit tests and 231 NX-27017 tests pass; both MongoDB and NX-27017 comparison suites report 100% compatibility (452 checks each); type-check, lint and format scripts are clean.
 
 ---
 

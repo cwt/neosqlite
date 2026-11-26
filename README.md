@@ -39,20 +39,19 @@
 
 See [Release Notes](documents/releases/) for the full history.
 
-## Latest Release: v1.18.1
+## Latest Release: v1.19.0
 
-NeoSQLite v1.18.1 is a **cumulative correctness, SQL-tier parity, SQLite 3.26–3.54 compatibility, and runtime modernization release**. It rolls up every change since v1.17.4 and raises the minimum supported Python version to **3.12**.
+NeoSQLite v1.19.0 is a **feature and correctness release** covering every change since v1.18.1: 28 audited issue fixes (#183–#210), new aggregation/query capabilities, persistent validators, sandboxed JavaScript engines, and a hardened NX‑27017 wire server. The minimum supported Python version remains **3.12**.
 
 **Key Highlights:**
-- **Cumulative Fixes Since v1.17.4** — Complete kill-switch coverage, Tier-1/Tier-2 SQL parity hardening, expanded Tier-3 promotion, CRUD/write parity, and coverage-driven bug fixes across aggregation, queries, cursors, and writes.
-- **SQLite 3.26–3.54 Compatibility & Migration** — Preserves scalar `_id` types via `BLOB` affinity (plus `neosqlite-migration` for legacy `_id TEXT` collections), maintains SQLite 3.26 compatibility (AlmaLinux/RHEL 8), and preserves JSON subtypes on SQLite 3.54+.
-- **Python 3.12 Minimum** — Python 3.10 and 3.11 are no longer supported. `nx-27017` v0.9.0 follows the same runtime floor.
-- **Python 3.11/3.12 Adoption** — Native `Z` parsing, `datetime.UTC`, `itertools.batched()`, `math.sumprod()`, `asyncio.run(..., loop_factory=...)`, `typing.Self`, `@override`, PEP 695 `type` aliases, PEP 701 f-strings, and `slots=True`.
-- **Hardening** — Removed the deprecated `sqlite3.version` report from `serverStatus`, finished fluent-typing coverage, hoisted hot-path imports, and now enforce Python 3.12 Ruff rules.
-- **Packaging Fixes** — `pymongo` and `uvloop` are declared by the correct extras, and `pysqlite3-binary` is conditional on Python `< 3.15`.
-- **Verification** — 3,122 tests pass (83.64% coverage) on macOS Python 3.14.10 / SQLite 3.54.1, and 3,099 pass with 23 skips (80.98% coverage) on AlmaLinux 8 Python 3.12.15 / SQLite 3.26.0. The NX-27017 suite passes 180 tests with 1 skip on both platforms.
+- **New SQL capabilities** — `$meta` compilation, BSON-aware `_id` ranges, Tier‑2 hybrid stage evaluation, `$indexStats`, and `$set`/`$sortByCount` aliases.
+- **Persistent validators** — `$jsonSchema` rules survive reconnection and are enforced through both the direct API and NX‑27017 `createCollection`.
+- **Sandboxed JavaScript** — pluggable out-of-process engines (`jsbox` preferred, patched Node.js fallback) with scrubbed environments and bounded resources for `$function`/`$where`.
+- **Correctness audit** — transactions, SQL quoting, indexing, TTL, GridFS, ChangeStream, cursors, updates, expression evaluators, wire protocol, and value-type validation were cross-checked against MongoDB.
+- **MongoDB-verified** — both differential suites report 100% compatibility (452 checks each), with 3,446 unit tests passing.
+- **Tier routing preserved** — fixed operations still execute in SQL Tier 1/2; only ambiguous numeric dotted paths deliberately use Tier 3.
 
-This release is **not backward compatible for Python 3.10/3.11 users**; stay on v1.17.4 for those interpreters. v1.18.0 was tagged but never published on PyPI; v1.18.1 supersedes it. For full details, see [documents/releases/v1.18.1.md](documents/releases/v1.18.1.md). Previous release highlights are in [documents/releases/v1.17.4.md](documents/releases/v1.17.4.md).
+Behavior changes include MongoDB-correct `$bucketAuto` boundaries, `InvalidOperation` on `rewind()` of a closed cursor, and strict daemon PID identity checks. For full details, see [documents/releases/v1.19.0.md](documents/releases/v1.19.0.md). Previous release highlights are in [documents/releases/v1.18.1.md](documents/releases/v1.18.1.md).
 
 ## Installation
 
