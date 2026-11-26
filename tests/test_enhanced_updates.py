@@ -919,6 +919,27 @@ class TestIssue194UpdateParityFixes:
             assert docs[False]["scores"] == [15, 50, 70]
             assert docs[False]["caps"] == [None, 12, 12]
 
+    def test_numeric_segment_on_document_key_matches_array_index_behavior(self):
+        """Literal numeric object keys must not silently no-op in SQL tier."""
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        with Connection(":memory:") as conn:
+            orig = get_force_fallback()
+            try:
+                for fb in (False, True):
+                    set_force_fallback(fb)
+                    coll = conn[f"numeric_{fb}"]
+                    coll.insert_one(
+                        {"_id": 1, "a": {"1": "orig"}, "arr": [10, 20, 30]}
+                    )
+                    coll.update_one({"_id": 1}, {"$set": {"a.1": "NEW"}})
+                    coll.update_one({"_id": 1}, {"$set": {"arr.1": 99}})
+                    doc = coll.find_one({"_id": 1})
+                    assert doc["a"] == {"1": "NEW"}
+                    assert doc["arr"] == [10, 99, 30]
+            finally:
+                set_force_fallback(orig)
+
     def test_numeric_array_index_set_and_bit_string_error_and_replace_one(self):
         """arr.1 $set works, $bit on str errors, replace_one supports bytes and guards _id."""
         from neosqlite.binary import Binary

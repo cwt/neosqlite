@@ -38,6 +38,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _has_ambiguous_numeric_path(update_spec: dict[str, Any]) -> bool:
+    """Return True when a dotted field segment is numeric without brackets.
+
+    ``parse_json_path`` rewrites ``a.1`` to ``$.a[1]``, but MongoDB treats a
+    numeric segment as a literal object key when ``a`` is a document.  The SQL
+    tier cannot know the runtime shape, so such updates must use the Python
+    tier which handles both arrays and documents correctly.
+
+    Args:
+        update_spec: MongoDB update specification to inspect.
+
+    Returns:
+        bool: True when at least one field path contains a dotted integer.
+    """
+    for value in update_spec.values():
+        if not isinstance(value, dict):
+            continue
+        for field in value:
+            if not isinstance(field, str):
+                continue
+            for segment in field.split(".")[1:]:
+                if segment.isascii() and segment.isdigit():
+                    return True
+    return False
+
+
 def _parse_push_payload(
     field: str, push_value: Any
 ) -> tuple[list[Any], int | None, int | None] | None:
@@ -1195,6 +1221,8 @@ class SqlUpdatesMixin:
                 Python fallback is required.
         """
         if not isinstance(update_spec, dict) or not update_spec:
+            return None
+        if _has_ambiguous_numeric_path(update_spec):
             return None
 
         # $push/$addToSet use the JSON append path [#], which requires
