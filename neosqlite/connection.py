@@ -1348,9 +1348,15 @@ class Connection:
         except Exception as e:
             logger.debug(f"Transaction failed, rolling back: {e}")
             self.db.rollback()
-            if self._active_tx_session is not None:
-                self._active_tx_session._clear_transaction_state()
             raise
+        finally:
+            # Committing or rolling back the outer transaction also releases
+            # any nested ClientSession savepoints.  Clear that session's state
+            # on the normal path too, otherwise it stays "in_transaction"
+            # with a savepoint name SQLite no longer knows about (#183).
+            active = self._active_tx_session
+            if active is not None:
+                active._clear_transaction_state()
 
     def __del__(self):
         """Close the connection on garbage collection via ``_close_rollback``.

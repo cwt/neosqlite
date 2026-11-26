@@ -152,6 +152,26 @@ def test_nested_transactions_savepoints():
         assert coll.count_documents({"name": "inner_commit"}) == 1
 
 
+def test_nested_session_state_cleared_on_outer_normal_exit():
+    """A session left open when Connection.transaction() commits is reset."""
+    from neosqlite.exceptions import InvalidOperation
+
+    with neosqlite.Connection(":memory:") as conn:
+        session = conn.start_session()
+        with conn.transaction():
+            session.start_transaction()
+            conn.test.insert_one({"name": "inner"}, session=session)
+
+        assert session.in_transaction is False
+        assert conn._active_tx_session is None
+        with pytest.raises(InvalidOperation):
+            session.commit_transaction()
+
+        other = conn.start_session()
+        other.start_transaction()
+        other.abort_transaction()
+
+
 def test_connection_exit_on_exception_rolls_back_session_transaction(tmp_path):
     """Exiting Connection context on exception must roll back open session tx."""
     db_path = str(tmp_path / "bank.db")
