@@ -496,12 +496,16 @@ run_comparison() {
     # The script will exit with non-zero if there are incompatibilities
     SCRIPT_DIR="$(dirname "$COMPARISON_SCRIPT")"
     PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    # Fail when the comparison reports incompatibilities, missing checks or
+    # too many skips. Cleanup is handled by the EXIT trap, so the exit code
+    # must be propagated here rather than swallowed.
+    export NEOSQLITE_COMPARISON_MAX_SKIPPED="${NEOSQLITE_COMPARISON_MAX_SKIPPED:-25}"
     if (cd "$SCRIPT_DIR" && PYTHONPATH="$PROJECT_ROOT" poetry run python3 api_comparison_main.py); then
         success "API comparison completed - 100% compatible!"
         return 0
     else
-        warn "API comparison completed - some incompatibilities found (see report above)"
-        return 0  # Return 0 to allow cleanup to proceed
+        error "API comparison failed (see report above)"
+        return 1
     fi
 }
 

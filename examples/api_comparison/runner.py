@@ -2,7 +2,9 @@
 Test Runner - Orchestrates running all comparison tests
 """
 
+import os
 import time
+import traceback
 
 from .aggregation_advanced_operators import compare_additional_aggregation
 from .aggregation_basic_stages import compare_aggregation_stages
@@ -475,10 +477,48 @@ def run_category(category: str) -> bool:
     return False
 
 
+def run_comparison_category(category: str, func, reporter) -> None:
+    """Run one comparison module and record failures for silent gaps.
+
+    Args:
+        category: Display name of the comparison category.
+        func: Comparison function to execute.
+        reporter: Reporter recording comparison results.
+    """
+    before = reporter.total_tests
+    try:
+        func()
+    except Exception as exc:
+        traceback.print_exc()
+        reporter.record_result(
+            category,
+            "CATEGORY_EXCEPTION",
+            False,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    if reporter.total_tests == before:
+        reporter.record_result(
+            category,
+            "NO_RESULTS_RECORDED",
+            False,
+            error="Comparison module recorded no results",
+        )
+
+
+def skip_budget_error(reporter) -> str | None:
+    """Return an error message when skips exceed the configured budget."""
+    max_skipped = int(os.environ.get("NEOSQLITE_COMPARISON_MAX_SKIPPED", "-1"))
+    skipped = len(reporter.skipped_tests)
+    if max_skipped >= 0 and skipped > max_skipped:
+        return f"{skipped} checks skipped, budget is {max_skipped}"
+    return None
+
+
 def run_all_comparisons():
     """Run all comparison tests and return exit code"""
     import neosqlite
 
+    from . import reporter as global_reporter
     from .utils import (
         register_connection_for_tier_tracking,
     )
@@ -523,13 +563,7 @@ def run_all_comparisons():
             # Cleanup test collections between categories to avoid data pollution
             cleanup_test_collections(mongo_client)
 
-            try:
-                func()
-            except Exception as e:
-                print(f"Error in {category}: {e}")
-                import traceback
-
-                traceback.print_exc()
+            run_comparison_category(category, func, global_reporter)
 
             # Check for tier changes after each category
             tier_changes = get_tier_changes()
@@ -548,11 +582,16 @@ def run_all_comparisons():
                     print(f"    {prev_str} -> {new}: {pipeline_summary}")
 
         # Print final report - this should be the last output
-        from . import reporter as global_reporter
-
         print("\n")
         global_reporter.print_report(show_passed_results=True)
 
+        if global_reporter.total_tests == 0:
+            print("ERROR: No comparison checks were recorded")
+            return 1
+        budget_error = skip_budget_error(global_reporter)
+        if budget_error is not None:
+            print(f"ERROR: {budget_error}")
+            return 1
         if len(global_reporter.failed_tests) > 0:
             return 1
         return 0
