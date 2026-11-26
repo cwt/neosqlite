@@ -2174,3 +2174,21 @@ class TestIssue190CursorAndSortingFixes:
         assert cursor.retrieved == 5
         assert cursor.alive is False
         assert cursor.to_list() == []
+
+
+def test_resolve_hint_index_uses_raw_collection_name():
+    """Index hints must resolve after quote_table_name() started quoting (#192)."""
+    from neosqlite.collection.cursor import resolve_hint_index
+
+    with neosqlite.Connection(":memory:") as conn:
+        coll = conn.hinted
+        coll.create_index([("a", 1)])
+        assert resolve_hint_index(conn.db, "hinted", "_id_") == "idx_hinted_id"
+        assert (
+            resolve_hint_index(conn.db, "hinted", [("_id", 1)])
+            == "idx_hinted_id"
+        )
+        assert resolve_hint_index(conn.db, "hinted", "a_1") == "idx_hinted_a"
+        assert (
+            resolve_hint_index(conn.db, "hinted", [("a", 1)]) == "idx_hinted_a"
+        )

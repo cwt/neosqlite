@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from .._sqlite import sqlite3
 from ..objectid import ObjectId
-from ..sql_utils import quote_table_name
+from ..sql_utils import quote_table_name, validate_identifier
 from .json_path_utils import parse_json_path
 from .type_utils import (
     bson_sort_key,
@@ -125,8 +125,13 @@ def resolve_hint_index(
     if not idx_names:
         return None
 
-    quoted_tbl = quote_table_name(collection_name)
-    id_idx = f"idx_{quoted_tbl}_id"
+    # Index names are generated from the raw (validated) table name, not
+    # from its SQL-quoted form (which contains double quotes since #192).
+    try:
+        raw_tbl = validate_identifier(collection_name)
+    except ValueError:
+        return None
+    id_idx = f"idx_{raw_tbl}_id"
 
     if isinstance(hint, str):
         if hint in idx_names:
@@ -155,7 +160,7 @@ def resolve_hint_index(
         stored = _load_index_keys(db, idx_name)
         if stored is not None and stored == target_keys:
             return idx_name
-        if idx_name == f"idx_{quoted_tbl}{expected_suffix}":
+        if idx_name == f"idx_{raw_tbl}{expected_suffix}":
             return idx_name
     return None
 
