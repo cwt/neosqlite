@@ -756,3 +756,19 @@ def test_issue_202_python_evaluator_fixes(evaluator):
         {"$replaceOne": {"input": "$text", "find": "", "replacement": "X"}}
     )
     assert "f != ''" in sql
+
+    # 7. A null find is not the literal text "None" (#201/#202)
+    assert (
+        eval_py(
+            evaluator,
+            {
+                "$replaceOne": {
+                    "input": "Noneabc",
+                    "find": None,
+                    "replacement": "Q",
+                }
+            },
+            doc,
+        )
+        == "Noneabc"
+    )

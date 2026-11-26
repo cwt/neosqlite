@@ -219,8 +219,10 @@ class StringPythonMixin(BasePythonMixin):
                     )
                 if string is None:
                     return None
-                # MongoDB: empty find returns the input unchanged (#117, #202)
-                if str(find) == "":
+                # MongoDB: empty or null find returns the input unchanged
+                # (#117, #201, #202). A null find must not be stringified to
+                # "None" and replaced in the input.
+                if find is None or str(find) == "":
                     return str(string)
                 if operator == "$replaceOne":
                     return str(string).replace(str(find), str(replacement), 1)
