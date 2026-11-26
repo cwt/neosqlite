@@ -1183,3 +1183,11 @@ def test_legacy_neosqlite_index_keys_backwards_compatibility():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def test_invalid_index_direction_is_rejected(collection):
+    """Unrecognized index directions must not silently become ASCENDING."""
+    import pytest
+
+    with pytest.raises(ValueError, match="Invalid index direction"):
+        collection.create_index([("score", "sideways")])

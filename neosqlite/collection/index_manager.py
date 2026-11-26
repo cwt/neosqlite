@@ -206,10 +206,22 @@ def _ensure_index_keys_table(db) -> None:
 
 
 def _normalize_direction(direction: Any) -> int:
-    """Normalize an index sort direction specification to ``1`` or ``-1``."""
+    """Normalize an index sort direction specification to ``1`` or ``-1``.
+
+    Args:
+        direction: ``1``/``-1`` or case-insensitive ``"asc"``/``"desc"``.
+
+    Returns:
+        int: ``1`` for ascending, ``-1`` for descending.
+
+    Raises:
+        ValueError: If the direction is not a recognized index direction.
+    """
     if direction in (-1, "desc", "DESC"):
         return -1
-    return 1
+    if direction in (1, "asc", "ASC"):
+        return 1
+    raise ValueError(f"Invalid index direction: {direction!r}")
 
 
 def _store_index_keys(
