@@ -156,6 +156,51 @@ class TestCollectionCreateDrop:
         request_id, response = handler.handle_command(msg)
         assert response["ok"] == 1
 
+    def test_create_collection_forwards_validator(self, handler):
+        validator = {
+            "$jsonSchema": {
+                "bsonType": "object",
+                "properties": {
+                    "role": {"bsonType": "string", "pattern": "^admin$"}
+                },
+            }
+        }
+        create_msg = {
+            "request_id": 20,
+            "sections": [
+                (
+                    "body",
+                    {
+                        "create": "validated",
+                        "validator": validator,
+                        "$db": "test",
+                    },
+                )
+            ],
+        }
+        assert handler.handle_command(create_msg)[1]["ok"] == 1
+
+        insert_msg = {
+            "request_id": 21,
+            "sections": [
+                ("body", {"insert": "validated", "$db": "test"}),
+                ("payload_docs", [{"_id": 1, "role": "bad!"}]),
+            ],
+        }
+        response = handler.handle_insert(insert_msg)[1]
+        assert response["ok"] == 1
+        assert response["n"] == 0
+        assert response["writeErrors"]
+
+        valid_msg = {
+            "request_id": 22,
+            "sections": [
+                ("body", {"insert": "validated", "$db": "test"}),
+                ("payload_docs", [{"_id": 2, "role": "admin"}]),
+            ],
+        }
+        assert handler.handle_insert(valid_msg)[1]["n"] == 1
+
     def test_drop_collection(self, handler):
         create_msg = {
             "request_id": 12,

@@ -2216,10 +2216,19 @@ class NeoSQLiteHandler:
         return request_id, {"ok": 1}
 
     def _cmd_create(self, ctx: _CommandContext) -> tuple[int, dict[str, Any]]:
-        """Handle the ``create`` collection command."""
+        """Handle the ``create`` collection command.
+
+        Forwards ``validator`` so collection-level $jsonSchema validation is
+        enforced on subsequent inserts through the wire protocol, matching
+        MongoDB and the direct NeoSQLite API.
+        """
         coll_name = ctx.cmd_copy.pop("create")
+        options: dict[str, Any] = {}
+        validator = ctx.cmd_copy.pop("validator", None)
+        if isinstance(validator, dict):
+            options["validator"] = validator
         try:
-            ctx.db.create_collection(coll_name)
+            ctx.db.create_collection(coll_name, **options)
         except Exception as e:
             if "already exists" not in str(e).lower():
                 raise
