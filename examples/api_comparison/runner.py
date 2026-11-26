@@ -33,6 +33,7 @@ from .cursor_operations import compare_cursor_operations
 from .database_methods import compare_database_methods
 from .date_operations import compare_date_expr_operators
 from .distinct import compare_distinct
+from .edge_case_parity import compare_edge_case_parity
 from .elemmatch_operator import compare_elemmatch_operator
 from .expr_array_object_operators import compare_expr_array_object
 from .expr_comprehensive import compare_expr_comprehensive
@@ -126,6 +127,7 @@ COMPARISON_FUNCTIONS = [
     ("find() Option Kwargs", compare_find_option_kwargs),
     ("TTL Index Expiry", compare_ttl_index_expiry),
     ("Distinct", compare_distinct),
+    ("Edge Case Parity", compare_edge_case_parity),
     ("Nested Queries", compare_nested_field_queries),
     ("$elemMatch", compare_elemmatch_operator),
     # Cursor Operations

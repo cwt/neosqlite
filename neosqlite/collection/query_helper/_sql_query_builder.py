@@ -658,6 +658,16 @@ class SqlQueryBuilderMixin:
         if field == "$jsonSchema":
             return None
 
+        # A dotted numeric segment is ambiguous: MongoDB treats it as an
+        # array index when the parent is an array but as a literal object key
+        # when the parent is a document. parse_json_path() must pick one, so
+        # delegate these predicates to the Python tier which handles both.
+        if any(
+            segment.isascii() and segment.isdigit()
+            for segment in field.split(".")[1:]
+        ):
+            return None
+
         if field == "_id":
             # Strict MongoDB-like _id handling: the logical _id lives in the
             # dedicated `_id` column (or the deprecated `id` surrogate for legacy
@@ -719,7 +729,16 @@ class SqlQueryBuilderMixin:
                     # *or absent*; json_extract yields SQL NULL for both (#90)
                     return f"{extract_expr} IS NULL", []
                 if isinstance(value, (dict, list)):
-                    return f"{extract_expr} = ?", [value]
+                    from ..type_utils import build_json_containment_clause
+
+                    return build_json_containment_clause(
+                        "data",
+                        field,
+                        extract_expr,
+                        value,
+                        self.jsonb.json_each_function,
+                        jsonb_supported=self.jsonb.jsonb_supported,
+                    )
                 # MongoDB: {arr: v} also matches when the array CONTAINS
                 # v at any depth (#99), even when the field is indexed (#193).
                 return self._build_containment_clause(

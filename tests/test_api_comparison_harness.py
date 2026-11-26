@@ -50,6 +50,20 @@ def test_category_with_results_is_not_flagged():
     assert reporter.failed_tests == []
 
 
+def test_edge_case_parity_records_checks_without_mongodb(monkeypatch):
+    from api_comparison import edge_case_parity
+
+    local_reporter = CompatibilityReporter()
+    monkeypatch.setattr(edge_case_parity, "reporter", local_reporter)
+    monkeypatch.setattr(edge_case_parity, "get_mongo_client", lambda: None)
+
+    edge_case_parity.compare_edge_case_parity()
+
+    assert local_reporter.total_tests == 13
+    assert local_reporter.failed_tests == []
+    assert len(local_reporter.skipped_tests) == 13
+
+
 def test_skip_budget_is_enforced(monkeypatch):
     reporter = CompatibilityReporter()
     reporter.record_result("X", "a", True, skip_reason="unavailable")
