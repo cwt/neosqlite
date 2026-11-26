@@ -74,17 +74,12 @@ def test_changestream_buffers_rows_and_prunes_once_per_batch():
 
             stream._prune_consumed = tracked_prune
 
-            coll.insert_many([{"i": i} for i in range(5)])
+            inserted = coll.insert_many(
+                [{"i": i} for i in range(5)]
+            ).inserted_ids
             delivered = [next(stream) for _ in range(5)]
 
-            assert [d["documentKey"]["_id"] for d in delivered] == [
-                (
-                    ev["fullDocument"]["_id"]
-                    if "fullDocument" in ev
-                    else d["documentKey"]["_id"]
-                )
-                for d, ev in zip(delivered, delivered)
-            ]
+            assert [d["documentKey"]["_id"] for d in delivered] == inserted
             assert len(delivered) == 5
             assert prune_calls == 1
             assert stream.resume_token == delivered[-1]["_id"]

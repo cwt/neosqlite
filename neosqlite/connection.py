@@ -1213,11 +1213,12 @@ class Connection:
         write_concern: Any | None = None,
         read_concern: Any | None = None,
     ) -> Self:
-        """Return a shallow clone of this connection with updated options.
+        """Return a clone of this connection with updated options.
 
-        Shares the same underlying ``sqlite3.Connection`` and a shallow copy
-        of ``_collections`` while storing PyMongo-compatible option attributes
-        without mutating connection PRAGMAs on the shared handle.
+        Shares the same underlying ``sqlite3.Connection`` while rebuilding
+        cached ``Collection`` objects bound to the clone (preserving their
+        per-collection options) and storing PyMongo-compatible option
+        attributes without mutating connection PRAGMAs on the shared handle.
 
         Args:
             codec_options: Codec options stored for PyMongo API compatibility.
