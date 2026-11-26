@@ -2203,3 +2203,15 @@ def test_rewind_closed_cursor_raises_invalid_operation(collection):
     cursor.close()
     with pytest.raises(InvalidOperation):
         cursor.rewind()
+
+
+def test_abandoned_generator_after_connection_close_is_silent():
+    """Closing a stale query cursor after DB teardown must not raise."""
+    conn = neosqlite.Connection(":memory:")
+    coll = conn.t
+    coll.insert_many([{"_id": i} for i in range(10)])
+    cursor = coll.find({}).batch_size(1)
+    next(cursor)
+    generator = cursor._active_generator
+    conn.close()
+    generator.close()

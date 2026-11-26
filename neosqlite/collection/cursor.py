@@ -1230,8 +1230,15 @@ class Cursor:
                         yield from self._load_documents(rows)
                 finally:
                     # Release the sqlite statement even when iteration is
-                    # abandoned early (#135)
-                    db_cursor.close()
+                    # abandoned early (#135). The owning connection may
+                    # already have been closed during teardown; closing a
+                    # cursor on a closed connection raises ProgrammingError,
+                    # which would otherwise be reported as an ignored
+                    # exception when the generator is garbage collected.
+                    try:
+                        db_cursor.close()
+                    except sqlite3.Error:
+                        pass
 
             docs = doc_generator()
             self._active_generator = docs
