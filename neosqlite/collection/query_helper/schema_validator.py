@@ -11,8 +11,100 @@ from typing import Any
 from ...binary import Binary
 from ...objectid import ObjectId
 from ...query_operators import _bson_values_equal
+from ..json_helpers import neosqlite_json_dumps, neosqlite_json_loads
 
 logger = logging.getLogger(__name__)
+
+_VALIDATOR_TABLE = "_neosqlite_validators"
+
+
+def _ensure_validator_table(db: Any) -> None:
+    """Create the internal validator metadata table when missing."""
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_VALIDATOR_TABLE} ("
+        "collection_name TEXT PRIMARY KEY, schema TEXT NOT NULL)"
+    )
+
+
+def save_validator_schema(
+    db: Any, collection_name: str, schema: dict[str, Any]
+) -> None:
+    """Persist a collection's ``$jsonSchema`` so it survives reconnection.
+
+    Args:
+        db: SQLite connection backing the collection.
+        collection_name: Name of the collection table.
+        schema: The ``$jsonSchema`` document to persist.
+    """
+    try:
+        _ensure_validator_table(db)
+        db.execute(
+            f"INSERT INTO {_VALIDATOR_TABLE} (collection_name, schema) "
+            "VALUES (?, ?) ON CONFLICT(collection_name) DO UPDATE SET "
+            "schema = excluded.schema",
+            (collection_name, neosqlite_json_dumps(schema)),
+        )
+    except Exception as exc:
+        # Metadata persistence is best-effort: SQL CHECK constraints still
+        # enforce the rules that can be compiled on this SQLite build.
+        logger.debug(
+            "Could not persist validator for %s: %s", collection_name, exc
+        )
+
+
+def load_validator_schema(
+    db: Any, collection_name: str
+) -> dict[str, Any] | None:
+    """Load a persisted ``$jsonSchema`` for ``collection_name``, if any.
+
+    Args:
+        db: SQLite connection backing the collection.
+        collection_name: Name of the collection table.
+
+    Returns:
+        dict[str, Any] | None: The stored schema, or ``None`` when absent or
+        unreadable.
+    """
+    try:
+        row = db.execute(
+            f"SELECT schema FROM {_VALIDATOR_TABLE} WHERE collection_name = ?",
+            (collection_name,),
+        ).fetchone()
+    except Exception:
+        return None
+    if not row or not row[0]:
+        return None
+    try:
+        loaded = neosqlite_json_loads(row[0])
+    except Exception as exc:
+        logger.debug(
+            "Could not decode validator for %s: %s", collection_name, exc
+        )
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def delete_validator_schema(db: Any, collection_name: str) -> None:
+    """Remove persisted validator metadata for a dropped collection."""
+    try:
+        db.execute(
+            f"DELETE FROM {_VALIDATOR_TABLE} WHERE collection_name = ?",
+            (collection_name,),
+        )
+    except Exception:
+        pass
+
+
+def rename_validator_schema(db: Any, old_name: str, new_name: str) -> None:
+    """Move persisted validator metadata when a collection is renamed."""
+    try:
+        db.execute(
+            f"UPDATE OR IGNORE {_VALIDATOR_TABLE} "
+            "SET collection_name = ? WHERE collection_name = ?",
+            (new_name, old_name),
+        )
+    except Exception:
+        pass
 
 
 def _bson_enum_contains(enum_list: list[Any], value: Any) -> bool:

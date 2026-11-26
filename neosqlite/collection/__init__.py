@@ -25,6 +25,12 @@ from .aggregation_cursor import AggregationCursor
 from .cursor import Cursor
 from .index_manager import IndexManager
 from .query_engine import QueryEngine
+from .query_helper.schema_validator import (
+    delete_validator_schema,
+    load_validator_schema,
+    rename_validator_schema,
+    save_validator_schema,
+)
 from .raw_batch_cursor import RawBatchCursor
 from .schema_utils import (
     column_exists,
@@ -77,6 +83,8 @@ def cleanup_dropped_collection(db: sqlite3.Connection, name: str) -> None:
         )
     except Exception:
         pass
+
+    delete_validator_schema(db, name)
 
     for key_name in idx_names + fts_tables:
         try:
@@ -145,6 +153,8 @@ class Collection:
             if isinstance(validator, dict) and "$jsonSchema" in validator
             else None
         )
+        if self._validator_schema is None:
+            self._validator_schema = load_validator_schema(db, name)
 
         if create:
             self.create(**kwargs)
@@ -406,6 +416,7 @@ class Collection:
             from .query_helper.schema_compiler import compile_schema_to_sql
 
             self._validator_schema = validator["$jsonSchema"]
+            save_validator_schema(self.db, self.name, self._validator_schema)
             schema_sql = compile_schema_to_sql(
                 validator["$jsonSchema"],
                 jsonb=self.query_engine.jsonb.jsonb_supported,
@@ -641,6 +652,8 @@ class Collection:
             )
         except Exception:
             pass
+
+        rename_validator_schema(self.db, old_name, new_name)
 
         # Rename triggers on the table (such as FTS sync triggers)
         trig_rows = self.db.execute(

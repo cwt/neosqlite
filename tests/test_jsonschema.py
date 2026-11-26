@@ -658,3 +658,41 @@ class TestIssue195JsonSchemaValidatorFixes:
                     assert [d["_id"] for d in coll.find(q_dot)] == [1]
             finally:
                 set_force_fallback(orig)
+
+    def test_validator_survives_reopen_and_rename(self, tmp_path):
+        """Persisted $jsonSchema rules remain enforced after reconnection."""
+        import neosqlite
+        from neosqlite._sqlite import sqlite3
+
+        schema = {
+            "$jsonSchema": {
+                "bsonType": "object",
+                "properties": {
+                    "role": {"bsonType": "string", "pattern": "^admin$"}
+                },
+            }
+        }
+        path = str(tmp_path / "validators.db")
+        with neosqlite.Connection(path) as conn:
+            coll = conn.create_collection("v", validator=schema)
+            coll.insert_one({"_id": 1, "role": "admin"})
+            with pytest.raises(sqlite3.IntegrityError):
+                coll.insert_one({"_id": 2, "role": "bad!"})
+
+        with neosqlite.Connection(path) as conn:
+            coll = conn.v
+            assert coll._validator_schema == schema["$jsonSchema"]
+            with pytest.raises(sqlite3.IntegrityError):
+                coll.insert_one({"_id": 3, "role": "bad!"})
+            with pytest.raises(sqlite3.IntegrityError):
+                coll.update_one({"_id": 1}, {"$set": {"role": "bad!"}})
+            conn.rename_collection("v", "v2")
+
+        with neosqlite.Connection(path) as conn:
+            coll = conn.v2
+            assert coll._validator_schema == schema["$jsonSchema"]
+            with pytest.raises(sqlite3.IntegrityError):
+                coll.insert_one({"_id": 4, "role": "bad!"})
+            assert conn.list_collection_names() == ["v2"]
+            coll.drop()
+            assert conn.list_collection_names() == []
