@@ -48,8 +48,19 @@ _PIPELINES = [
 ]
 
 
+def _by_facet_id(doc: dict) -> str:
+    return str(doc.get("_id"))
+
+
 def _run(aggregate) -> dict[str, list[dict]]:
-    return {name: list(aggregate(pipeline)) for name, pipeline in _PIPELINES}
+    results = {name: list(aggregate(pipeline)) for name, pipeline in _PIPELINES}
+    # $sortByCount only orders by count; ties are unspecified, so normalize
+    # nested facet arrays by _id on both sides before comparing.
+    for docs in results.values():
+        for doc in docs:
+            if isinstance(doc, dict) and isinstance(doc.get("x"), list):
+                doc["x"].sort(key=_by_facet_id)
+    return results
 
 
 def compare_stage_aliases():

@@ -50,6 +50,20 @@ def test_category_with_results_is_not_flagged():
     assert reporter.failed_tests == []
 
 
+def test_stage_aliases_normalizes_facet_tie_order():
+    from api_comparison import stage_aliases
+
+    results = stage_aliases._run(
+        lambda _pipeline: [
+            {"x": [{"_id": "b", "count": 2}, {"_id": "a", "count": 2}]}
+        ]
+    )
+    assert [d["_id"] for d in results["aliases in $facet"][0]["x"]] == [
+        "a",
+        "b",
+    ]
+
+
 def test_edge_case_parity_records_checks_without_mongodb(monkeypatch):
     from api_comparison import edge_case_parity
 

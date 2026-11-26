@@ -29,6 +29,19 @@ def _run_find(collection, query, **kwargs):
         return f"Error: {exc}"
 
 
+def _by_oid(doc):
+    return str(doc.get("_id"))
+
+
+def _sort_ancestors(results):
+    """$graphLookup does not guarantee result order; normalize both sides."""
+    if not isinstance(results, list):
+        return
+    for doc in results:
+        if isinstance(doc, dict) and isinstance(doc.get("ancestors"), list):
+            doc["ancestors"].sort(key=_by_oid)
+
+
 def _run_aggregate(collection, pipeline):
     try:
         return list(collection.aggregate(pipeline))
@@ -157,7 +170,7 @@ def compare_edge_case_parity():
         nodes_coll.delete_many({})
         nodes_coll.insert_many([sanitize_for_mongodb(doc) for doc in nodes])
         mongo_results["graph_lookup_objectids"] = _run_aggregate(
-            nodes_coll, graph_pipeline
+            nodes_coll, sanitize_for_mongodb(graph_pipeline)
         )
 
         db.drop_collection("edge_validated")
@@ -169,6 +182,9 @@ def compare_edge_case_parity():
             mongo_validator_rejected = True
         else:
             mongo_validator_rejected = False
+
+    _sort_ancestors(neo_results.get("graph_lookup_objectids"))
+    _sort_ancestors(mongo_results.get("graph_lookup_objectids"))
 
     for name in list(queries) + [
         "hint_id",
