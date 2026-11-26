@@ -97,10 +97,11 @@ def cleanup_dropped_collection(db: sqlite3.Connection, name: str) -> None:
 
     for fts_table in fts_tables:
         db.execute(f"DROP TABLE IF EXISTS {quote_table_name(fts_table)}")
+        invalidate_table_columns_cache(db, fts_table)
         for suffix in ("_data", "_idx", "_content", "_docsize", "_config"):
-            db.execute(
-                f"DROP TABLE IF EXISTS {quote_table_name(fts_table + suffix)}"
-            )
+            shadow_table = fts_table + suffix
+            db.execute(f"DROP TABLE IF EXISTS {quote_table_name(shadow_table)}")
+            invalidate_table_columns_cache(db, shadow_table)
 
     invalidate_table_columns_cache(db, name)
 
@@ -607,6 +608,8 @@ class Collection:
                 f"ALTER TABLE {quote_table_name(fts_name)} "
                 f"RENAME TO {quote_table_name(new_fts)}"
             )
+            invalidate_table_columns_cache(self.db, fts_name)
+            invalidate_table_columns_cache(self.db, new_fts)
             fts_renames.append((fts_name, new_fts))
             try:
                 self.db.execute(
