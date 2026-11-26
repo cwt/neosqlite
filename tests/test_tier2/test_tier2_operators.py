@@ -1076,3 +1076,57 @@ class TestIssue200AdvancedStagesFixes:
                 ]
             )
             assert len(norm_and) == 2
+
+    def test_lookup_let_query_filter_and_literal_context(self):
+        with neosqlite.Connection(":memory:") as conn:
+            conn.foreign.insert_many(
+                [
+                    {"_id": 1, "tag": "x", "w": 10},
+                    {"_id": 2, "tag": "y", "w": 20},
+                ]
+            )
+            conn.local.insert_one({"_id": 1, "tag": "x"})
+
+            def lookup_with(pipeline):
+                sql_res, py_res = self._run_both_tiers(
+                    conn.local,
+                    [
+                        {
+                            "$lookup": {
+                                "from": "foreign",
+                                "let": {"m": "$tag"},
+                                "pipeline": pipeline,
+                                "as": "joined",
+                            }
+                        }
+                    ],
+                )
+                assert sql_res == py_res
+                return sql_res[0]["joined"]
+
+            # Query-context variables must be raw values, not $literal wrappers.
+            by_filter = lookup_with(
+                [
+                    {"$match": {"tag": "$$m"}},
+                    {"$project": {"_id": 0, "w": 1}},
+                ]
+            )
+            assert by_filter == [{"w": 10}]
+
+            # $expr remains an expression context and must keep working.
+            by_expr = lookup_with(
+                [
+                    {"$match": {"$expr": {"$eq": ["$tag", "$$m"]}}},
+                    {"$project": {"_id": 0, "w": 1}},
+                ]
+            )
+            assert by_expr == [{"w": 10}]
+
+            # $literal operands are opaque: the text "$$m" is not a variable.
+            literals = lookup_with(
+                [{"$addFields": {"literal": {"$literal": "$$m"}}}]
+            )
+            assert literals == [
+                {"_id": 1, "tag": "x", "w": 10, "literal": "$$m"},
+                {"_id": 2, "tag": "y", "w": 20, "literal": "$$m"},
+            ]

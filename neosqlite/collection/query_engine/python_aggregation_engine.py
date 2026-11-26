@@ -60,6 +60,48 @@ def _resolve_let_value(var_expr: str, let_vars: dict[str, Any]) -> Any:
     return False, None
 
 
+def _substitute_query_filter(
+    obj: Any,
+    let_vars: dict[str, Any],
+    shadowed: frozenset[str],
+) -> Any:
+    """Substitute ``$$var`` references inside a ``$match`` query filter.
+
+    Query filters are not expressions: a matched variable must be replaced by
+    its raw value (``{"tag": "x"}``), not by ``{"$literal": "x"}`` which the
+    query builder does not accept.  ``$expr`` operands remain expression
+    contexts and are delegated back to :func:`_substitute_let_vars`.
+
+    Args:
+        obj: Query filter document, operator document, list, or scalar value.
+        let_vars: Mapping of ``"$$name"`` to resolved outer document values.
+        shadowed: Set of ``"$$name"`` bindings currently shadowed in scope.
+
+    Returns:
+        Any: Rewritten copy of the query filter.
+    """
+    if isinstance(obj, str) and obj.startswith("$$"):
+        base_var = obj.split(".", 1)[0]
+        if base_var in shadowed:
+            return obj
+        matched, val = _resolve_let_value(obj, let_vars)
+        return deepcopy(val) if matched else obj
+    if isinstance(obj, dict):
+        return {
+            key: (
+                _substitute_let_vars(value, let_vars, shadowed)
+                if key == "$expr"
+                else _substitute_query_filter(value, let_vars, shadowed)
+            )
+            for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [
+            _substitute_query_filter(item, let_vars, shadowed) for item in obj
+        ]
+    return obj
+
+
 def _substitute_let_vars(
     obj: Any,
     let_vars: dict[str, Any],
@@ -68,7 +110,9 @@ def _substitute_let_vars(
     """Substitute ``$lookup`` ``let`` variables into a sub-pipeline template.
 
     Preserves inner lexical bindings from ``$let``, ``$map``, ``$filter``, and
-    ``$reduce`` when variable names shadow outer ``let`` variables.
+    ``$reduce`` when variable names shadow outer ``let`` variables.  Strings
+    inside ``$literal`` operands are left untouched, and ``$match`` filters
+    receive raw values rather than ``{"$literal": ...}`` wrappers.
 
     Args:
         obj: Pipeline stage, expression dict, list, or scalar value.
@@ -77,7 +121,7 @@ def _substitute_let_vars(
 
     Returns:
         Any: Rewritten copy with matched ``$$var`` expressions replaced by
-        ``{"$literal": ...}``.
+        ``{"$literal": ...}`` (or by raw values in query filters).
     """
     if isinstance(obj, str) and obj.startswith("$$"):
         base_var = obj.split(".", 1)[0]
@@ -88,6 +132,20 @@ def _substitute_let_vars(
             return {"$literal": deepcopy(val)}
         return obj
     if isinstance(obj, dict):
+        if set(obj) == {"$literal"}:
+            return deepcopy(obj)
+        if "$match" in obj and isinstance(obj["$match"], dict):
+            new_match = _substitute_query_filter(
+                obj["$match"], let_vars, shadowed
+            )
+            return {
+                key: (
+                    new_match
+                    if key == "$match"
+                    else _substitute_let_vars(value, let_vars, shadowed)
+                )
+                for key, value in obj.items()
+            }
         if "$let" in obj and isinstance(obj["$let"], dict):
             let_spec = obj["$let"]
             vars_spec = let_spec.get("vars", {})
