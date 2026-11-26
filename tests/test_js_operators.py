@@ -856,3 +856,21 @@ def test_supervisor_concurrent_close_and_call():
     t.join(timeout=3.0)
     assert not t.is_alive()
     assert proc.poll() is not None
+
+
+def test_stderr_reader_bounds_unterminated_lines():
+    """A huge stderr line without newlines must not grow the tail buffer."""
+    from collections import deque
+
+    from neosqlite.js.supervisor import (
+        _MAX_STDERR_LINE_CHARS,
+        _stderr_reader_loop,
+    )
+
+    tail = deque(maxlen=10)
+    _stderr_reader_loop(io.StringIO("E" * 200000), tail)
+    suffix_len = len("...(truncated)\n")
+    assert "".join(tail)
+    assert all(
+        len(line) <= _MAX_STDERR_LINE_CHARS + suffix_len for line in tail
+    )

@@ -66,19 +66,39 @@ def _stdout_reader_loop(
         line_queue.put(None)
 
 
+_MAX_STDERR_LINE_CHARS = 64 * 1024
+
+
 def _stderr_reader_loop(
     stderr: IO[str],
     tail: deque[str],
 ) -> None:
-    """Continuously drain worker stderr into a bounded tail buffer."""
+    """Continuously drain worker stderr into a bounded tail buffer.
+
+    Reads fixed-size chunks instead of using ``readline()`` so a worker that
+    emits a huge line without a newline cannot grow the tail buffer without
+    limit.
+    """
+    partial = ""
     try:
         while True:
-            line = stderr.readline()
-            if not line:
+            chunk = stderr.read(4096)
+            if not chunk:
                 break
-            tail.append(line)
+            partial += chunk
+            while "\n" in partial:
+                line, partial = partial.split("\n", 1)
+                tail.append(line[:_MAX_STDERR_LINE_CHARS] + "\n")
+            if len(partial) > _MAX_STDERR_LINE_CHARS:
+                tail.append(
+                    partial[:_MAX_STDERR_LINE_CHARS] + "...(truncated)\n"
+                )
+                partial = ""
     except (OSError, ValueError):
         pass
+    finally:
+        if partial:
+            tail.append(partial[:_MAX_STDERR_LINE_CHARS] + "...(truncated)\n")
 
 
 class SubprocessJsWorker(ABC):
