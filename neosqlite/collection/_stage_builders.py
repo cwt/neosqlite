@@ -62,6 +62,11 @@ def _graph_lookup_scalar_or_oid(expr_sql: str) -> str:
     when the expression evaluates to valid JSON text with
     ``$.__neosqlite_objectid__ = 1``, leaving all other values unchanged.
 
+    Callers must supply *text* JSON expressions: ``jsonb_extract`` returns a
+    JSONB BLOB for encoded ObjectIds, which ``typeof(...) = 'text'`` rejects
+    and which cannot be decoded safely without risking "malformed JSON"
+    errors on ordinary binary values.
+
     Args:
         expr_sql: SQL expression whose value may be a scalar or an encoded
             NeoSQLite ``ObjectId`` JSON string.
@@ -165,8 +170,12 @@ def build_graph_lookup_parts(
     """
     if not isinstance(spec, dict):
         return None
-    _json_prefix = jsonb.json_function_prefix
-    _json_each = jsonb.json_each_function
+    # Join keys are normalized by _graph_lookup_scalar_or_oid(), which only
+    # understands text JSON.  Use the text form for every key extraction even
+    # on JSONB-capable builds so encoded ObjectIds remain comparable to the
+    # hex text stored in the _id column.
+    _key_extract = "json_extract"
+    _key_each = "json_each"
 
     from_collection = spec.get("from")
     start_with = spec.get("startWith")
@@ -213,7 +222,7 @@ def build_graph_lookup_parts(
         and not start_with.startswith("$$")
     ):
         sw_path = parse_json_path(start_with[1:])
-        start_sql = f"{_json_prefix}_extract(p.data, '{sw_path}')"
+        start_sql = f"{_key_extract}(p.data, '{sw_path}')"
         is_arr_expr = f"(CASE WHEN json_type(p.data, '{sw_path}') = 'array' THEN 1 ELSE 0 END)"
     elif isinstance(start_with, list):
         start_sql = "?"
@@ -276,11 +285,11 @@ def build_graph_lookup_parts(
             return f"t._id = {norm_val}"
         to_path = parse_json_path(connect_to_field)
         scalar_to = _graph_lookup_scalar_or_oid(
-            f"{_json_prefix}_extract(t.data, '{to_path}')"
+            f"{_key_extract}(t.data, '{to_path}')"
         )
         return (
             f"(CASE WHEN json_type(t.data, '{to_path}') = 'array' "
-            f"THEN EXISTS (SELECT 1 FROM {_json_each}(t.data, '{to_path}') _te "
+            f"THEN EXISTS (SELECT 1 FROM {_key_each}(t.data, '{to_path}') _te "
             f"WHERE {_graph_lookup_scalar_or_oid('_te.value')} = {norm_val}) "
             f"ELSE {scalar_to} = {norm_val} END)"
         )
@@ -311,7 +320,7 @@ def build_graph_lookup_parts(
         JOIN {quoted_target} t ON (
             CASE WHEN _p._sw_arr = 1
             THEN EXISTS (
-                SELECT 1 FROM {_json_each}(_p._sw) _se
+                SELECT 1 FROM {_key_each}(_p._sw) _se
                 WHERE _se.value IS NOT NULL AND {target_match('_se.value')}
             )
             ELSE _p._sw IS NOT NULL AND {target_match('_p._sw')}
@@ -326,10 +335,10 @@ def build_graph_lookup_parts(
         )
     else:
         from_path = parse_json_path(connect_from_field)
-        scalar_from = f"{_json_prefix}_extract(r.found_data, '{from_path}')"
+        scalar_from = f"{_key_extract}(r.found_data, '{from_path}')"
         rec_join_cond = (
             f"CASE WHEN json_type(r.found_data, '{from_path}') = 'array' "
-            f"THEN EXISTS (SELECT 1 FROM {_json_each}(r.found_data, '{from_path}') _re "
+            f"THEN EXISTS (SELECT 1 FROM {_key_each}(r.found_data, '{from_path}') _re "
             f"WHERE _re.value IS NOT NULL AND {target_match('_re.value')}) "
             f"ELSE {scalar_from} IS NOT NULL AND {target_match(scalar_from)} END"
         )

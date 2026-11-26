@@ -4,6 +4,7 @@ import pytest
 
 from neosqlite import Connection
 from neosqlite.collection.query_helper.utils import set_force_fallback
+from neosqlite.objectid import ObjectId
 
 
 @pytest.fixture
@@ -38,6 +39,45 @@ def collection(tmp_path):
             ]
         )
         yield coll, conn
+
+
+def test_graph_lookup_objectid_keys_all_tiers():
+    """Encoded ObjectId join keys must match the hex text in _id (#1101)."""
+    root, child, grandchild = ObjectId(), ObjectId(), ObjectId()
+    with Connection(":memory:") as conn:
+        conn.nodes.insert_many(
+            [
+                {"_id": root, "name": "root"},
+                {"_id": child, "name": "child", "parent": root},
+                {"_id": grandchild, "name": "grandchild", "parent": child},
+            ]
+        )
+        pipeline = [
+            {"$match": {"_id": grandchild}},
+            {
+                "$graphLookup": {
+                    "from": "nodes",
+                    "startWith": "$parent",
+                    "connectFromField": "parent",
+                    "connectToField": "_id",
+                    "as": "ancestors",
+                }
+            },
+        ]
+        set_force_fallback(False)
+        sql_result = list(conn.nodes.aggregate(pipeline))
+        set_force_fallback(True)
+        py_result = list(conn.nodes.aggregate(pipeline))
+        set_force_fallback(False)
+
+        def by_oid(doc):
+            return str(doc["_id"])
+
+        expected = {root, child}
+        assert {d["_id"] for d in sql_result[0]["ancestors"]} == expected
+        for result in (sql_result, py_result):
+            result[0]["ancestors"].sort(key=by_oid)
+        assert sql_result == py_result
 
 
 def test_graph_lookup_basic(collection):
