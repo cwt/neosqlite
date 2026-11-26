@@ -976,6 +976,17 @@ def build_json_containment_parts(
     scalar_val, scalar_ph = serialize_sql_query_value(value, is_field_jsonb)
     each_val, each_ph = serialize_sql_query_value(value, each_is_jsonb)
     text_val, _ = serialize_sql_query_value(value, False)
+    if isinstance(value, (dict, list)):
+        # serialize_sql_query_value() only handles encoded ObjectId/Binary
+        # wrappers; plain JSON containers must be dumped and wrapped with
+        # jsonb(?) when comparing against JSONB-extracted values.
+        from .json_helpers import neosqlite_json_dumps_for_sql
+
+        value_text = neosqlite_json_dumps_for_sql(value)
+        scalar_val = value_text
+        scalar_ph = json_constructor("?", is_field_jsonb)
+        each_val = value_text
+        each_ph = json_constructor("?", each_is_jsonb)
 
     segs = field.split(".")
     scalar_cmp = f"{field_access} = {scalar_ph}"
@@ -994,14 +1005,21 @@ def build_json_containment_parts(
         rest = segs[k:]
         if rest:
             leaf_path = parse_json_path(".".join(rest), preserve_id=False)
-            elem_extract_func = json_function(
-                "extract", json_each_function == "jsonb_each"
-            )
-            elem_cmp = f"{elem_extract_func}(value, '{leaf_path}') = ?"
+            elem_extract_func = json_function("extract", each_is_jsonb)
+            if isinstance(value, (dict, list)):
+                # jsonb_extract() yields a JSONB blob for object/array leaves,
+                # which must be compared with jsonb(?) rather than plain text.
+                from .json_helpers import neosqlite_json_dumps_for_sql
+
+                leaf_ph = json_constructor("?", each_is_jsonb)
+                arm_param = neosqlite_json_dumps_for_sql(value)
+            else:
+                leaf_ph = "?"
+                arm_param = each_val if each_is_jsonb else text_val
+            elem_cmp = f"{elem_extract_func}(value, '{leaf_path}') = {leaf_ph}"
             if isinstance(value, (bool, int, float)):
                 elem_cmp = f"(json_type(value, '{leaf_path}') IN {json_type_list_sql(value)} AND {elem_cmp})"
             elem_pred = f"CASE WHEN type = 'object' THEN {elem_cmp} ELSE 0 END"
-            arm_param = text_val
         else:
             if isinstance(value, (bool, int, float)):
                 elem_pred = (
