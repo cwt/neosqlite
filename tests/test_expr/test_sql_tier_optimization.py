@@ -882,6 +882,36 @@ class TestSQLTierCorrectness:
             assert collection.query_engine.get_last_tier() == "tier1"
             assert all(row["size"] > 0 for row in res)
 
+    def test_root_after_count_and_densify_synthesized_rows(self, collection):
+        """$$ROOT is the emitted document after $count and $densify."""
+        from neosqlite.collection.query_helper import set_force_fallback
+
+        collection.delete_many({})
+        collection.insert_many(
+            [{"_id": 1, "v": "aaaa"}, {"_id": 2, "v": "bbbbbbbb"}]
+        )
+
+        for pipeline in (
+            [{"$count": "n"}, {"$project": {"root": "$$ROOT"}}],
+            [
+                {
+                    "$densify": {
+                        "field": "v",
+                        "range": {"step": 1, "bounds": [1, 2]},
+                    }
+                },
+                {"$project": {"root": "$$ROOT"}},
+            ],
+        ):
+            set_force_fallback(False)
+            sql_result = list(collection.aggregate(pipeline))
+            set_force_fallback(True)
+            py_result = list(collection.aggregate(pipeline))
+            set_force_fallback(False)
+
+            assert all(row["root"] is not None for row in sql_result)
+            assert sql_result == py_result
+
     def test_size_operators_tier_comparison(self, collection):
         """Compare size operators between SQL and Python tiers with allowed diff."""
         from neosqlite.binary import Binary

@@ -1793,7 +1793,13 @@ class StageBuildersMixin:
 
         orig_cols = ["t.id", "t._id", "t.data"]
         _append_root_column(orig_cols, context, preserve_root, table_alias="t")
-        synth_root_col = ", NULL AS root_data" if context.has_root else ""
+        # Synthesized rows are new documents, so $$ROOT is the emitted row's
+        # data, not NULL or the root of a previous stage.
+        synth_root_col = (
+            ", json_object(?, s.val) AS root_data" if context.has_root else ""
+        )
+        if context.has_root:
+            all_params.append(field)
         sql = f"""
             WITH RECURSIVE existing AS (
                 SELECT DISTINCT {key_sql} as val
@@ -2327,16 +2333,20 @@ class StageBuildersMixin:
             tuple[str, list[Any]]: Aggregate ``SELECT`` query and ``[spec]``
                 parameter list.
         """
+        data_expr = "json_object(?, COUNT(*))"
         select_parts = [
             "NULL as id",
             "NULL as _id",
-            "json_object(?, COUNT(*)) as data",
+            f"{data_expr} as data",
         ]
+        params = [spec]
         if context.has_root:
-            select_parts.append("NULL AS root_data")
+            # The single $count document is also the root for later stages.
+            select_parts.append(f"{data_expr} as root_data")
+            params.append(spec)
         return (
             f"SELECT {', '.join(select_parts)} FROM {prev_stage}",
-            [spec],
+            params,
         )
 
     def _build_set_window_fields_sql(
